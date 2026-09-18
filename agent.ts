@@ -220,7 +220,6 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
 
       const state = {
         goal: stepGoal,
-        overall_task: input.goal,
         earlier_tasks_in_this_chat: (input.previousTasks ?? []).slice(-6),
         provided_values: candidates,
         step: `${step} of ${maxSteps}`,

@@ -84,8 +84,6 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
       result_of_previous_action: ctx.lastResult ?? "none, this is the first step",
       page: ctx.page,
     },
-    null,
-    1,
   );
   if (process.env.PLANNER_DEBUG) (await import("node:fs")).appendFileSync(process.env.PLANNER_DEBUG, `\n=== step ${ctx.step}\n${user}\n`);
   const t0 = performance.now();
