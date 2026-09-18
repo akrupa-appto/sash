@@ -130,7 +130,19 @@ const SNAPSHOT_JS = `(maxEls) => {
 const SNAPSHOT_FN = new Function("return " + SNAPSHOT_JS)() as (maxEls: number) => any;
 
 export async function snapshot(page: Page): Promise<Snapshot> {
-  const raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
+  let raw;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
+      break;
+    } catch (err) {
+      // Navigation can replace the document between settling and reading it.
+      // Retry only this read; replaying a click could submit the same form twice.
+      if (attempt >= 2 || !/Execution context was destroyed|Cannot find context with specified id/.test((err as Error).message)) throw err;
+      await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(250);
+    }
+  }
   const fingerprint = createHash("sha1")
     .update(raw.url)
     .update(String(Math.round(raw.scroll.y / 50)))
@@ -159,7 +171,9 @@ export async function click(page: Page, id: number) {
   }, undefined, { timeout: 3000 });
   // Locator.click already scrolls and waits for actionability. A forced retry
   // can target stale controls after an asynchronous page replacement.
-  await l.click({ timeout: 5000 });
+  // This timeout also covers the navigation triggered by the click. A five
+  // second cap interrupted successful slow saves before their response arrived.
+  await l.click({ timeout: 30000 });
   if (href && href !== before && page.url() === before) {
     await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 10000 });
   }
