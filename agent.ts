@@ -89,7 +89,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
     emit({ type: "screenshot", screenshot: await b.screenshot(page), url: page.url(), title: await page.title() });
 
     while (step < maxSteps) {
-      if (signal.aborted) return end("stopped", "Stopped by user");
+      if (signal.aborted) return end("stopped", "stopped");
       step++;
 
       // Follow popups / new tabs if the site opened one.
@@ -134,7 +134,6 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       let planText: string | undefined;
       let planWhy: string | undefined;
       let planCompletes = false;
-      let planAnswer: string | undefined;
       let planMs = 0;
       const candidates = [...baseCandidates];
       if (useSupervisor) {
@@ -154,12 +153,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         planMs = Math.round(p.ms);
         if (p.status === "done") return end("done", p.why ?? "Task complete", p.answer);
         if (p.status === "blocked") return end("blocked", p.why ?? "Cannot continue", p.answer);
-        if (!p.next) return end("error", "supervisor gave no next action");
+        if (!p.next) return end("error", "the planner gave no next action");
         stepGoal = p.next;
         planText = p.next;
         planWhy = p.why;
         planCompletes = p.completes_task === true;
-        planAnswer = p.answer;
         if (p.text) candidates.unshift(p.text);
       }
 
@@ -235,19 +233,13 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       const res = await decide(state, questions, signal);
       totalCost += res.cost_usd;
       const op = res.answers.operation as ChoiceAnswer;
-      const achieved = (res.answers.goal_achieved as { noul: number })?.noul ?? 0;
       const pick = (q: string) => (res.answers[q] as ChoiceAnswer | undefined)?.choice;
       const elId = (key?: string) => (key ? Number(key.match(/^el_(\d+)/)?.[1]) : NaN);
 
       let action = op.choice;
       let note: string | undefined;
       const t0 = performance.now();
-      let chosen = op.choice;
-      // Jev-only mode: if Jev is confident the goal is achieved, finish even if the op head disagrees.
-      if (!useSupervisor && achieved >= 0.9 && chosen !== "DONE") {
-        chosen = "DONE";
-        note = `goal_achieved=${achieved.toFixed(2)} overrode operation=${op.choice}`;
-      }
+      const chosen = op.choice;
 
       // ---- 3. execute
       try {
@@ -332,27 +324,22 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         note,
       });
 
-      if (chosen === "DONE") return end("done", `Goal achieved (goal_achieved=${achieved.toFixed(2)})`);
-      // The supervisor said this action finishes the task. If it visibly worked, we are done: asking the
-      // model again only invites it to second-guess a success it can no longer see the context for.
-      if (planCompletes && !note && action !== "CANNOT") {
-        const after = await b.snapshot(page);
-        if (after.fingerprint !== snap.fingerprint) {
-          const title = after.title || after.url;
-          return end("done", `done: ${planText}`, planAnswer?.trim() || `done: ${planText}. now on "${title}".`);
-        }
-      }
-      if (chosen === "BLOCKED") return end("blocked", "Jev reports the goal cannot be reached from here");
+      if (chosen === "DONE") return end("done", `done, now on "${await page.title().catch(() => page.url())}"`);
+      // A changed page proves an action had an effect, not that the entire task succeeded.
+      // Let the next planner pass inspect the destination before reporting completion.
+      if (chosen === "BLOCKED") return end("blocked", "i could not find a way to do this on this page");
 
-      // Loop guard: the same action from the same page state three times means the page is not responding
-      // to it. Scrolling, typing, or navigating changes the fingerprint, so real progress never trips this.
+      // Repeating an action from the same state can also be a navigation cycle.
+      // Stop the loop without claiming the website is unresponsive.
       const sig = `${snap.fingerprint}|${action}`;
       actionCounts.set(sig, (actionCounts.get(sig) ?? 0) + 1);
-      if ((actionCounts.get(sig) ?? 0) >= 3) return end("blocked", `The page did not change after doing this 3 times: ${action}`);
+      if ((actionCounts.get(sig) ?? 0) >= 3) return end("blocked", useSupervisor
+        ? "i kept repeating the same action without finishing your task, so i stopped."
+        : "i kept repeating the same action without finishing your task. try careful mode to plan the steps.");
     }
-    return end("max_steps", `Reached ${maxSteps} steps`);
+    return end("max_steps", `i stopped after ${maxSteps} steps without finishing. send a more specific task, or say "go on".`);
   } catch (err) {
-    if (signal.aborted) return end("stopped", "Stopped by user");
+    if (signal.aborted) return end("stopped", "stopped");
     return end("error", (err as Error).message.slice(0, 500));
   }
 }

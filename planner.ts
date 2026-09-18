@@ -29,16 +29,17 @@ Reply with JSON only, no prose, shaped like:
 completes_task is true when this action, if it works, is the final thing the task needs (e.g. clicking the story the user asked to open). When completes_task is true, also fill "answer" with the one-line reply to show the user once it works.
 
 Rules:
-- First check result_of_previous_action and the current page. If the task is now achieved, say done. If the previous action was marked "expected to complete the task" and it led to a new page, the task is done: say done with an answer describing that page.
+- First check result_of_previous_action and the current page against every requirement in the task. "Expected to complete the task" is a prediction, not proof. A new page can be the wrong destination or an intermediate step. Say done only when the observed result satisfies the whole task.
 - One action per step. Never combine actions.
 - Read the task together with the earlier tasks in this chat: it may be a follow-up like "go on", "the last one", or a correction. Follow-ups refer to the earlier task's site and list, not to whatever page happens to be open now. If the earlier task already achieved what the follow-up asks, say done and explain what was already done. If the earlier task's page was left, go back to it first.
-- If the task is already achieved on the current page, say done immediately. When the history shows a click that led to a new page ("now on ..."), that click succeeded: if the task was to open/read/go to that thing, say done now. Never go back to double-check.
+- If the task is already achieved on the current page, say done immediately. Do not go back to repeat work that the history already confirms. Opening a repository or file preview does not satisfy a request for the raw file. Use the raw-file control and verify the destination.
+- For a request for the most, least, highest, or lowest item, use the site's sort/filter controls or compare the relevant values before choosing. Default order and the first visible item are not evidence of rank. Preserve that choice in later steps rather than repeating the search.
 - Elements marked (above/below the viewport) are off-screen but the executor can still click them directly: prefer clicking a listed element over scrolling. Scroll only when the element you need is not listed. Never scroll down when the page says it is at the bottom.
 - The element list is complete for the page (up to 180 entries); "the last item" means the last matching element in the list.
 - The history lists what was tried and whether the page changed. Never repeat an action that did not change the page; try another element or say blocked.
 - If the task asks a question, say done with the answer taken from the page text.
 - Cookie or consent banners are not blockers: click the accept/consent/close button and continue.
-- Say blocked for login walls, captchas, missing content, or when out of sensible options.`;
+- Say blocked only when the browser genuinely cannot go further: login walls, captchas, missing content, no sensible options left. Never say blocked just to ask a question. If earlier work in this chat already satisfies the task, say done and explain what was already done.`;
 
 // Take the first complete top-level {...} object, ignoring anything the model appends after it.
 function extractJson(s: string): any {
