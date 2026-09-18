@@ -1,0 +1,4 @@
+node_modules/
+.env
+wis-199-proof/
+runs/

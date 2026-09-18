@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>checkto · jev drives the browser</title>
+<style>
+  :root { --bg:#0e0f11; --panel:#16181c; --line:#26292f; --fg:#e6e6e6; --dim:#8b909a; --acc:#7cf5b1; --warn:#f5c97c; --bad:#f57c7c; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:baseline }
+  header h1 { margin:0; font-size:15px; font-weight:600 }
+  header span { color:var(--dim); font-size:12px }
+  main { display:grid; grid-template-columns: 420px 1fr; height:calc(100vh - 49px) }
+  @media (max-width:900px){ main{ grid-template-columns:1fr; height:auto } }
+  aside { border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0 }
+  form { padding:14px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--line) }
+  label { color:var(--dim); font-size:12px }
+  input, textarea { width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit }
+  textarea { resize:vertical; min-height:56px }
+  .row { display:flex; gap:8px; align-items:center }
+  button { background:var(--acc); color:#000; border:0; border-radius:6px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer }
+  button.secondary { background:var(--panel); color:var(--fg); border:1px solid var(--line) }
+  button:disabled { opacity:.4; cursor:default }
+  #log { overflow:auto; padding:10px 14px; flex:1; min-height:0 }
+  .step { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px; background:var(--panel) }
+  .step .head { display:flex; justify-content:space-between; color:var(--dim); font-size:12px }
+  .step .action { margin:4px 0; word-break:break-word }
+  .bars { display:flex; flex-direction:column; gap:3px; margin-top:4px }
+  .bar { display:grid; grid-template-columns: 110px 1fr 44px; gap:6px; align-items:center; font-size:11px; color:var(--dim) }
+  .bar i { display:block; height:6px; background:var(--acc); border-radius:3px; opacity:.85 }
+  .bar b { color:var(--fg); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .note { color:var(--warn); font-size:12px }
+  .end { border-color:var(--acc) } .end.bad { border-color:var(--bad) }
+  section { display:flex; flex-direction:column; min-height:0 }
+  .urlbar { padding:8px 14px; border-bottom:1px solid var(--line); color:var(--dim); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .shot { flex:1; min-height:0; display:flex; align-items:flex-start; justify-content:center; padding:14px; overflow:auto; background:#0a0b0c }
+  .shot img { max-width:100%; border:1px solid var(--line); border-radius:6px; background:#fff }
+  .shot .empty { color:var(--dim); margin-top:40px }
+  .stats { display:flex; gap:16px; padding:8px 14px; border-top:1px solid var(--line); color:var(--dim); font-size:12px }
+  .stats b { color:var(--fg); font-weight:500 }
+  .examples { display:flex; flex-wrap:wrap; gap:6px }
+  .examples a { color:var(--dim); font-size:11px; cursor:pointer; text-decoration:underline dotted }
+</style>
+</head>
+<body>
+<header><h1>checkto</h1><span>jev (typesafe system one) picks every browser action · code runs the loop · ~100ms per decision</span></header>
+<main>
+  <aside>
+    <form id="f">
+      <label>start url</label>
+      <input id="url" placeholder="https://en.wikipedia.org" required>
+      <label>goal</label>
+      <textarea id="goal" placeholder='open the article about "Jevons paradox"' required></textarea>
+      <label>texts it may need to type (optional, one per line; quoted text in the goal is picked up automatically)</label>
+      <textarea id="values" placeholder="Jevons paradox"></textarea>
+      <div class="row">
+        <label>max steps</label><input id="max" type="number" value="20" min="1" max="60" style="width:80px">
+        <span style="flex:1"></span>
+        <button id="stop" type="button" class="secondary" disabled>stop</button>
+        <button id="run" type="submit">run</button>
+      </div>
+      <div class="examples">
+        <a data-url="https://en.wikipedia.org" data-goal='open the wikipedia article about "Jevons paradox"'>wikipedia search</a>
+        <a data-url="https://news.ycombinator.com" data-goal="open the comments page of the top story">hacker news</a>
+        <a data-url="https://duckduckgo.com" data-goal='search for "typesafe jev" and open the typesafe.ai result'>duckduckgo</a>
+        <a data-url="https://github.com/typesafe-ai" data-goal="open the typesafe-sdk-js repository">github</a>
+      </div>
+    </form>
+    <div id="log"></div>
+  </aside>
+  <section>
+    <div class="urlbar" id="urlbar">no run yet</div>
+    <div class="shot" id="shot"><div class="empty">screenshots appear here after each step</div></div>
+    <div class="stats"><span>steps <b id="s-steps">0</b></span><span>jev latency <b id="s-lat">–</b></span><span>cost <b id="s-cost">$0.0000</b></span><span>status <b id="s-status">idle</b></span></div>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const log = $('#log'), shot = $('#shot');
+let ctrl = null, steps = 0, cost = 0, lats = [];
+
+document.querySelectorAll('.examples a').forEach(a => a.onclick = () => { $('#url').value = a.dataset.url; $('#goal').value = a.dataset.goal; });
+
+function bars(ans, key, labelMap) {
+  const a = ans[key]; if (!a || !a.probabilities) return '';
+  const top = Object.entries(a.probabilities).sort((x,y)=>y[1]-x[1]).slice(0,4);
+  return `<div class="bars">${top.map(([k,p]) => `<div class="bar"><b title="${esc(labelMap?.[k] ?? k)}">${esc(shortKey(k, key))}</b><i style="width:${Math.max(2, p*100)}%"></i><span>${(p*100).toFixed(0)}%</span></div>`).join('')}</div>`;
+}
+function shortKey(k, q) { return q === 'operation' ? k : k; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function add(html, cls='') { const d = document.createElement('div'); d.className = 'step ' + cls; d.innerHTML = html; log.appendChild(d); log.scrollTop = log.scrollHeight; }
+function setShot(e) { shot.innerHTML = `<img src="data:image/jpeg;base64,${e.screenshot}">`; $('#urlbar').textContent = (e.title ? e.title + ' — ' : '') + e.url; }
+function stats(status) { $('#s-steps').textContent = steps; $('#s-cost').textContent = '$' + cost.toFixed(4); $('#s-lat').textContent = lats.length ? Math.round(lats.reduce((a,b)=>a+b,0)/lats.length) + 'ms avg' : '–'; if (status) $('#s-status').textContent = status; }
+
+$('#stop').onclick = () => ctrl?.abort();
+$('#f').onsubmit = async ev => {
+  ev.preventDefault();
+  log.innerHTML = ''; steps = 0; cost = 0; lats = []; stats('running'); $('#run').disabled = true; $('#stop').disabled = false;
+  ctrl = new AbortController();
+  try {
+    const res = await fetch('/api/run', { method:'POST', signal: ctrl.signal, headers:{'content-type':'application/json'},
+      body: JSON.stringify({ url: $('#url').value, goal: $('#goal').value, values: $('#values').value, maxSteps: +$('#max').value }) });
+    if (!res.ok) { add(`<div class="note">${esc(await res.text())}</div>`, 'end bad'); return; }
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream:true });
+      let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i+1); if (line.trim()) handle(JSON.parse(line)); }
+    }
+  } catch (e) { if (e.name !== 'AbortError') add(`<div class="note">${esc(e.message)}</div>`, 'end bad'); else stats('stopped'); }
+  finally { $('#run').disabled = false; $('#stop').disabled = true; ctrl = null; }
+};
+
+function handle(e) {
+  if (e.type === 'start') add(`<div class="head"><span>start</span><span>jev via ${esc(e.via)}</span></div><div class="action">${esc(e.url)}</div>`);
+  else if (e.type === 'screenshot') setShot(e);
+  else if (e.type === 'step') {
+    steps = e.step; cost += e.costUsd; lats.push(e.jevMs); stats();
+    setShot(e);
+    add(`<div class="head"><span>step ${e.step} · ${e.elementCount} elements</span><span>jev ${e.jevMs}ms · exec ${e.execMs}ms</span></div>
+         <div class="action">${esc(e.action)}</div>
+         ${e.note ? `<div class="note">${esc(e.note)}</div>` : ''}
+         ${bars(e.answers, 'operation')}
+         ${e.answers.goal_achieved ? `<div class="bar" style="margin-top:4px"><b>goal achieved?</b><i style="width:${Math.max(2, e.answers.goal_achieved.noul*100)}%"></i><span>${(e.answers.goal_achieved.noul*100).toFixed(0)}%</span></div>` : ''}`);
+  } else if (e.type === 'end') {
+    stats(e.status);
+    add(`<div class="head"><span>${esc(e.status)}</span><span>${e.steps} steps · $${e.totalCostUsd.toFixed(4)}</span></div><div class="action">${esc(e.message)}</div>`, 'end ' + (e.status === 'done' ? '' : 'bad'));
+  }
+}
+</script>
+</body>
+</html>
