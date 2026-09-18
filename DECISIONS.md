@@ -1,6 +1,6 @@
 # checkto reliability work
 
-- Branch adam/unslop-copy, based on local main 1886b8c. No remote.
+- Branch adam/unslop-copy, based on local main 1886b8c. Remote: https://github.com/akrupa-appto/checkto (private).
 - Preserve fast (jev only) and careful (planner + jev). Do not silently switch modes.
 - User reported GitHub most-starred/raw README task failing in fast mode.
 - Original handoff requests fresh UI checks in both modes and commit pending agent.ts, planner.ts, public/index.html changes.
@@ -26,3 +26,6 @@
 - Anchor fast GitHub task PASS: sorted by Stars, x-md raw README,30.21s,$0.0026 model cost. No planner in request.
 - Anchor custom GLM changelog task PASS: docs/changelog.md,51.38s,$0.0020 model cost. Custom selection survives reload.
 - Width assertions passed at390,900,1000px with live iframe.13 deterministic tests pass including per-request routing, no local Chromium fallback, Anchor cleanup, canceled-task abort, click/navigation timing, completion guards.
+
+- Adam approved production restart. checkto.service restarted successfully on 2026-09-18; /api/health reports browser=anchor. Fresh main-service UI checks passed: Jev-only HN comments9.61s, DeepSeek-assisted15.07s.13 regression tests passed again.
+- Adam requested a GitHub repo under akrupa-appto. Created private akrupa-appto/checkto; initial upload targets main. Secrets and runs remain gitignored. External HTTPS could not be reached from this VM during final checks; service and browser checks used localhost8791.
