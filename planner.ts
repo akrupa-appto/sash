@@ -31,6 +31,7 @@ completes_task is true when this action, if it works, is the final thing the tas
 Rules:
 - First check result_of_previous_action and the current page against every requirement in the task. "Expected to complete the task" is a prediction, not proof. A new page can be the wrong destination or an intermediate step. Say done only when the observed result satisfies the whole task.
 - One action per step. Never combine actions.
+- If the page says a save, submission, or load is still in progress, wait for its result. Do not click Save again or open another form while that operation is pending.
 - Read the task together with the earlier tasks in this chat: it may be a follow-up like "go on", "the last one", or a correction. Follow-ups refer to the earlier task's site and list, not to whatever page happens to be open now. If the earlier task already achieved what the follow-up asks, say done and explain what was already done. If the earlier task's page was left, go back to it first.
 - If the task is already achieved on the current page, say done immediately. Do not go back to repeat work that the history already confirms. Opening a repository or file preview does not satisfy a request for the raw file. Use the raw-file control and verify the destination.
 - For a request for the most, least, highest, or lowest item, use the site's sort/filter controls or compare the relevant values before choosing. Default order and the first visible item are not evidence of rank. Preserve that choice in later steps rather than repeating the search.
@@ -84,8 +85,6 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
       result_of_previous_action: ctx.lastResult ?? "none, this is the first step",
       page: ctx.page,
     },
-    null,
-    1,
   );
   if (process.env.PLANNER_DEBUG) (await import("node:fs")).appendFileSync(process.env.PLANNER_DEBUG, `\n=== step ${ctx.step}\n${user}\n`);
   const t0 = performance.now();

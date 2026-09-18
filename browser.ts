@@ -8,6 +8,7 @@ export type El = {
   value?: string;
   kind: "click" | "type" | "select";
   options?: string[]; // native select options
+  contentEditable?: boolean;
   inViewport: boolean;
   pos?: "above" | "below"; // when not in viewport: which way to scroll to reach it
 };
@@ -23,6 +24,12 @@ export type Snapshot = {
 
 const MAX_ELEMENTS = 240; // Jev choice questions allow up to 255 options
 const MAX_TEXT = 8000;
+
+const pageReady = () => !Array.from(document.querySelectorAll(
+  '[aria-busy="true"], button:disabled, input[type="submit"]:disabled, [role="button"][aria-disabled="true"]',
+)).some(el => el.getClientRects().length && (
+  el.getAttribute("aria-busy") === "true" || /^(saving|loading|submitting|processing|uploading)(\s*[.…]+)?$/i.test((el.textContent || el.getAttribute("value") || "").trim())
+));
 
 export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page; liveViewUrl: string; close: () => Promise<void> }> {
   const key = process.env.ANCHOR_API_KEY || process.env.ANCHORBROWSER_API_KEY;
@@ -110,7 +117,7 @@ const SNAPSHOT_JS = `(maxEls) => {
     if (role === 'checkbox' || role === 'radio' || role === 'switch') value = (el.checked || el.getAttribute('aria-checked') === 'true') ? 'checked' : 'unchecked';
     const inViewport = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
     const options = kind === 'select' ? Array.from(el.options).slice(0, 40).map(o => clean(o.text)) : undefined;
-    out.push({ el, role, name, value, kind, options, inViewport, pos: inViewport ? undefined : (r.bottom <= 0 ? 'above' : 'below'), top: r.top });
+    out.push({ el, role, name, value, kind, options, contentEditable: el.isContentEditable || undefined, inViewport, pos: inViewport ? undefined : (r.bottom <= 0 ? 'above' : 'below'), top: r.top });
   }
   // document order, so "the last item in the list" is the last element listed
   const kept = out.slice(0, maxEls);
@@ -118,11 +125,12 @@ const SNAPSHOT_JS = `(maxEls) => {
   const text = (document.body.innerText || '').replace(/[ \\t]+/g, ' ').replace(/\\n{2,}/g, '\\n').trim();
   const se = document.scrollingElement || document.documentElement;
   return {
+    busy: !(${pageReady.toString()})(),
     url: location.href,
     title: document.title,
     text,
     scroll: { y: Math.round(se.scrollTop), max: Math.max(0, Math.round(se.scrollHeight - innerHeight)) },
-    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, inViewport: o.inViewport, pos: o.pos })),
+    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, contentEditable: o.contentEditable, inViewport: o.inViewport, pos: o.pos })),
   };
 }`;
 
@@ -130,7 +138,25 @@ const SNAPSHOT_JS = `(maxEls) => {
 const SNAPSHOT_FN = new Function("return " + SNAPSHOT_JS)() as (maxEls: number) => any;
 
 export async function snapshot(page: Page): Promise<Snapshot> {
-  const raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
+  let raw;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
+      if (raw.busy) {
+        // A client-side save may not generate a network request. Only pay for
+        // another remote wait/read when the snapshot actually observes progress.
+        await page.waitForFunction(pageReady, undefined, { timeout: 10000 }).catch(() => {});
+        raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
+      }
+      break;
+    } catch (err) {
+      // Navigation can replace the document between settling and reading it.
+      // Retry only this read; replaying a click could submit the same form twice.
+      if (attempt >= 2 || !/Execution context was destroyed|Cannot find context with specified id/.test((err as Error).message)) throw err;
+      await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(250);
+    }
+  }
   const fingerprint = createHash("sha1")
     .update(raw.url)
     .update(String(Math.round(raw.scroll.y / 50)))
@@ -159,20 +185,25 @@ export async function click(page: Page, id: number) {
   }, undefined, { timeout: 3000 });
   // Locator.click already scrolls and waits for actionability. A forced retry
   // can target stale controls after an asynchronous page replacement.
-  await l.click({ timeout: 5000 });
-  if (href && href !== before && page.url() === before) {
-    await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 10000 });
+  // Keep actionability short, but give a link's destination time to load.
+  // Waiting separately avoids timing out the click during a slow response.
+  const navigates = !!href && href !== before;
+  await l.click({ timeout: 5000, ...(navigates ? { noWaitAfter: true } : {}) });
+  if (navigates) {
+    await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 30000 });
   }
 }
 
-export async function typeText(page: Page, id: number, text: string, submit: boolean) {
+export async function typeText(page: Page, id: number, text: string, submit: boolean, contentEditable = false) {
   const l = loc(page, id);
-  await l.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-  await l.click({ timeout: 5000 }).catch(() => {});
-  const editable = await l.evaluate((el: any) => el.isContentEditable).catch(() => false);
-  if (editable) {
-    await l.press("Control+A").catch(() => {});
-    await l.pressSequentially(text, { delay: 5 });
+  // fill handles focus and replacement for plain fields. Avoid
+  // three extra CDP round trips (scroll, click, inspect) for every form field.
+  if (contentEditable) {
+    // Rich editors may require keyboard events for their internal state.
+    // Anchor's browser platform can differ from the Node client's platform.
+    // Native selection avoids sending the wrong platform's select-all shortcut.
+    await l.selectText({ timeout: 5000 });
+    await l.pressSequentially(text, { delay: 5, timeout: 5000 });
   } else {
     await l.fill(text, { timeout: 5000 });
   }

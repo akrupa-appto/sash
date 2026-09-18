@@ -209,7 +209,7 @@ $('#f').onsubmit = async ev => {
     const id = await ensureSession();
     typing.textContent = 'working on your task';
     const res = await fetch('/api/session/' + id + '/task', { method:'POST', signal: ctrl.signal, headers:{'content-type':'application/json'},
-      body: JSON.stringify({ message: text, maxSteps: 20, supervisor, ...(supervisor ? { model, reasoning } : {}) }) });
+      body: JSON.stringify({ message: text, supervisor, ...(supervisor ? { model, reasoning } : {}) }) });
     if (!res.ok) { typing.remove(); el('msg agent bad', `<div class="result">${esc((await res.json().catch(()=>({}))).error || res.statusText)}</div>`); stats({ status:'error' }); return; }
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {

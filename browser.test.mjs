@@ -1,7 +1,72 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
-import { click, settle } from './browser.ts';
+import { runInNewContext } from 'node:vm';
+import { click, settle, snapshot, typeText } from './browser.ts';
+
+test('a slow navigation gets enough time without repeating the click', async () => {
+  let attempts = 0;
+  const link = {
+    evaluate: async () => 'https://example.test/next',
+    click: async ({ timeout, noWaitAfter }) => {
+      attempts++;
+      assert.equal(timeout, 5000);
+      if (!noWaitAfter) throw new Error('locator.click: Timeout exceeded during navigation');
+    },
+  };
+  await click({ url: () => 'https://example.test', locator: () => ({ first: () => link }),
+    waitForURL: async (_predicate, {timeout}) => { assert.ok(timeout >= 8000); },
+  }, 1);
+  assert.equal(attempts, 1);
+});
+
+test('plain inputs use fill and rich editors keep keyboard events', async () => {
+  const calls = [];
+  const locator = {
+    fill: async text => calls.push(['fill',text]),
+    selectText: async () => calls.push(['selectText']),
+    press: async key => calls.push(['press',key]),
+    pressSequentially: async text => calls.push(['type',text]),
+  };
+  const page = {locator:()=>({first:()=>locator})};
+  await typeText(page,1,'plain',false);
+  await typeText(page,1,'rich',true,true);
+  assert.deepEqual(calls,[['fill','plain'],['selectText'],['type','rich'],['press','Enter']]);
+});
+
+test('snapshot retries an interrupted read, never a page action', async () => {
+  let reads = 0;
+  const page = {
+    evaluate: async () => {
+      if (++reads === 1) throw new Error('Execution context was destroyed, most likely because of a navigation');
+      return {url:'https://example.test/next', title:'Next', text:'Saved', scroll:{y:0,max:0}, elements:[]};
+    },
+    waitForLoadState: async () => {}, waitForTimeout: async () => {},
+  };
+  assert.equal((await snapshot(page)).title, 'Next');
+  assert.equal(reads, 2);
+});
+
+test('snapshot does not retry unrelated errors', async () => {
+  let reads = 0;
+  await assert.rejects(snapshot({ evaluate: async () => { reads++; throw new Error('page closed'); } }), /page closed/);
+  assert.equal(reads, 1);
+});
+
+test('snapshot waits for a visible disabled saving button even without a network request', async () => {
+  let saved = false;
+  const save = delay(400).then(() => { saved = true; });
+  const button = {textContent:'Saving…', getAttribute:()=>null, getClientRects:()=>[{}]};
+  const page = {
+    evaluate: async () => ({busy:!saved, url:'https://example.test', title:'Save', text:saved?'Saved':'Saving…', scroll:{y:0,max:0}, elements:[]}),
+    waitForLoadState: async () => {}, waitForTimeout: delay,
+    waitForFunction: async fn => {
+      const document = {querySelectorAll:()=>saved ? [] : [button]};
+      while (!runInNewContext(`(${fn.toString()})()`, {document})) await delay(5);
+    },
+  };
+  try { assert.equal((await snapshot(page)).text, 'Saved'); } finally { await save; }
+});
 
 test('settle waits for requests started shortly after a click', async () => {
   // A client-side click handler starts fetching after a debounce. The old page
@@ -17,6 +82,7 @@ test('settle waits for requests started shortly after a click', async () => {
     pending = false;
   })();
   const page = {
+    waitForFunction: async () => {},
     waitForLoadState: async state => {
       if (state === 'networkidle' && pending) await request;
     },

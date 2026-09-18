@@ -134,7 +134,7 @@ export const server = http.createServer(async (req, res) => {
       send({ type: "start", via: jevVia(), url: target ?? s.browser.page.url(), supervisor: body.supervisor === false ? undefined : model });
       await runTask(
         s.browser.page,
-        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks, supervisor: body.supervisor !== false, model, reasoning, liveView: true },
+        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 60, previousTasks, supervisor: body.supervisor !== false, model, reasoning, liveView: true },
         send,
         ac.signal,
       );
