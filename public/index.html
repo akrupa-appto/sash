@@ -90,6 +90,19 @@
             <option value="custom">custom model ID</option>
           </select>
         </label>
+        <label for="reasoning">reasoning
+          <select id="reasoning" aria-describedby="reasoning-help">
+            <option value="auto">auto · fastest supported</option>
+            <option value="none">off</option>
+            <option value="minimal">minimal</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">extra high</option>
+            <option value="max">maximum</option>
+          </select>
+        </label>
+        <span id="reasoning-help">more reasoning can take longer and cost more.</span>
         <input id="custom-model" aria-label="custom model ID" placeholder="provider/model-id" maxlength="200" pattern="[a-zA-Z0-9~][a-zA-Z0-9._:/@~\\-]*" hidden disabled>
       </div>
       <div class="row">
@@ -114,16 +127,26 @@ const supervisorOn = () => !!$('#mode button.on')?.dataset.sup.startsWith('1');
 const savedModel = localStorage.getItem('checkto-model');
 if ([...$('#model').options].some(o => o.value === savedModel)) $('#model').value = savedModel;
 $('#custom-model').value = localStorage.getItem('checkto-custom-model') || '';
+let savedReasoning = localStorage.getItem('checkto-reasoning') || 'auto';
 function updateModelPicker() {
   const careful = supervisorOn(), custom = $('#model').value === 'custom';
   $('#model-picker').hidden = !careful;
   $('#model').disabled = !careful || $('#send').disabled;
+  const selectedModel = custom ? $('#custom-model').value.trim() : $('#model').value;
+  const preset = ['deepseek/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash', 'moonshotai/kimi-k3'].includes(selectedModel);
+  for (const option of $('#reasoning').options) {
+    option.hidden = option.disabled = (preset && ['minimal','medium','xhigh'].includes(option.value)) || (selectedModel === 'z-ai/glm-5.3-flash' && option.value === 'none');
+  }
+  $('#reasoning').value = [...$('#reasoning').options].some(o => o.value === savedReasoning && !o.disabled) ? savedReasoning : 'auto';
+  $('#reasoning').disabled = !careful || $('#send').disabled;
+
   $('#custom-model').hidden = !custom;
   $('#custom-model').disabled = !careful || !custom || $('#send').disabled;
   $('#custom-model').required = careful && custom;
 }
+$('#reasoning').onchange = () => { savedReasoning = $('#reasoning').value; localStorage.setItem('checkto-reasoning', savedReasoning); };
 $('#model').onchange = () => { localStorage.setItem('checkto-model', $('#model').value); updateModelPicker(); };
-$('#custom-model').oninput = () => { $('#custom-model').setCustomValidity(''); localStorage.setItem('checkto-custom-model', $('#custom-model').value); };
+$('#custom-model').oninput = () => { $('#custom-model').setCustomValidity(''); localStorage.setItem('checkto-custom-model', $('#custom-model').value); updateModelPicker(); };
 document.querySelectorAll('#mode button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x === b));
   updateModelPicker();
@@ -172,6 +195,7 @@ $('#f').onsubmit = async ev => {
   ev.preventDefault();
   const text = msg.value.trim(); if (!text) return;
   const supervisor = supervisorOn();
+  const reasoning = $('#reasoning').value;
   const model = $('#model').value === 'custom' ? $('#custom-model').value.trim() : $('#model').value;
   if (supervisor && !model) { $('#custom-model').setCustomValidity('enter a model ID'); $('#custom-model').reportValidity(); return; }
   msg.value = '';
@@ -185,7 +209,7 @@ $('#f').onsubmit = async ev => {
     const id = await ensureSession();
     typing.textContent = 'working on your task';
     const res = await fetch('/api/session/' + id + '/task', { method:'POST', signal: ctrl.signal, headers:{'content-type':'application/json'},
-      body: JSON.stringify({ message: text, maxSteps: 20, supervisor, ...(supervisor ? { model } : {}) }) });
+      body: JSON.stringify({ message: text, maxSteps: 20, supervisor, ...(supervisor ? { model, reasoning } : {}) }) });
     if (!res.ok) { typing.remove(); el('msg agent bad', `<div class="result">${esc((await res.json().catch(()=>({}))).error || res.statusText)}</div>`); stats({ status:'error' }); return; }
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {

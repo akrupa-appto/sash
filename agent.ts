@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 import { decide, writeText, type ChoiceAnswer, type Question } from "./jev.ts";
-import { plan, plannerModel } from "./planner.ts";
+import { plan, plannerModel, type ReasoningLevel } from "./planner.ts";
 import * as b from "./browser.ts";
 
 export type RunInput = {
@@ -10,6 +10,7 @@ export type RunInput = {
   maxSteps?: number;
   previousTasks?: string[]; // earlier messages in this chat, oldest first, so "go on" has context
   supervisor?: boolean; // default true: a chat LLM thinks (one action at a time), Jev executes (grounds it to an element)
+  reasoning?: ReasoningLevel;
   model?: string; // planner model for this task; fast mode still uses Jev
   liveView?: boolean; // Anchor streams the browser directly; skip screenshot work
 };
@@ -151,6 +152,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           },
           signal,
           input.model,
+          input.reasoning,
         );
         totalCost += p.cost_usd;
         planMs = Math.round(p.ms);

@@ -78,3 +78,39 @@ test('prefill retry preserves an explicitly selected custom model', async () => 
     else process.env.OPENROUTER_API_KEY = oldKey;
   }
 });
+
+ test('reasoning stays request-scoped and survives prefill retry', async () => {
+  const oldKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  const requests = [];
+  const fetchMock = mock.method(globalThis, 'fetch', async (_url, options) => {
+    const body = JSON.parse(options.body); requests.push(body);
+    if (body.messages.at(-1).role === 'assistant') return new Response('prefill unsupported', {status:400});
+    return done(body.model);
+  });
+  try {
+    await Promise.all(['low','high','max'].map(level => plan(ctx, undefined, 'provider/same-model', level)));
+    assert.deepEqual(requests.map(r => r.reasoning.effort), ['low','high','max']);
+    assert.ok(requests[2].max_tokens > requests[1].max_tokens);
+    await plan(ctx, undefined, 'anthropic/effort-retry', 'high');
+    assert.deepEqual(requests.slice(-2).map(r => r.reasoning), [{effort:'high'},{effort:'high'}]);
+    await assert.rejects(plan(ctx, undefined, 'z-ai/glm-5.3-flash','none'), /requires reasoning/);
+  } finally {
+    fetchMock.mock.restore();
+    if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = oldKey;
+  }
+});
+ test('explicit off is not silently changed on a mandatory reasoning error', async () => {
+  const oldKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('reasoning is mandatory', {status:400}));
+  try {
+    await assert.rejects(plan(ctx, undefined, 'provider/explicit-off', 'none'), /mandatory/);
+    assert.equal(fetchMock.mock.callCount(), 1);
+  } finally {
+    fetchMock.mock.restore();
+    if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = oldKey;
+  }
+});

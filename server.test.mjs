@@ -30,19 +30,25 @@ test('session exposes the live view and preserves each task model', async () => 
   const { id, liveViewUrl } = await (await post('/api/session')).json();
   assert.equal(liveViewUrl,'https://live.example.test/session');
   for (const model of ['deepseek/deepseek-v4.1-flash','z-ai/glm-5.3-flash','moonshotai/kimi-k3','provider/custom-model:free']) {
-    const r = await post(`/api/session/${id}/task`,{message:'open https://example.test',supervisor:true,model});
+    const r = await post(`/api/session/${id}/task`,{message:'open https://example.test',supervisor:true,model,reasoning:'high'});
     const events = (await r.text()).trim().split('\n').map(JSON.parse);
     assert.equal(events[0].supervisor,model);
     assert.equal(lastInput.model,model);
+    assert.equal(lastInput.reasoning,'high');
     assert.equal(lastInput.liveView,true);
   }
   const bad = await post(`/api/session/${id}/task`,{message:'open https://example.test',model:'bad model id'});
   assert.equal(bad.status,400);
   await bad.text();
-  const fast = await post(`/api/session/${id}/task`,{message:'open https://example.test',supervisor:false});
+  for (const reasoning of ['bogus', {}, 'none', 'medium']) {
+    const invalid = await post(`/api/session/${id}/task`,{message:'open https://example.test',model:'z-ai/glm-5.3-flash',reasoning});
+    assert.equal(invalid.status,400); await invalid.text();
+  }
+  const fast = await post(`/api/session/${id}/task`,{message:'open https://example.test',supervisor:false,reasoning:'ignored'});
   const events = (await fast.text()).trim().split('\n').map(JSON.parse);
   assert.equal(events[0].supervisor,undefined);
   assert.equal(lastInput.supervisor,false);
+  assert.equal(lastInput.reasoning,'auto');
   await (await post(`/api/session/${id}/close`)).text();
   assert.equal(closed,1);
 });

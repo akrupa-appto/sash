@@ -106,6 +106,14 @@ export const server = http.createServer(async (req, res) => {
       }
       model = body.model.trim();
     }
+    const reasoning = body.supervisor === false ? "auto" : (body.reasoning ?? "auto");
+    if (!["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(reasoning)) {
+      return json(res, 400, { error: "choose a valid reasoning level" });
+    }
+    const preset = ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash", "moonshotai/kimi-k3"].includes(model);
+    if (body.supervisor !== false && preset && (!["auto", "none", "low", "high", "max"].includes(reasoning) || (model === "z-ai/glm-5.3-flash" && reasoning === "none"))) {
+      return json(res, 400, { error: "this model does not support that reasoning level; choose auto, low, high, or maximum" });
+    }
     let target: string | undefined = body.url ? String(body.url) : message.match(URL_RE)?.[0];
     if (target && !/^https?:\/\//i.test(target)) target = "https://" + target;
     const onBlank = s.browser.page.url() === "about:blank";
@@ -126,7 +134,7 @@ export const server = http.createServer(async (req, res) => {
       send({ type: "start", via: jevVia(), url: target ?? s.browser.page.url(), supervisor: body.supervisor === false ? undefined : model });
       await runTask(
         s.browser.page,
-        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks, supervisor: body.supervisor !== false, model, liveView: true },
+        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks, supervisor: body.supervisor !== false, model, reasoning, liveView: true },
         send,
         ac.signal,
       );
