@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
 export type El = {
@@ -15,6 +16,8 @@ export type Snapshot = {
   title: string;
   text: string;
   elements: El[];
+  scroll: { y: number; max: number }; // max = furthest scrollY possible; 0 means the page fits the viewport
+  fingerprint: string; // changes when the visible page state changes
 };
 
 const MAX_ELEMENTS = 180;
@@ -87,10 +90,12 @@ const SNAPSHOT_JS = `(maxEls) => {
   const kept = out.slice(0, maxEls);
   kept.forEach((o, i) => o.el.setAttribute('data-jev-idx', String(i + 1)));
   const text = (document.body.innerText || '').replace(/[ \\t]+/g, ' ').replace(/\\n{2,}/g, '\\n').trim();
+  const se = document.scrollingElement || document.documentElement;
   return {
     url: location.href,
     title: document.title,
     text,
+    scroll: { y: Math.round(se.scrollTop), max: Math.max(0, Math.round(se.scrollHeight - innerHeight)) },
     elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, inViewport: o.inViewport })),
   };
 }`;
@@ -100,7 +105,14 @@ const SNAPSHOT_FN = new Function("return " + SNAPSHOT_JS)() as (maxEls: number) 
 
 export async function snapshot(page: Page): Promise<Snapshot> {
   const raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
-  return { ...raw, text: raw.text.slice(0, MAX_TEXT) } as Snapshot;
+  const fingerprint = createHash("sha1")
+    .update(raw.url)
+    .update(String(Math.round(raw.scroll.y / 50)))
+    .update(raw.text.slice(0, 6000))
+    .update(raw.elements.map((e: El) => `${e.role}|${e.name}|${e.value ?? ""}`).join("\n"))
+    .digest("hex")
+    .slice(0, 16);
+  return { ...raw, text: raw.text.slice(0, MAX_TEXT), fingerprint } as Snapshot;
 }
 
 export function describe(e: El): string {
@@ -141,7 +153,8 @@ export async function selectOption(page: Page, id: number, optionIndex: number) 
 }
 
 export async function scroll(page: Page, dir: "up" | "down") {
-  await page.mouse.wheel(0, dir === "down" ? 600 : -600);
+  await page.mouse.wheel(0, dir === "down" ? 640 : -640);
+  await page.waitForTimeout(150); // let smooth scrolling and lazy content land
 }
 
 export async function settle(page: Page) {

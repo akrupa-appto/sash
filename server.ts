@@ -14,7 +14,7 @@ const indexHtml = () => fs.readFileSync(path.join(root, "public", "index.html"))
 
 // One chat = one session = one browser. Tasks run one at a time on the same page, so
 // "go to wikipedia" followed by "search for X" works as a conversation.
-type Session = { id: string; browser: Awaited<ReturnType<typeof launch>>; busy: boolean; lastUsed: number };
+type Session = { id: string; browser: Awaited<ReturnType<typeof launch>>; busy: boolean; lastUsed: number; tasks: string[] };
 const sessions = new Map<string, Session>();
 
 async function closeSession(id: string) {
@@ -70,7 +70,7 @@ const server = http.createServer(async (req, res) => {
     }
     const id = crypto.randomBytes(8).toString("hex");
     try {
-      sessions.set(id, { id, browser: await launch(), busy: false, lastUsed: Date.now() });
+      sessions.set(id, { id, browser: await launch(), busy: false, lastUsed: Date.now(), tasks: [] });
     } catch (e) {
       return json(res, 500, { error: (e as Error).message });
     }
@@ -106,22 +106,27 @@ const server = http.createServer(async (req, res) => {
     s.busy = true;
     s.lastUsed = Date.now();
     res.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-cache", "x-accel-buffering": "no" });
+    let outcome = "";
     const send = (e: Event) => {
+      if (e.type === "end") outcome = `${e.status}: ${e.message}`;
       if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
     };
     const ac = new AbortController();
     req.on("close", () => ac.abort());
+    const previousTasks = [...s.tasks];
     try {
       send({ type: "start", via: jevVia(), url: target ?? s.browser.page.url() });
       await runTask(
         s.browser.page,
-        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20 },
+        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks },
         send,
         ac.signal,
       );
     } catch (err) {
       send({ type: "end", status: "error", message: (err as Error).message, totalCostUsd: 0, steps: 0 });
     } finally {
+      s.tasks.push(`user: ${message}` + (outcome ? ` → ${outcome}` : ""));
+      if (s.tasks.length > 20) s.tasks.splice(0, s.tasks.length - 20);
       s.busy = false;
       s.lastUsed = Date.now();
       // a crashed browser should not poison the chat

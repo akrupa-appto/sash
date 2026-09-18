@@ -7,6 +7,7 @@ export type RunInput = {
   goal: string;
   values?: string[]; // texts the user says may need typing
   maxSteps?: number;
+  previousTasks?: string[]; // earlier messages in this chat, oldest first, so "go on" has context
 };
 
 export type StepEvent = {
@@ -104,13 +105,15 @@ export async function runTask(
         if ((k === "TYPE_TEXT" || k === "TYPE_AND_ENTER") && !typeable.length) continue;
         if (k === "SELECT" && !selects.length) continue;
         if (k === "GO_BACK" && step === 1) continue;
+        if (k === "SCROLL_DOWN" && snap.scroll.y >= snap.scroll.max - 4) continue; // already at the bottom
+        if (k === "SCROLL_UP" && snap.scroll.y <= 4) continue;
         opCriteria[k] = v;
       }
       const questions: Record<string, Question> = {
         operation: {
           type: "choice",
           instructions:
-            "Given `goal`, the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. Choose DONE only when `page` already shows the goal is fully achieved.",
+            "Given `goal` (read it together with `earlier_tasks_in_this_chat`: it may be a follow-up like \"go on\" or \"the last one\"), the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? Elements marked (below the fold) need scrolling before they can be seen; `page.scroll_position` says how far down the page is. If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. Choose DONE only when `page` already shows the goal is fully achieved.",
           criteria: opCriteria,
         },
         goal_achieved: {
@@ -149,11 +152,14 @@ export async function runTask(
         };
       }
 
+      const scrollPos =
+        snap.scroll.max === 0 ? "whole page fits on screen" : snap.scroll.y >= snap.scroll.max - 4 ? "at the bottom of the page" : snap.scroll.y <= 4 ? "at the top of the page, more below" : `${Math.round((snap.scroll.y / snap.scroll.max) * 100)}% down the page, more below`;
       const state = {
         goal: input.goal,
+        earlier_tasks_in_this_chat: (input.previousTasks ?? []).slice(-6),
         provided_values: candidates,
         step: `${step} of ${maxSteps}`,
-        page: { url: snap.url, title: snap.title, text: snap.text },
+        page: { url: snap.url, title: snap.title, scroll_position: scrollPos, text: snap.text },
         elements: snap.elements.map((e) => b.describe(e) + (e.inViewport ? "" : " (below the fold)")),
         history: history.slice(-10),
       };
@@ -252,10 +258,11 @@ export async function runTask(
       if (chosen === "DONE") return end("done", `Goal achieved (goal_achieved=${achieved.toFixed(2)})`);
       if (chosen === "BLOCKED") return end("blocked", "Jev reports the goal cannot be reached from here");
 
-      // Loop guard: the same action on the same URL three times means the page is not responding to it.
-      const sig = `${page.url()}|${action}`;
+      // Loop guard: the same action from the same page state three times means the page is not responding
+      // to it. Scrolling, typing, or navigating changes the fingerprint, so real progress never trips this.
+      const sig = `${snap.fingerprint}|${action}`;
       actionCounts.set(sig, (actionCounts.get(sig) ?? 0) + 1);
-      if ((actionCounts.get(sig) ?? 0) >= 3) return end("blocked", `Stuck repeating: ${action}`);
+      if ((actionCounts.get(sig) ?? 0) >= 3) return end("blocked", `The page did not change after doing this 3 times: ${action}`);
     }
     return end("max_steps", `Reached ${maxSteps} steps`);
   } catch (err) {
