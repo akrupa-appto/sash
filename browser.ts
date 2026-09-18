@@ -200,7 +200,9 @@ export async function typeText(page: Page, id: number, text: string, submit: boo
   // three extra CDP round trips (scroll, click, inspect) for every form field.
   if (contentEditable) {
     // Rich editors may require keyboard events for their internal state.
-    await l.press("ControlOrMeta+A", { timeout: 5000 });
+    // Anchor's browser platform can differ from the Node client's platform.
+    // Native selection avoids sending the wrong platform's select-all shortcut.
+    await l.selectText({ timeout: 5000 });
     await l.pressSequentially(text, { delay: 5, timeout: 5000 });
   } else {
     await l.fill(text, { timeout: 5000 });

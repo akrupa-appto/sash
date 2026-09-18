@@ -24,13 +24,14 @@ test('plain inputs use fill and rich editors keep keyboard events', async () => 
   const calls = [];
   const locator = {
     fill: async text => calls.push(['fill',text]),
+    selectText: async () => calls.push(['selectText']),
     press: async key => calls.push(['press',key]),
     pressSequentially: async text => calls.push(['type',text]),
   };
   const page = {locator:()=>({first:()=>locator})};
   await typeText(page,1,'plain',false);
   await typeText(page,1,'rich',true,true);
-  assert.deepEqual(calls,[['fill','plain'],['press','ControlOrMeta+A'],['type','rich'],['press','Enter']]);
+  assert.deepEqual(calls,[['fill','plain'],['selectText'],['type','rich'],['press','Enter']]);
 });
 
 test('snapshot retries an interrupted read, never a page action', async () => {
