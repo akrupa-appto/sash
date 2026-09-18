@@ -61,8 +61,7 @@ export async function runTask(
   const candidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(input.goal)].map((s) => s.trim()).filter(Boolean)));
   let totalCost = 0;
   let step = 0;
-  let sameActionStreak = 0;
-  let lastAction = "";
+  const actionCounts = new Map<string, number>();
 
   const end = (status: Extract<Event, { type: "end" }>["status"], message: string) =>
     emit({ type: "end", status, message, totalCostUsd: totalCost, steps: step });
@@ -102,7 +101,7 @@ export async function runTask(
         operation: {
           type: "choice",
           instructions:
-            "Given `goal`, the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? Do not repeat an action from `history` that did not change the page. Choose DONE only when `page` already shows the goal is fully achieved.",
+            "Given `goal`, the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. Choose DONE only when `page` already shows the goal is fully achieved.",
           criteria: opCriteria,
         },
         goal_achieved: {
@@ -244,9 +243,10 @@ export async function runTask(
       if (chosen === "DONE") return end("done", `Goal achieved (goal_achieved=${achieved.toFixed(2)})`);
       if (chosen === "BLOCKED") return end("blocked", "Jev reports the goal cannot be reached from here");
 
-      sameActionStreak = action === lastAction ? sameActionStreak + 1 : 0;
-      lastAction = action;
-      if (sameActionStreak >= 3) return end("blocked", `Stuck repeating: ${action}`);
+      // Loop guard: the same action on the same URL three times means the page is not responding to it.
+      const sig = `${page.url()}|${action}`;
+      actionCounts.set(sig, (actionCounts.get(sig) ?? 0) + 1);
+      if ((actionCounts.get(sig) ?? 0) >= 3) return end("blocked", `Stuck repeating: ${action}`);
     }
     return end("max_steps", `Reached ${maxSteps} steps`);
   } catch (err) {

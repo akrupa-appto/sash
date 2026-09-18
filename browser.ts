@@ -21,7 +21,7 @@ const MAX_ELEMENTS = 180;
 const MAX_TEXT = 3500;
 
 export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ channel: "chromium", headless: true }); // full chromium, new headless mode
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     userAgent:
