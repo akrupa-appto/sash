@@ -2,19 +2,35 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { runInNewContext } from 'node:vm';
-import { click, settle, snapshot } from './browser.ts';
+import { click, settle, snapshot, typeText } from './browser.ts';
 
 test('a slow navigation gets enough time without repeating the click', async () => {
   let attempts = 0;
   const link = {
-    evaluate: async () => null,
-    click: async ({ timeout }) => {
+    evaluate: async () => 'https://example.test/next',
+    click: async ({ timeout, noWaitAfter }) => {
       attempts++;
-      if (timeout < 8000) throw new Error('locator.click: Timeout exceeded during navigation');
+      assert.equal(timeout, 5000);
+      if (!noWaitAfter) throw new Error('locator.click: Timeout exceeded during navigation');
     },
   };
-  await click({ url: () => 'https://example.test', locator: () => ({ first: () => link }) }, 1);
+  await click({ url: () => 'https://example.test', locator: () => ({ first: () => link }),
+    waitForURL: async (_predicate, {timeout}) => { assert.ok(timeout >= 8000); },
+  }, 1);
   assert.equal(attempts, 1);
+});
+
+test('plain inputs use fill and rich editors keep keyboard events', async () => {
+  const calls = [];
+  const locator = {
+    fill: async text => calls.push(['fill',text]),
+    press: async key => calls.push(['press',key]),
+    pressSequentially: async text => calls.push(['type',text]),
+  };
+  const page = {locator:()=>({first:()=>locator})};
+  await typeText(page,1,'plain',false);
+  await typeText(page,1,'rich',true,true);
+  assert.deepEqual(calls,[['fill','plain'],['press','ControlOrMeta+A'],['type','rich'],['press','Enter']]);
 });
 
 test('snapshot retries an interrupted read, never a page action', async () => {

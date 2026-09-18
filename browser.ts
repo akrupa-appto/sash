@@ -8,6 +8,7 @@ export type El = {
   value?: string;
   kind: "click" | "type" | "select";
   options?: string[]; // native select options
+  contentEditable?: boolean;
   inViewport: boolean;
   pos?: "above" | "below"; // when not in viewport: which way to scroll to reach it
 };
@@ -27,7 +28,7 @@ const MAX_TEXT = 8000;
 const pageReady = () => !Array.from(document.querySelectorAll(
   '[aria-busy="true"], button:disabled, input[type="submit"]:disabled, [role="button"][aria-disabled="true"]',
 )).some(el => el.getClientRects().length && (
-  el.getAttribute("aria-busy") === "true" || /\b(saving|loading|submitting|processing|uploading)\b/i.test(el.textContent || el.getAttribute("value") || "")
+  el.getAttribute("aria-busy") === "true" || /^(saving|loading|submitting|processing|uploading)(\s*[.…]+)?$/i.test((el.textContent || el.getAttribute("value") || "").trim())
 ));
 
 export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page; liveViewUrl: string; close: () => Promise<void> }> {
@@ -116,7 +117,7 @@ const SNAPSHOT_JS = `(maxEls) => {
     if (role === 'checkbox' || role === 'radio' || role === 'switch') value = (el.checked || el.getAttribute('aria-checked') === 'true') ? 'checked' : 'unchecked';
     const inViewport = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
     const options = kind === 'select' ? Array.from(el.options).slice(0, 40).map(o => clean(o.text)) : undefined;
-    out.push({ el, role, name, value, kind, options, inViewport, pos: inViewport ? undefined : (r.bottom <= 0 ? 'above' : 'below'), top: r.top });
+    out.push({ el, role, name, value, kind, options, contentEditable: el.isContentEditable || undefined, inViewport, pos: inViewport ? undefined : (r.bottom <= 0 ? 'above' : 'below'), top: r.top });
   }
   // document order, so "the last item in the list" is the last element listed
   const kept = out.slice(0, maxEls);
@@ -129,7 +130,7 @@ const SNAPSHOT_JS = `(maxEls) => {
     title: document.title,
     text,
     scroll: { y: Math.round(se.scrollTop), max: Math.max(0, Math.round(se.scrollHeight - innerHeight)) },
-    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, inViewport: o.inViewport, pos: o.pos })),
+    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, contentEditable: o.contentEditable, inViewport: o.inViewport, pos: o.pos })),
   };
 }`;
 
@@ -184,19 +185,26 @@ export async function click(page: Page, id: number) {
   }, undefined, { timeout: 3000 });
   // Locator.click already scrolls and waits for actionability. A forced retry
   // can target stale controls after an asynchronous page replacement.
-  // This timeout also covers the navigation triggered by the click. A five
-  // second cap interrupted successful slow saves before their response arrived.
-  await l.click({ timeout: 30000 });
-  if (href && href !== before && page.url() === before) {
-    await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 10000 });
+  // Keep actionability short, but give a link's destination time to load.
+  // Waiting separately avoids timing out the click during a slow response.
+  const navigates = !!href && href !== before;
+  await l.click({ timeout: 5000, ...(navigates ? { noWaitAfter: true } : {}) });
+  if (navigates) {
+    await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 30000 });
   }
 }
 
-export async function typeText(page: Page, id: number, text: string, submit: boolean) {
+export async function typeText(page: Page, id: number, text: string, submit: boolean, contentEditable = false) {
   const l = loc(page, id);
-  // fill handles focus, replacement and contenteditable fields itself. Avoid
+  // fill handles focus and replacement for plain fields. Avoid
   // three extra CDP round trips (scroll, click, inspect) for every form field.
-  await l.fill(text, { timeout: 5000 });
+  if (contentEditable) {
+    // Rich editors may require keyboard events for their internal state.
+    await l.press("ControlOrMeta+A", { timeout: 5000 });
+    await l.pressSequentially(text, { delay: 5, timeout: 5000 });
+  } else {
+    await l.fill(text, { timeout: 5000 });
+  }
   if (submit) await l.press("Enter", { timeout: 3000, noWaitAfter: true }).catch(() => {});
 }
 

@@ -268,7 +268,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
             typedSoFar.push(text);
             action = `${chosen} ${JSON.stringify(text)} into ${e ? b.describe(e) : `[${id}]`}`;
-            await b.typeText(page, id, text, chosen === "TYPE_AND_ENTER");
+            await b.typeText(page, id, text, chosen === "TYPE_AND_ENTER", e?.contentEditable);
             break;
           }
           case "SELECT": {
