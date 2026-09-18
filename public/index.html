@@ -51,6 +51,10 @@
   textarea { width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font:inherit; resize:none; min-height:64px }
   .row { display:flex; gap:8px; align-items:center; color:var(--dim); font-size:12px }
   .row input { width:64px; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 7px; font:inherit }
+  .model-picker { display:flex; flex-direction:column; gap:6px; color:var(--dim); font-size:12px }
+  .model-picker label { display:flex; align-items:center; gap:10px }
+  .model-picker select, .model-picker input { min-width:0; width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:7px; font:inherit }
+  .model-picker[hidden], #custom-model[hidden] { display:none }
   .typing { color:var(--dim); font-size:12px }
   .typing::after { content:'…'; animation: dots 1.2s steps(4,end) infinite }
   @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
@@ -75,6 +79,17 @@
     </div>
     <form id="f">
       <textarea id="msg" placeholder="what should the browser do? include a website to start. enter to send, shift+enter for a new line." required></textarea>
+      <div id="model-picker" class="model-picker">
+        <label for="model">model
+          <select id="model">
+            <option value="deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash</option>
+            <option value="z-ai/glm-5.3-flash">GLM 5.3 Flash</option>
+            <option value="moonshotai/kimi-k3">Kimi K3</option>
+            <option value="custom">custom model ID</option>
+          </select>
+        </label>
+        <input id="custom-model" aria-label="custom model ID" placeholder="provider/model-id" maxlength="200" pattern="[a-zA-Z0-9~][a-zA-Z0-9._:/@~\\-]*" hidden disabled>
+      </div>
       <div class="row">
         <div class="mode" id="mode">
           <button type="button" data-sup="0" title="for short, specific tasks. uses jev to choose each action.">fast</button>
@@ -94,9 +109,24 @@ let session = sessionStorage.getItem('checkto-session') || null;
 let ctrl = null, chatCost = 0;
 
 const supervisorOn = () => !!$('#mode button.on')?.dataset.sup.startsWith('1');
+const savedModel = localStorage.getItem('checkto-model');
+if ([...$('#model').options].some(o => o.value === savedModel)) $('#model').value = savedModel;
+$('#custom-model').value = localStorage.getItem('checkto-custom-model') || '';
+function updateModelPicker() {
+  const careful = supervisorOn(), custom = $('#model').value === 'custom';
+  $('#model-picker').hidden = !careful;
+  $('#model').disabled = !careful || $('#send').disabled;
+  $('#custom-model').hidden = !custom;
+  $('#custom-model').disabled = !careful || !custom || $('#send').disabled;
+  $('#custom-model').required = careful && custom;
+}
+$('#model').onchange = () => { localStorage.setItem('checkto-model', $('#model').value); updateModelPicker(); };
+$('#custom-model').oninput = () => { $('#custom-model').setCustomValidity(''); localStorage.setItem('checkto-custom-model', $('#custom-model').value); };
 document.querySelectorAll('#mode button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x === b));
+  updateModelPicker();
 });
+updateModelPicker();
 document.querySelectorAll('.hint a').forEach(a => a.onclick = () => { msg.value = a.dataset.m; msg.focus(); });
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function el(cls, html) { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; chat.appendChild(d); chat.scrollTop = chat.scrollHeight; return d; }
@@ -124,17 +154,21 @@ msg.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e
 $('#f').onsubmit = async ev => {
   ev.preventDefault();
   const text = msg.value.trim(); if (!text) return;
+  const supervisor = supervisorOn();
+  const model = $('#model').value === 'custom' ? $('#custom-model').value.trim() : $('#model').value;
+  if (supervisor && !model) { $('#custom-model').setCustomValidity('enter a model ID'); $('#custom-model').reportValidity(); return; }
   msg.value = '';
   el('msg user', esc(text));
   const typing = el('typing', 'starting browser');
   $('#send').disabled = true; $('#stop').disabled = false; stats({ status:'running', steps:0, lat:'–' });
+  document.querySelectorAll('#mode button').forEach(b => b.disabled = true); updateModelPicker();
   ctrl = new AbortController();
   let reply = null, lats = [], nSteps = 0, supName = 'jev';
   try {
     const id = await ensureSession();
     typing.textContent = 'working on your task';
     const res = await fetch('/api/session/' + id + '/task', { method:'POST', signal: ctrl.signal, headers:{'content-type':'application/json'},
-      body: JSON.stringify({ message: text, maxSteps: 20, supervisor: supervisorOn() }) });
+      body: JSON.stringify({ message: text, maxSteps: 20, supervisor, ...(supervisor ? { model } : {}) }) });
     if (!res.ok) { typing.remove(); el('msg agent bad', `<div class="result">${esc((await res.json().catch(()=>({}))).error || res.statusText)}</div>`); return; }
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {
@@ -145,7 +179,7 @@ $('#f').onsubmit = async ev => {
   } catch (e) {
     if (e.name === 'AbortError') { finish({ status:'stopped', message:'stopped', steps:nSteps, totalCostUsd:0 }); }
     else { typing.remove(); el('msg agent bad', `<div class="result">${esc(e.message)}</div>`); stats({ status:'error' }); }
-  } finally { typing.remove(); $('#send').disabled = false; $('#stop').disabled = true; ctrl = null; msg.focus(); }
+  } finally { typing.remove(); $('#send').disabled = false; $('#stop').disabled = true; ctrl = null; document.querySelectorAll('#mode button').forEach(b => b.disabled = false); updateModelPicker(); msg.focus(); }
 
   function handle(e) {
     if (e.type === 'start') supName = e.supervisor ? e.supervisor.split('/').pop() + ' reads the page · jev clicks' : 'jev only';
@@ -163,7 +197,7 @@ $('#f').onsubmit = async ev => {
     } else if (e.type === 'end') finish(e);
   }
   function finish(e) {
-    if (!reply) { typing.remove(); reply = el('msg agent', `<div class="meta"><span>jev</span><span></span></div>`); }
+    if (!reply) { typing.remove(); reply = el('msg agent', `<div class="meta"><span>${esc(supName)}</span><span></span></div>`); }
     reply.classList.add(e.status === 'done' ? 'ok' : 'bad');
     reply.insertAdjacentHTML('beforeend', `<div class="result">${esc(e.status)} · ${e.steps} steps · $${(e.totalCostUsd||0).toFixed(4)}<br>${esc(e.answer || e.message)}</div>`);
     stats({ status: e.status }); chat.scrollTop = chat.scrollHeight;

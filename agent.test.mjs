@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-let state, decisions, plans, executed;
+let state, decisions, plans, executed, clickDestination = 'file-preview';
 const snap = () => ({
   url: `https://example.test/${state}`, title: state, text: state,
   fingerprint: state, scroll: { y: 0, max: 0 },
@@ -10,7 +10,7 @@ const snap = () => ({
 mock.module('./browser.ts', { namedExports: {
   snapshot: async () => snap(), screenshot: async () => '', settle: async () => {},
   describe: e => `[${e.id}] ${e.role} "${e.name}"`,
-  click: async () => { executed++; state = 'file-preview'; },
+  click: async () => { executed++; state = clickDestination; },
   typeText: async () => {}, selectOption: async () => {}, scroll: async () => {},
 }});
 mock.module('./jev.ts', { namedExports: {
@@ -50,4 +50,14 @@ test('fast mode does not replace a requested action with an independent completi
   const result = await run(false);
   assert.equal(executed, 1);
   assert.equal(result.status, 'done');
+});
+
+test('a repeated agent action reports a loop rather than blaming the website', async () => {
+  clickDestination = 'repository';
+  decisions = [choice('CLICK'), choice('CLICK'), choice('CLICK')];
+  const result = await run(false);
+  assert.equal(result.status, 'blocked');
+  assert.match(result.message, /repeating the same action/);
+  assert.doesNotMatch(result.message, /page stopped responding/);
+  clickDestination = 'file-preview';
 });

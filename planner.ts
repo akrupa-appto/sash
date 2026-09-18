@@ -67,10 +67,11 @@ export function plannerModel() {
 
 // Some models (e.g. Sonnet 5) reject assistant prefill; remembered per process after the first 400.
 const noPrefill = new Set<string>();
+// GLM requires reasoning. Other custom models can report that requirement too.
+const mandatoryReasoning = new Set<string>(["z-ai/glm-5.3-flash"]);
 
-export async function plan(ctx: PlanContext, signal?: AbortSignal): Promise<Plan & { ms: number; cost_usd: number }> {
+export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plannerModel()): Promise<Plan & { ms: number; cost_usd: number }> {
   const key = process.env.OPENROUTER_API_KEY;
-  const model = plannerModel();
   if (!key) throw new Error("OPENROUTER_API_KEY needed for the supervisor");
   const user = JSON.stringify(
     {
@@ -86,15 +87,16 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal): Promise<Plan
   );
   if (process.env.PLANNER_DEBUG) (await import("node:fs")).appendFileSync(process.env.PLANNER_DEBUG, `\n=== step ${ctx.step}\n${user}\n`);
   const t0 = performance.now();
-  const prefill = !noPrefill.has(model);
+  const prefill = model.startsWith("anthropic/") && !noPrefill.has(model);
+  const needsReasoning = mandatoryReasoning.has(model);
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     signal,
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://checkto.local", "X-Title": "checkto" },
     body: JSON.stringify({
       model,
-      max_tokens: 600,
-      reasoning: { enabled: false },
+      max_tokens: needsReasoning ? 2048 : 600,
+      reasoning: needsReasoning ? { effort: "low" } : { enabled: false },
       temperature: 0,
       usage: { include: true },
       messages: [
@@ -107,9 +109,13 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal): Promise<Plan
   const ms = performance.now() - t0;
   if (!res.ok) {
     const body = await res.text();
+    if (!needsReasoning && res.status === 400 && /reasoning.*(?:mandatory|required|cannot be disabled)/i.test(body)) {
+      mandatoryReasoning.add(model);
+      return plan(ctx, signal, model);
+    }
     if (prefill && res.status === 400 && /prefill/i.test(body)) {
       noPrefill.add(model);
-      return plan(ctx, signal);
+      return plan(ctx, signal, model);
     }
     throw new Error(`supervisor ${res.status}: ${body.slice(0, 300)}`);
   }

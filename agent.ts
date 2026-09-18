@@ -10,6 +10,7 @@ export type RunInput = {
   maxSteps?: number;
   previousTasks?: string[]; // earlier messages in this chat, oldest first, so "go on" has context
   supervisor?: boolean; // default true: a chat LLM thinks (one action at a time), Jev executes (grounds it to an element)
+  model?: string; // planner model for this task; fast mode still uses Jev
 };
 
 export type StepEvent = {
@@ -148,6 +149,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             maxSteps,
           },
           signal,
+          input.model,
         );
         totalCost += p.cost_usd;
         planMs = Math.round(p.ms);
@@ -182,7 +184,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           type: "choice",
           instructions: useSupervisor
             ? "`goal` is one concrete instruction from a supervisor for this step. Which browser operation carries it out on the current `page`? Elements marked (above/below the viewport) need scrolling before they can be seen, but they can still be clicked directly."
-            : "Given `goal` (read it together with `earlier_tasks_in_this_chat`: it may be a follow-up like \"go on\" or \"the last one\"), the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? Elements marked (above/below the viewport) can still be clicked directly; `page.scroll_position` says how far down the page is. If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. Choose DONE only when `page` already shows the goal is fully achieved.",
+            : "Given `goal` (read it together with `earlier_tasks_in_this_chat`: it may be a follow-up like \"go on\" or \"the last one\"), the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? Elements marked (above/below the viewport) can still be clicked directly; `page.scroll_position` says how far down the page is. If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. For a multi-part goal, choose the next unfinished part using the history. For most/least/highest/lowest, use sort controls or compare the relevant values before choosing an item; default order is not proof of rank. A file preview is not a raw file. Do not repeat navigation to a tab already open. Choose DONE only when every part of the goal is visibly achieved.",
           criteria: opCriteria,
         },
         goal_achieved: {
@@ -195,7 +197,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       if (clickable.length)
         questions.click_target = {
           type: "choice",
-          instructions: "If the operation is CLICK, which element in `elements` is the one `goal` refers to (or the best one to make progress on it)?",
+          instructions: "If the operation is CLICK, use the current page and history to choose the element for the next unfinished part of `goal`. For a ranking request, choose the sort control before choosing an item unless the ranking is already established. Do not click the current navigation tab again.",
           criteria: Object.fromEntries(clickable.map((e) => [`el_${e.id}`, b.describe(e)])),
         };
       if (typeable.length)
@@ -324,7 +326,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         note,
       });
 
-      if (chosen === "DONE") return end("done", `done, now on "${await page.title().catch(() => page.url())}"`);
+      if (chosen === "DONE") return end("done", `done, now on "${(await page.title().catch(() => "")) || page.url()}"`);
       // A changed page proves an action had an effect, not that the entire task succeeded.
       // Let the next planner pass inspect the destination before reporting completion.
       if (chosen === "BLOCKED") return end("blocked", "i could not find a way to do this on this page");
