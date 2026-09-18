@@ -70,7 +70,9 @@ const noPrefill = new Set<string>();
 // GLM requires reasoning. Other custom models can report that requirement too.
 const mandatoryReasoning = new Set<string>(["z-ai/glm-5.3-flash"]);
 
-export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plannerModel()): Promise<Plan & { ms: number; cost_usd: number }> {
+export type ReasoningLevel = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plannerModel(), reasoning: ReasoningLevel = "auto"): Promise<Plan & { ms: number; cost_usd: number }> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY needed for the supervisor");
   const user = JSON.stringify(
@@ -88,15 +90,17 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   if (process.env.PLANNER_DEBUG) (await import("node:fs")).appendFileSync(process.env.PLANNER_DEBUG, `\n=== step ${ctx.step}\n${user}\n`);
   const t0 = performance.now();
   const prefill = model.startsWith("anthropic/") && !noPrefill.has(model);
-  const needsReasoning = mandatoryReasoning.has(model);
+  const effort = reasoning === "auto" ? (mandatoryReasoning.has(model) ? "low" : "none") : reasoning;
+  const needsReasoning = effort !== "none";
+  if (!needsReasoning && mandatoryReasoning.has(model)) throw new Error("this model requires reasoning; choose auto, low, high, or maximum");
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     signal,
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://checkto.local", "X-Title": "checkto" },
     body: JSON.stringify({
       model,
-      max_tokens: needsReasoning ? 2048 : 600,
-      reasoning: needsReasoning ? { effort: "low" } : { enabled: false },
+      max_tokens: { none: 600, minimal: 2048, low: 2048, medium: 4096, high: 8192, xhigh: 16384, max: 16384 }[effort],
+      reasoning: needsReasoning ? { effort } : { enabled: false },
       temperature: 0,
       usage: { include: true },
       messages: [
@@ -109,13 +113,13 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   const ms = performance.now() - t0;
   if (!res.ok) {
     const body = await res.text();
-    if (!needsReasoning && res.status === 400 && /reasoning.*(?:mandatory|required|cannot be disabled)/i.test(body)) {
+    if (reasoning === "auto" && !needsReasoning && res.status === 400 && /reasoning.*(?:mandatory|required|cannot be disabled)/i.test(body)) {
       mandatoryReasoning.add(model);
-      return plan(ctx, signal, model);
+      return plan(ctx, signal, model, reasoning);
     }
     if (prefill && res.status === 400 && /prefill/i.test(body)) {
       noPrefill.add(model);
-      return plan(ctx, signal, model);
+      return plan(ctx, signal, model, reasoning);
     }
     throw new Error(`supervisor ${res.status}: ${body.slice(0, 300)}`);
   }
