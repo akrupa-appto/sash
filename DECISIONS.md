@@ -29,3 +29,5 @@
 
 - Adam approved production restart. checkto.service restarted successfully on 2026-09-18; /api/health reports browser=anchor. Fresh main-service UI checks passed: Jev-only HN comments9.61s, DeepSeek-assisted15.07s.13 regression tests passed again.
 - Adam requested a GitHub repo under akrupa-appto. Created private akrupa-appto/checkto; initial upload targets main. Secrets and runs remain gitignored. External HTTPS could not be reached from this VM during final checks; service and browser checks used localhost8791.
+
+- Reasoning selector added in isolated worktree /home/exedev/checkto-reasoning on adam/reasoning-level. Per-task effort, persisted preference, supported preset choices, explicit off never silently enabled.15 tests pass; exact provider calls DeepSeek high, GLM low, Kimi max pass. UI high HN task passed17.81s with preference reload and fast-mode/GLM controls verified. Main service unchanged pending merge/restart approval.
