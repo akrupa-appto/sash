@@ -9,6 +9,7 @@ export type El = {
   kind: "click" | "type" | "select";
   options?: string[]; // native select options
   inViewport: boolean;
+  pos?: "above" | "below"; // when not in viewport: which way to scroll to reach it
 };
 
 export type Snapshot = {
@@ -20,8 +21,8 @@ export type Snapshot = {
   fingerprint: string; // changes when the visible page state changes
 };
 
-const MAX_ELEMENTS = 180;
-const MAX_TEXT = 3500;
+const MAX_ELEMENTS = 240; // Jev choice questions allow up to 255 options
+const MAX_TEXT = 8000;
 
 export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
   const browser = await chromium.launch({ channel: "chromium", headless: true }); // full chromium, new headless mode
@@ -83,10 +84,9 @@ const SNAPSHOT_JS = `(maxEls) => {
     if (role === 'checkbox' || role === 'radio' || role === 'switch') value = (el.checked || el.getAttribute('aria-checked') === 'true') ? 'checked' : 'unchecked';
     const inViewport = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
     const options = kind === 'select' ? Array.from(el.options).slice(0, 40).map(o => clean(o.text)) : undefined;
-    out.push({ el, role, name, value, kind, options, inViewport, top: r.top });
+    out.push({ el, role, name, value, kind, options, inViewport, pos: inViewport ? undefined : (r.bottom <= 0 ? 'above' : 'below'), top: r.top });
   }
-  // viewport elements first, then the rest by document order
-  out.sort((a, b) => (a.inViewport === b.inViewport) ? 0 : (a.inViewport ? -1 : 1));
+  // document order, so "the last item in the list" is the last element listed
   const kept = out.slice(0, maxEls);
   kept.forEach((o, i) => o.el.setAttribute('data-jev-idx', String(i + 1)));
   const text = (document.body.innerText || '').replace(/[ \\t]+/g, ' ').replace(/\\n{2,}/g, '\\n').trim();
@@ -96,7 +96,7 @@ const SNAPSHOT_JS = `(maxEls) => {
     title: document.title,
     text,
     scroll: { y: Math.round(se.scrollTop), max: Math.max(0, Math.round(se.scrollHeight - innerHeight)) },
-    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, inViewport: o.inViewport })),
+    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, inViewport: o.inViewport, pos: o.pos })),
   };
 }`;
 

@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { decide, writeText, type ChoiceAnswer, type Question } from "./jev.ts";
+import { plan, plannerModel } from "./planner.ts";
 import * as b from "./browser.ts";
 
 export type RunInput = {
@@ -8,6 +9,7 @@ export type RunInput = {
   values?: string[]; // texts the user says may need typing
   maxSteps?: number;
   previousTasks?: string[]; // earlier messages in this chat, oldest first, so "go on" has context
+  supervisor?: boolean; // default true: a chat LLM thinks (one action at a time), Jev executes (grounds it to an element)
 };
 
 export type StepEvent = {
@@ -18,18 +20,30 @@ export type StepEvent = {
   screenshot: string; // base64 jpeg
   elementCount: number;
   answers: Record<string, unknown>;
+  plan?: string; // the supervisor's single-action instruction for this step
+  why?: string;
   action: string;
   jevMs: number;
+  planMs: number;
   execMs: number;
   costUsd: number;
   note?: string;
 };
 
+export type EndEvent = {
+  type: "end";
+  status: "done" | "blocked" | "max_steps" | "error" | "stopped";
+  message: string;
+  answer?: string; // supervisor's one-line reply for the user
+  totalCostUsd: number;
+  steps: number;
+};
+
 export type Event =
-  | { type: "start"; via: string; url: string }
+  | { type: "start"; via: string; url: string; supervisor?: string }
   | { type: "screenshot"; screenshot: string; url: string; title: string }
   | StepEvent
-  | { type: "end"; status: "done" | "blocked" | "max_steps" | "error" | "stopped"; message: string; totalCostUsd: number; steps: number };
+  | EndEvent;
 
 const OPS: Record<string, string> = {
   CLICK: "Click a link, button, checkbox, tab, or other control (`click_target` says which)",
@@ -42,6 +56,7 @@ const OPS: Record<string, string> = {
   WAIT: "Wait for the page to finish loading or changing",
   DONE: "The goal is fully achieved and visible on the current page. Nothing more to do",
   BLOCKED: "The goal cannot be achieved from here (login wall, captcha, missing content, wrong site)",
+  CANNOT: "The instruction in `goal` cannot be carried out on this page: no listed element matches it, or it asks to scroll further than the page goes",
 };
 
 function quotedStrings(goal: string): string[] {
@@ -50,27 +65,26 @@ function quotedStrings(goal: string): string[] {
   return out;
 }
 
-export async function runTask(
-  page: Page,
-  input: RunInput,
-  emit: (e: Event) => void,
-  signal: AbortSignal,
-) {
+export async function runTask(page: Page, input: RunInput, emit: (e: Event) => void, signal: AbortSignal) {
   const maxSteps = Math.min(Math.max(input.maxSteps ?? 20, 1), 60);
+  const useSupervisor = input.supervisor !== false;
   const history: string[] = [];
   const typedSoFar: string[] = [];
-  const candidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(input.goal)].map((s) => s.trim()).filter(Boolean)));
+  const baseCandidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(input.goal)].map((s) => s.trim()).filter(Boolean)));
   let totalCost = 0;
   let step = 0;
   const actionCounts = new Map<string, number>();
+  let lastFingerprint = "";
+  let lastUrl = "";
 
-  const end = (status: Extract<Event, { type: "end" }>["status"], message: string) =>
-    emit({ type: "end", status, message, totalCostUsd: totalCost, steps: step });
+  const end = (status: EndEvent["status"], message: string, answer?: string) =>
+    emit({ type: "end", status, message, answer, totalCostUsd: totalCost, steps: step });
 
   try {
     if (input.url) {
       await page.goto(input.url, { waitUntil: "domcontentloaded", timeout: 30000 });
       await b.settle(page);
+      history.push(`step 0: opened ${input.url} → now on "${await page.title().catch(() => "")}" (${page.url()})`);
     }
     emit({ type: "screenshot", screenshot: await b.screenshot(page), url: page.url(), title: await page.title() });
 
@@ -86,19 +100,73 @@ export async function runTask(
       }
 
       // A transient chrome-error:// page (aborted or reset navigation) is not the site's answer. Give it a
-      // moment, then reload the intended URL before asking Jev anything.
+      // moment, then reload the intended URL before asking anything.
       if (page.url().startsWith("chrome-error://")) {
         await page.waitForTimeout(1500);
         if (page.url().startsWith("chrome-error://")) await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
         await b.settle(page);
       }
       const snap = await b.snapshot(page);
+      // Tell the models whether the previous action changed anything.
+      if (history.length && lastFingerprint) {
+        history[history.length - 1] +=
+          snap.fingerprint === lastFingerprint
+            ? " → page did not change"
+            : snap.url !== lastUrl
+              ? ` → now on "${snap.title}" (${snap.url})`
+              : " → page changed";
+      }
+      lastFingerprint = snap.fingerprint;
+      lastUrl = snap.url;
+
+      const scrollPos =
+        snap.scroll.max === 0
+          ? "whole page fits on screen"
+          : snap.scroll.y >= snap.scroll.max - 4
+            ? "at the bottom of the page: nothing more below, scrolling down does nothing"
+            : snap.scroll.y <= 4
+              ? "at the top of the page, more below"
+              : `${Math.round((snap.scroll.y / snap.scroll.max) * 100)}% down the page, more below`;
+      const elementLines = snap.elements.map((e) => b.describe(e) + (e.inViewport ? "" : e.pos === "above" ? " (above the viewport, scroll up)" : " (below the viewport, scroll down)"));
+
+      // ---- 1. supervisor thinks: one concrete action, or done/blocked
+      let stepGoal = input.goal;
+      let planText: string | undefined;
+      let planWhy: string | undefined;
+      let planCompletes = false;
+      let planAnswer: string | undefined;
+      let planMs = 0;
+      const candidates = [...baseCandidates];
+      if (useSupervisor) {
+        const p = await plan(
+          {
+            task: input.goal,
+            earlierTasks: (input.previousTasks ?? []).slice(-6),
+            history: history.slice(-12),
+            lastResult: history.length ? history[history.length - 1].split(" → ").slice(1).join(" → ") || undefined : undefined,
+            page: { url: snap.url, title: snap.title, scroll: scrollPos, text: snap.text, elements: elementLines },
+            step,
+            maxSteps,
+          },
+          signal,
+        );
+        totalCost += p.cost_usd;
+        planMs = Math.round(p.ms);
+        if (p.status === "done") return end("done", p.why ?? "Task complete", p.answer);
+        if (p.status === "blocked") return end("blocked", p.why ?? "Cannot continue", p.answer);
+        if (!p.next) return end("error", "supervisor gave no next action");
+        stepGoal = p.next;
+        planText = p.next;
+        planWhy = p.why;
+        planCompletes = p.completes_task === true;
+        planAnswer = p.answer;
+        if (p.text) candidates.unshift(p.text);
+      }
+
+      // ---- 2. jev executes: ground the single action to elements (speculative fan-out, one request)
       const clickable = snap.elements.filter((e) => e.kind === "click" || e.kind === "type");
       const typeable = snap.elements.filter((e) => e.kind === "type");
       const selects = snap.elements.filter((e) => e.kind === "select" && e.options?.length);
-
-      // Build the question set. Every question is asked in the same request (speculative fan-out);
-      // code only reads the ones relevant to the chosen operation.
       const opCriteria: Record<string, string> = {};
       for (const [k, v] of Object.entries(OPS)) {
         if (k === "CLICK" && !clickable.length) continue;
@@ -107,36 +175,41 @@ export async function runTask(
         if (k === "GO_BACK" && step === 1) continue;
         if (k === "SCROLL_DOWN" && snap.scroll.y >= snap.scroll.max - 4) continue; // already at the bottom
         if (k === "SCROLL_UP" && snap.scroll.y <= 4) continue;
+        if (useSupervisor && (k === "DONE" || k === "BLOCKED")) continue; // the supervisor owns termination
+        if (!useSupervisor && k === "CANNOT") continue;
         opCriteria[k] = v;
       }
       const questions: Record<string, Question> = {
         operation: {
           type: "choice",
-          instructions:
-            "Given `goal` (read it together with `earlier_tasks_in_this_chat`: it may be a follow-up like \"go on\" or \"the last one\"), the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? Elements marked (below the fold) need scrolling before they can be seen; `page.scroll_position` says how far down the page is. If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. Choose DONE only when `page` already shows the goal is fully achieved.",
+          instructions: useSupervisor
+            ? "`goal` is one concrete instruction from a supervisor for this step. Which browser operation carries it out on the current `page`? Elements marked (above/below the viewport) need scrolling before they can be seen, but they can still be clicked directly."
+            : "Given `goal` (read it together with `earlier_tasks_in_this_chat`: it may be a follow-up like \"go on\" or \"the last one\"), the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? Elements marked (above/below the viewport) can still be clicked directly; `page.scroll_position` says how far down the page is. If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. Choose DONE only when `page` already shows the goal is fully achieved.",
           criteria: opCriteria,
         },
         goal_achieved: {
           type: "noul",
-          instructions: "Does the current `page` (its title, text, and elements) show that `goal` has been fully achieved?",
+          instructions: useSupervisor
+            ? "Does the current `page` already show that `overall_task` has been fully achieved?"
+            : "Does the current `page` (its title, text, and elements) show that `goal` has been fully achieved?",
         },
       };
       if (clickable.length)
         questions.click_target = {
           type: "choice",
-          instructions: "If the next operation is CLICK, which element in `elements` should be clicked to make progress toward `goal`?",
+          instructions: "If the operation is CLICK, which element in `elements` is the one `goal` refers to (or the best one to make progress on it)?",
           criteria: Object.fromEntries(clickable.map((e) => [`el_${e.id}`, b.describe(e)])),
         };
       if (typeable.length)
         questions.type_target = {
           type: "choice",
-          instructions: "If the next operation is TYPE_TEXT or TYPE_AND_ENTER, which text field in `elements` should receive the text?",
+          instructions: "If the operation is TYPE_TEXT or TYPE_AND_ENTER, which text field in `elements` should receive the text?",
           criteria: Object.fromEntries(typeable.map((e) => [`el_${e.id}`, b.describe(e)])),
         };
       if (typeable.length && candidates.length)
         questions.type_value = {
           type: "choice",
-          instructions: "If text must be typed next, which of these texts (taken from `goal` and `provided_values`) is the right one for the field? Choose write_new_text if none fits.",
+          instructions: "If text must be typed next, which of these texts (from `goal`, the supervisor, and `provided_values`) is the right one for the field? Choose write_new_text if none fits.",
           criteria: {
             ...Object.fromEntries(candidates.map((c, i) => [`text_${i}`, JSON.stringify(c)])),
             write_new_text: "None of the provided texts fit; a language model should write the text",
@@ -145,22 +218,17 @@ export async function runTask(
       if (selects.length) {
         const crit: Record<string, string> = {};
         for (const e of selects) e.options!.forEach((o, i) => (crit[`el_${e.id}_opt_${i}`] = `${b.describe(e)} → option "${o}"`));
-        questions.select_target = {
-          type: "choice",
-          instructions: "If the next operation is SELECT, which dropdown option should be selected?",
-          criteria: crit,
-        };
+        questions.select_target = { type: "choice", instructions: "If the operation is SELECT, which dropdown option should be selected?", criteria: crit };
       }
 
-      const scrollPos =
-        snap.scroll.max === 0 ? "whole page fits on screen" : snap.scroll.y >= snap.scroll.max - 4 ? "at the bottom of the page" : snap.scroll.y <= 4 ? "at the top of the page, more below" : `${Math.round((snap.scroll.y / snap.scroll.max) * 100)}% down the page, more below`;
       const state = {
-        goal: input.goal,
+        goal: stepGoal,
+        overall_task: input.goal,
         earlier_tasks_in_this_chat: (input.previousTasks ?? []).slice(-6),
         provided_values: candidates,
         step: `${step} of ${maxSteps}`,
         page: { url: snap.url, title: snap.title, scroll_position: scrollPos, text: snap.text },
-        elements: snap.elements.map((e) => b.describe(e) + (e.inViewport ? "" : " (below the fold)")),
+        elements: elementLines,
         history: history.slice(-10),
       };
 
@@ -175,12 +243,13 @@ export async function runTask(
       let note: string | undefined;
       const t0 = performance.now();
       let chosen = op.choice;
-      // If Jev is confident the goal is achieved, finish even if the op head disagrees.
-      if (achieved >= 0.9 && chosen !== "DONE") {
+      // Jev-only mode: if Jev is confident the goal is achieved, finish even if the op head disagrees.
+      if (!useSupervisor && achieved >= 0.9 && chosen !== "DONE") {
         chosen = "DONE";
         note = `goal_achieved=${achieved.toFixed(2)} overrode operation=${op.choice}`;
       }
 
+      // ---- 3. execute
       try {
         switch (chosen) {
           case "CLICK": {
@@ -198,9 +267,11 @@ export async function runTask(
             const tv = pick("type_value");
             if (tv && tv !== "write_new_text") {
               text = candidates[Number(tv.replace("text_", ""))];
+            } else if (candidates.length === 1) {
+              text = candidates[0];
             } else {
               text = await writeText(
-                `Goal: ${input.goal}\nPage title: ${snap.title}\nURL: ${snap.url}\nField: ${e ? b.describe(e) : id}\nAlready typed this run: ${JSON.stringify(typedSoFar)}\nWhat exact text should be typed into this field?`,
+                `Task: ${input.goal}\nThis step: ${stepGoal}\nPage title: ${snap.title}\nURL: ${snap.url}\nField: ${e ? b.describe(e) : id}\nAlready typed this run: ${JSON.stringify(typedSoFar)}\nWhat exact text should be typed into this field?`,
                 signal,
               );
               note = "text written by text model";
@@ -232,6 +303,9 @@ export async function runTask(
           case "WAIT":
             await page.waitForTimeout(1500);
             break;
+          case "CANNOT":
+            note = "jev found no way to do this on the page";
+            break;
         }
       } catch (err) {
         note = `action failed: ${(err as Error).message.split("\n")[0].slice(0, 200)}`;
@@ -239,7 +313,7 @@ export async function runTask(
       await b.settle(page);
       const execMs = performance.now() - t0;
 
-      history.push(`step ${step}: ${action}${note ? ` (${note})` : ""}`);
+      history.push(`step ${step}: ${planText ? `supervisor said "${planText}"${planCompletes ? " (expected to complete the task)" : ""}; ` : ""}did ${action}${note ? ` (${note})` : ""}`);
       emit({
         type: "step",
         step,
@@ -248,14 +322,26 @@ export async function runTask(
         screenshot: await b.screenshot(page),
         elementCount: snap.elements.length,
         answers: res.answers,
+        plan: planText,
+        why: planWhy,
         action,
         jevMs: Math.round(res.ms),
+        planMs,
         execMs: Math.round(execMs),
         costUsd: res.cost_usd,
         note,
       });
 
       if (chosen === "DONE") return end("done", `Goal achieved (goal_achieved=${achieved.toFixed(2)})`);
+      // The supervisor said this action finishes the task. If it visibly worked, we are done: asking the
+      // model again only invites it to second-guess a success it can no longer see the context for.
+      if (planCompletes && !note && action !== "CANNOT") {
+        const after = await b.snapshot(page);
+        if (after.fingerprint !== snap.fingerprint) {
+          const title = after.title || after.url;
+          return end("done", `done: ${planText}`, planAnswer?.trim() || `done: ${planText}. now on "${title}".`);
+        }
+      }
       if (chosen === "BLOCKED") return end("blocked", "Jev reports the goal cannot be reached from here");
 
       // Loop guard: the same action from the same page state three times means the page is not responding
@@ -270,3 +356,5 @@ export async function runTask(
     return end("error", (err as Error).message.slice(0, 500));
   }
 }
+
+export { plannerModel };

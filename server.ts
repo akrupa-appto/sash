@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { launch } from "./browser.ts";
 import { runTask, type Event } from "./agent.ts";
 import { jevVia } from "./jev.ts";
+import { plannerModel } from "./planner.ts";
 
 const PORT = Number(process.env.PORT ?? 8791);
 const MAX_SESSIONS = Number(process.env.MAX_SESSIONS ?? 6);
@@ -108,17 +109,17 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-cache", "x-accel-buffering": "no" });
     let outcome = "";
     const send = (e: Event) => {
-      if (e.type === "end") outcome = `${e.status}: ${e.message}`;
+      if (e.type === "end") outcome = `${e.status}: ${e.answer ?? e.message}`;
       if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
     };
     const ac = new AbortController();
     req.on("close", () => ac.abort());
     const previousTasks = [...s.tasks];
     try {
-      send({ type: "start", via: jevVia(), url: target ?? s.browser.page.url() });
+      send({ type: "start", via: jevVia(), url: target ?? s.browser.page.url(), supervisor: body.supervisor === false ? undefined : plannerModel() });
       await runTask(
         s.browser.page,
-        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks },
+        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks, supervisor: body.supervisor !== false },
         send,
         ac.signal,
       );

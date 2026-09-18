@@ -41,6 +41,7 @@
   .st .p { text-align:right; font-size:11px }
   .st .p i { display:inline-block; height:5px; background:var(--acc); border-radius:3px; vertical-align:middle; margin-right:3px; opacity:.85 }
   .st .n { grid-column:2; color:var(--warn); font-size:11px }
+  .st .plan { color:var(--dim); font-weight:400 }
   .hint { color:var(--dim); font-size:12px; padding:6px 0 }
   .hint a { color:var(--dim); cursor:pointer; text-decoration:underline dotted; margin-right:10px }
   form { border-top:1px solid var(--line); padding:10px 14px; display:flex; flex-direction:column; gap:8px }
@@ -73,6 +74,7 @@
       <textarea id="msg" placeholder="what should the browser do? include a url the first time. enter to send, shift+enter for newline" required></textarea>
       <div class="row">
         <label>max steps</label><input id="max" type="number" value="20" min="1" max="60">
+        <label title="a chat model (claude haiku) turns the task into one action at a time; jev picks the element"><input id="sup" type="checkbox" checked style="width:auto;vertical-align:middle"> supervisor</label>
         <span style="flex:1"></span>
         <button id="stop" type="button" class="secondary" disabled>stop</button>
         <button id="send" type="submit">send</button>
@@ -118,12 +120,12 @@ $('#f').onsubmit = async ev => {
   const typing = el('typing', 'starting browser');
   $('#send').disabled = true; $('#stop').disabled = false; stats({ status:'running', steps:0, lat:'–' });
   ctrl = new AbortController();
-  let reply = null, lats = [], nSteps = 0;
+  let reply = null, lats = [], nSteps = 0, supName = 'jev';
   try {
     const id = await ensureSession();
     typing.textContent = 'jev is working';
     const res = await fetch('/api/session/' + id + '/task', { method:'POST', signal: ctrl.signal, headers:{'content-type':'application/json'},
-      body: JSON.stringify({ message: text, maxSteps: +$('#max').value }) });
+      body: JSON.stringify({ message: text, maxSteps: +$('#max').value, supervisor: $('#sup').checked }) });
     if (!res.ok) { typing.remove(); el('msg agent bad', `<div class="result">${esc((await res.json().catch(()=>({}))).error || res.statusText)}</div>`); return; }
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {
@@ -137,15 +139,16 @@ $('#f').onsubmit = async ev => {
   } finally { typing.remove(); $('#send').disabled = false; $('#stop').disabled = true; ctrl = null; msg.focus(); }
 
   function handle(e) {
-    if (e.type === 'screenshot') setShot(e);
+    if (e.type === 'start') supName = e.supervisor ? e.supervisor.split('/').pop() + ' plans · jev grounds' : 'jev only';
+    else if (e.type === 'screenshot') setShot(e);
     else if (e.type === 'step') {
-      if (!reply) { typing.remove(); reply = el('msg agent', `<div class="meta"><span>jev via openrouter</span><span id="rmeta"></span></div><div class="steps"></div>`); }
+      if (!reply) { typing.remove(); reply = el('msg agent', `<div class="meta"><span>${esc(supName)}</span><span id="rmeta"></span></div><div class="steps"></div>`); }
       nSteps = e.step; lats.push(e.jevMs); chatCost += e.costUsd;
       setShot(e);
       const op = e.answers.operation, p = op?.probabilities?.[op.choice] ?? 0;
       reply.querySelector('.steps').insertAdjacentHTML('beforeend',
-        `<div class="st"><span>${e.step}</span><b>${esc(e.action)}</b><span class="p" title="probability jev gave this operation"><i style="width:${Math.max(3, p*28)}px"></i>${(p*100).toFixed(0)}%</span>${e.note ? `<span class="n">${esc(e.note)}</span>` : ''}</div>`);
-      reply.querySelector('#rmeta').textContent = `${e.jevMs}ms jev · ${e.execMs}ms browser`;
+        `<div class="st"><span>${e.step}</span><b>${e.plan ? `<span class="plan">${esc(e.plan)}</span><br>` : ''}${esc(e.action)}</b><span class="p" title="probability jev gave this operation"><i style="width:${Math.max(3, p*28)}px"></i>${(p*100).toFixed(0)}%</span>${e.note ? `<span class="n">${esc(e.note)}</span>` : ''}</div>`);
+      reply.querySelector('#rmeta').textContent = (e.planMs ? `${e.planMs}ms plan · ` : '') + `${e.jevMs}ms jev · ${e.execMs}ms browser`;
       stats({ steps:nSteps, lat: Math.round(lats.reduce((a,b)=>a+b,0)/lats.length) + 'ms avg', cost:'$' + chatCost.toFixed(4) });
       chat.scrollTop = chat.scrollHeight;
     } else if (e.type === 'end') finish(e);
@@ -153,7 +156,7 @@ $('#f').onsubmit = async ev => {
   function finish(e) {
     if (!reply) { typing.remove(); reply = el('msg agent', `<div class="meta"><span>jev</span><span></span></div>`); }
     reply.classList.add(e.status === 'done' ? 'ok' : 'bad');
-    reply.insertAdjacentHTML('beforeend', `<div class="result">${esc(e.status)} · ${e.steps} steps · $${(e.totalCostUsd||0).toFixed(4)}<br>${esc(e.message)}</div>`);
+    reply.insertAdjacentHTML('beforeend', `<div class="result">${esc(e.status)} · ${e.steps} steps · $${(e.totalCostUsd||0).toFixed(4)}<br>${esc(e.answer || e.message)}</div>`);
     stats({ status: e.status }); chat.scrollTop = chat.scrollHeight;
   }
 };
