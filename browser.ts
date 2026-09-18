@@ -24,17 +24,43 @@ export type Snapshot = {
 const MAX_ELEMENTS = 240; // Jev choice questions allow up to 255 options
 const MAX_TEXT = 8000;
 
-export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
-  const browser = await chromium.launch({ channel: "chromium", headless: true }); // full chromium, new headless mode
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    userAgent:
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
-    locale: "en-US",
+export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page; liveViewUrl: string; close: () => Promise<void> }> {
+  const key = process.env.ANCHOR_API_KEY || process.env.ANCHORBROWSER_API_KEY;
+  if (!key) throw new Error("Anchor Browser needs ANCHOR_API_KEY in the server's .env file");
+  const headers = { "anchor-api-key": key, "content-type": "application/json" };
+  const response = await fetch("https://api.anchorbrowser.io/v1/sessions", {
+    method: "POST", headers, signal: AbortSignal.timeout(45000),
+    body: JSON.stringify({
+      browser: { headless: { active: false }, viewport: { width: 1280, height: 800 } },
+      session: { timeout: { max_duration: 60, idle_timeout: 3 }, live_view: { read_only: true }, recording: { active: false } },
+    }),
   });
-  const page = await context.newPage();
-  page.on("dialog", (d) => d.dismiss().catch(() => {}));
-  return { browser, context, page };
+  if (!response.ok) throw new Error(`Anchor Browser could not start a session (${response.status})`);
+  const { data } = await response.json();
+  if (!data?.id) throw new Error("Anchor Browser returned no session ID");
+  const endRemote = async () => {
+    const r = await fetch(`https://api.anchorbrowser.io/v1/sessions/${encodeURIComponent(data.id)}`, { method: "DELETE", headers, signal: AbortSignal.timeout(15000) });
+    if (!r.ok && r.status !== 404) throw new Error(`Anchor Browser could not close the session (${r.status})`);
+  };
+  let browser: Browser | undefined;
+  try {
+    if (!data.cdp_url || !data.live_view_url) throw new Error("Anchor Browser returned an incomplete session");
+    browser = await chromium.connectOverCDP(data.cdp_url, { timeout: 30000 });
+    const context = browser.contexts()[0];
+    if (!context) throw new Error("Anchor Browser returned no browser context");
+    const page = context.pages()[0] ?? await context.newPage();
+    page.on("dialog", (d) => d.dismiss().catch(() => {}));
+    let closing: Promise<void> | undefined;
+    const close = () => closing ??= (async () => {
+      try { await endRemote(); } finally { await browser!.close().catch(() => {}); }
+    })();
+    return { browser, context, page, liveViewUrl: data.live_view_url, close };
+  } catch {
+    await endRemote().catch(() => {});
+    await browser?.close().catch(() => {});
+    // CDP errors can include a credential-bearing websocket URL.
+    throw new Error("could not connect to Anchor Browser; try starting a new chat");
+  }
 }
 
 // Runs inside the page. Tags interactive elements with data-jev-idx and returns a compact list.
@@ -126,11 +152,16 @@ function loc(page: Page, id: number) {
 
 export async function click(page: Page, id: number) {
   const l = loc(page, id);
-  await l.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-  try {
-    await l.click({ timeout: 5000 });
-  } catch {
-    await l.click({ timeout: 3000, force: true });
+  const before = page.url();
+  const href = await l.evaluate((el) => {
+    const a = el.closest("a[href]") as HTMLAnchorElement | null;
+    return a && !a.hasAttribute("download") && (!a.target || a.target === "_self") && /^https?:/.test(a.href) ? a.href : null;
+  }, undefined, { timeout: 3000 });
+  // Locator.click already scrolls and waits for actionability. A forced retry
+  // can target stale controls after an asynchronous page replacement.
+  await l.click({ timeout: 5000 });
+  if (href && href !== before && page.url() === before) {
+    await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 10000 });
   }
 }
 
@@ -159,8 +190,10 @@ export async function scroll(page: Page, dir: "up" | "down") {
 
 export async function settle(page: Page) {
   await page.waitForLoadState("domcontentloaded", { timeout: 8000 }).catch(() => {});
-  await page.waitForLoadState("networkidle", { timeout: 2500 }).catch(() => {});
+  // Give debounced click handlers time to start their requests before checking
+  // networkidle; the previous document may already be idle when the click returns.
   await page.waitForTimeout(250);
+  await page.waitForLoadState("networkidle", { timeout: 2500 }).catch(() => {});
 }
 
 export async function screenshot(page: Page): Promise<string> {

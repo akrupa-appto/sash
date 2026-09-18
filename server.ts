@@ -22,7 +22,7 @@ async function closeSession(id: string) {
   const s = sessions.get(id);
   if (!s) return;
   sessions.delete(id);
-  await s.browser.browser.close().catch(() => {});
+  await s.browser.close().catch((err) => console.warn((err as Error).message));
 }
 
 setInterval(() => {
@@ -51,7 +51,7 @@ const json = (res: http.ServerResponse, code: number, body: unknown) => {
 
 const URL_RE = /https?:\/\/[^\s"'<>)]+|\b(?:[a-z0-9-]+\.)+(?:com|org|net|ai|io|dev|co|xyz|app|sh|me|info|edu|gov|uk|de|fr|jp)(?:\/[^\s"'<>)]*)?/i;
 
-const server = http.createServer(async (req, res) => {
+export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   const m = url.pathname.match(/^\/api\/session\/([a-f0-9]+)(?:\/(task|close))?$/);
 
@@ -60,7 +60,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(indexHtml());
   }
   if (req.method === "GET" && url.pathname === "/api/health") {
-    return json(res, 200, { ok: true, via: jevVia(), sessions: sessions.size, busy: [...sessions.values()].filter((s) => s.busy).length });
+    return json(res, 200, { ok: true, via: jevVia(), browser: "anchor", sessions: sessions.size, busy: [...sessions.values()].filter((s) => s.busy).length });
   }
   if (req.method === "POST" && url.pathname === "/api/session") {
     if (sessions.size >= MAX_SESSIONS) {
@@ -75,13 +75,13 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       return json(res, 500, { error: (e as Error).message });
     }
-    return json(res, 200, { id });
+    return json(res, 200, { id, liveViewUrl: sessions.get(id)!.browser.liveViewUrl });
   }
   if (m && req.method === "GET" && !m[2]) {
     const s = sessions.get(m[1]);
     if (!s) return json(res, 404, { error: "no such session" });
     const page = s.browser.page;
-    return json(res, 200, { id: s.id, busy: s.busy, url: page.url(), title: await page.title().catch(() => "") });
+    return json(res, 200, { id: s.id, busy: s.busy, url: page.url(), title: await page.title().catch(() => ""), liveViewUrl: s.browser.liveViewUrl });
   }
   if (m && req.method === "POST" && m[2] === "close") {
     await closeSession(m[1]);
@@ -99,6 +99,13 @@ const server = http.createServer(async (req, res) => {
     }
     const message = String(body.message ?? "").trim();
     if (!message) return json(res, 400, { error: "message required" });
+    let model = plannerModel();
+    if (body.supervisor !== false && body.model !== undefined) {
+      if (typeof body.model !== "string" || !/^[a-zA-Z0-9~][a-zA-Z0-9._:/@~-]{0,199}$/.test(body.model.trim())) {
+        return json(res, 400, { error: "enter a valid model ID, such as deepseek/deepseek-v4.1-flash" });
+      }
+      model = body.model.trim();
+    }
     let target: string | undefined = body.url ? String(body.url) : message.match(URL_RE)?.[0];
     if (target && !/^https?:\/\//i.test(target)) target = "https://" + target;
     const onBlank = s.browser.page.url() === "about:blank";
@@ -110,16 +117,16 @@ const server = http.createServer(async (req, res) => {
     let outcome = "";
     const send = (e: Event) => {
       if (e.type === "end") outcome = `${e.status}: ${e.answer ?? e.message}`;
-      if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
+      if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + "\n");
     };
     const ac = new AbortController();
-    req.on("close", () => ac.abort());
+    res.on("close", () => { if (!res.writableEnded) ac.abort(); });
     const previousTasks = [...s.tasks];
     try {
-      send({ type: "start", via: jevVia(), url: target ?? s.browser.page.url(), supervisor: body.supervisor === false ? undefined : plannerModel() });
+      send({ type: "start", via: jevVia(), url: target ?? s.browser.page.url(), supervisor: body.supervisor === false ? undefined : model });
       await runTask(
         s.browser.page,
-        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks, supervisor: body.supervisor !== false },
+        { url: target, goal: message, values: Array.isArray(body.values) ? body.values.map(String) : [], maxSteps: Number(body.maxSteps) || 20, previousTasks, supervisor: body.supervisor !== false, model, liveView: true },
         send,
         ac.signal,
       );
@@ -142,4 +149,12 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`checkto listening on http://0.0.0.0:${PORT} (jev via ${jevVia()})`);
+});
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, async () => {
+  server.close();
+  const deadline = setTimeout(() => process.exit(1), 18000);
+  await Promise.allSettled([...sessions.keys()].map(closeSession));
+  clearTimeout(deadline);
+  process.exit(0);
 });

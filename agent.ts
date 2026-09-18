@@ -11,6 +11,7 @@ export type RunInput = {
   previousTasks?: string[]; // earlier messages in this chat, oldest first, so "go on" has context
   supervisor?: boolean; // default true: a chat LLM thinks (one action at a time), Jev executes (grounds it to an element)
   model?: string; // planner model for this task; fast mode still uses Jev
+  liveView?: boolean; // Anchor streams the browser directly; skip screenshot work
 };
 
 export type StepEvent = {
@@ -87,7 +88,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       await b.settle(page);
       history.push(`step 0: opened ${input.url} → now on "${await page.title().catch(() => "")}" (${page.url()})`);
     }
-    emit({ type: "screenshot", screenshot: await b.screenshot(page), url: page.url(), title: await page.title() });
+    emit({ type: "screenshot", screenshot: input.liveView ? "" : await b.screenshot(page), url: page.url(), title: await page.title() });
 
     while (step < maxSteps) {
       if (signal.aborted) return end("stopped", "stopped");
@@ -313,7 +314,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         step,
         url: page.url(),
         title: await page.title().catch(() => ""),
-        screenshot: await b.screenshot(page),
+        screenshot: input.liveView ? "" : await b.screenshot(page),
         elementCount: snap.elements.length,
         answers: res.answers,
         plan: planText,
