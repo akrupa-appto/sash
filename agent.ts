@@ -3,7 +3,7 @@ import { decide, writeText, type ChoiceAnswer, type Question } from "./jev.ts";
 import * as b from "./browser.ts";
 
 export type RunInput = {
-  url: string;
+  url?: string; // omit to continue on the page the browser is already on
   goal: string;
   values?: string[]; // texts the user says may need typing
   maxSteps?: number;
@@ -67,8 +67,10 @@ export async function runTask(
     emit({ type: "end", status, message, totalCostUsd: totalCost, steps: step });
 
   try {
-    await page.goto(input.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await b.settle(page);
+    if (input.url) {
+      await page.goto(input.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await b.settle(page);
+    }
     emit({ type: "screenshot", screenshot: await b.screenshot(page), url: page.url(), title: await page.title() });
 
     while (step < maxSteps) {
@@ -82,6 +84,13 @@ export async function runTask(
         await b.settle(page);
       }
 
+      // A transient chrome-error:// page (aborted or reset navigation) is not the site's answer. Give it a
+      // moment, then reload the intended URL before asking Jev anything.
+      if (page.url().startsWith("chrome-error://")) {
+        await page.waitForTimeout(1500);
+        if (page.url().startsWith("chrome-error://")) await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+        await b.settle(page);
+      }
       const snap = await b.snapshot(page);
       const clickable = snap.elements.filter((e) => e.kind === "click" || e.kind === "type");
       const typeable = snap.elements.filter((e) => e.kind === "type");

@@ -5,129 +5,158 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>checkto · jev drives the browser</title>
 <style>
-  :root { --bg:#0e0f11; --panel:#16181c; --line:#26292f; --fg:#e6e6e6; --dim:#8b909a; --acc:#7cf5b1; --warn:#f5c97c; --bad:#f57c7c; }
+  :root { --bg:#0e0f11; --panel:#16181c; --line:#26292f; --fg:#e6e6e6; --dim:#8b909a; --acc:#7cf5b1; --warn:#f5c97c; --bad:#f57c7c; --user:#1f2a3a; }
   * { box-sizing:border-box }
+  html, body { height:100% }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:baseline }
+  header { height:48px; padding:0 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center }
   header h1 { margin:0; font-size:15px; font-weight:600 }
-  header span { color:var(--dim); font-size:12px }
-  main { display:grid; grid-template-columns: 420px 1fr; height:calc(100vh - 49px) }
-  @media (max-width:900px){ main{ grid-template-columns:1fr; height:auto } }
-  aside { border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0 }
-  form { padding:14px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--line) }
-  label { color:var(--dim); font-size:12px }
-  input, textarea { width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit }
-  textarea { resize:vertical; min-height:56px }
-  .row { display:flex; gap:8px; align-items:center }
+  header span { color:var(--dim); font-size:12px; flex:1 }
+  header button { padding:5px 10px; font-size:12px }
+  main { display:grid; grid-template-columns: 1fr 440px; height:calc(100% - 48px) }
+  @media (max-width:900px){ main{ grid-template-columns:1fr; grid-template-rows: 45vh 1fr } }
   button { background:var(--acc); color:#000; border:0; border-radius:6px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer }
   button.secondary { background:var(--panel); color:var(--fg); border:1px solid var(--line) }
   button:disabled { opacity:.4; cursor:default }
-  #log { overflow:auto; padding:10px 14px; flex:1; min-height:0 }
-  .step { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px; background:var(--panel) }
-  .step .head { display:flex; justify-content:space-between; color:var(--dim); font-size:12px }
-  .step .action { margin:4px 0; word-break:break-word }
-  .bars { display:flex; flex-direction:column; gap:3px; margin-top:4px }
-  .bar { display:grid; grid-template-columns: 110px 1fr 44px; gap:6px; align-items:center; font-size:11px; color:var(--dim) }
-  .bar i { display:block; height:6px; background:var(--acc); border-radius:3px; opacity:.85 }
-  .bar b { color:var(--fg); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-  .note { color:var(--warn); font-size:12px }
-  .end { border-color:var(--acc) } .end.bad { border-color:var(--bad) }
-  section { display:flex; flex-direction:column; min-height:0 }
+  /* browser side */
+  section { display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--line) }
   .urlbar { padding:8px 14px; border-bottom:1px solid var(--line); color:var(--dim); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
   .shot { flex:1; min-height:0; display:flex; align-items:flex-start; justify-content:center; padding:14px; overflow:auto; background:#0a0b0c }
   .shot img { max-width:100%; border:1px solid var(--line); border-radius:6px; background:#fff }
-  .shot .empty { color:var(--dim); margin-top:40px }
+  .shot .empty { color:var(--dim); margin-top:40px; text-align:center; line-height:1.8 }
   .stats { display:flex; gap:16px; padding:8px 14px; border-top:1px solid var(--line); color:var(--dim); font-size:12px }
   .stats b { color:var(--fg); font-weight:500 }
-  .examples { display:flex; flex-wrap:wrap; gap:6px }
-  .examples a { color:var(--dim); font-size:11px; cursor:pointer; text-decoration:underline dotted }
+  /* chat side */
+  aside { display:flex; flex-direction:column; min-height:0 }
+  #chat { flex:1; min-height:0; overflow:auto; padding:14px; display:flex; flex-direction:column; gap:10px }
+  .msg { max-width:100%; border-radius:10px; padding:8px 11px; border:1px solid var(--line); background:var(--panel) }
+  .msg.user { background:var(--user); align-self:flex-end; border-color:#2b3a50; white-space:pre-wrap; word-break:break-word }
+  .msg.agent { align-self:stretch }
+  .msg .meta { color:var(--dim); font-size:11px; display:flex; justify-content:space-between; gap:8px; margin-bottom:4px }
+  .msg .result { margin-top:6px; padding-top:6px; border-top:1px solid var(--line) }
+  .msg.ok .result { color:var(--acc) } .msg.bad .result { color:var(--bad) }
+  .steps { display:flex; flex-direction:column; gap:3px; font-size:12px }
+  .st { display:grid; grid-template-columns: 38px 1fr 46px; gap:6px; align-items:baseline; color:var(--dim) }
+  .st b { color:var(--fg); font-weight:500; word-break:break-word }
+  .st .p { text-align:right; font-size:11px }
+  .st .p i { display:inline-block; height:5px; background:var(--acc); border-radius:3px; vertical-align:middle; margin-right:3px; opacity:.85 }
+  .st .n { grid-column:2; color:var(--warn); font-size:11px }
+  .hint { color:var(--dim); font-size:12px; padding:6px 0 }
+  .hint a { color:var(--dim); cursor:pointer; text-decoration:underline dotted; margin-right:10px }
+  form { border-top:1px solid var(--line); padding:10px 14px; display:flex; flex-direction:column; gap:8px }
+  textarea { width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font:inherit; resize:none; min-height:64px }
+  .row { display:flex; gap:8px; align-items:center; color:var(--dim); font-size:12px }
+  .row input { width:64px; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 7px; font:inherit }
+  .typing { color:var(--dim); font-size:12px }
+  .typing::after { content:'…'; animation: dots 1.2s steps(4,end) infinite }
+  @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
 </style>
 </head>
 <body>
-<header><h1>checkto</h1><span>jev (typesafe system one) picks every browser action · code runs the loop · ~100ms per decision</span></header>
+<header><h1>checkto</h1><span>send a task · jev (typesafe system one) picks every browser action · code runs the loop</span><button id="new" class="secondary">new chat</button></header>
 <main>
+  <section>
+    <div class="urlbar" id="urlbar">no page open yet</div>
+    <div class="shot" id="shot"><div class="empty">the browser shows up here<br>send a task with a url to start, e.g. <b>go to en.wikipedia.org and open the article about "Jevons paradox"</b></div></div>
+    <div class="stats"><span>steps <b id="s-steps">0</b></span><span>jev latency <b id="s-lat">–</b></span><span>cost this chat <b id="s-cost">$0.0000</b></span><span>status <b id="s-status">idle</b></span></div>
+  </section>
   <aside>
+    <div id="chat">
+      <div class="hint">try:
+        <a data-m='go to en.wikipedia.org and open the article about "Jevons paradox"'>wikipedia</a>
+        <a data-m="go to news.ycombinator.com and open the comments of the top story">hacker news</a>
+        <a data-m="go to hn.algolia.com, search for typesafe jev and open the first result">hn search</a>
+        <a data-m="go to github.com/typesafe-ai and open the typesafe-sdk-js repo">github</a>
+      </div>
+    </div>
     <form id="f">
-      <label>start url</label>
-      <input id="url" placeholder="https://en.wikipedia.org" required>
-      <label>goal</label>
-      <textarea id="goal" placeholder='open the article about "Jevons paradox"' required></textarea>
-      <label>texts it may need to type (optional, one per line; quoted text in the goal is picked up automatically)</label>
-      <textarea id="values" placeholder="Jevons paradox"></textarea>
+      <textarea id="msg" placeholder="what should the browser do? include a url the first time. enter to send, shift+enter for newline" required></textarea>
       <div class="row">
-        <label>max steps</label><input id="max" type="number" value="20" min="1" max="60" style="width:80px">
+        <label>max steps</label><input id="max" type="number" value="20" min="1" max="60">
         <span style="flex:1"></span>
         <button id="stop" type="button" class="secondary" disabled>stop</button>
-        <button id="run" type="submit">run</button>
-      </div>
-      <div class="examples">
-        <a data-url="https://en.wikipedia.org" data-goal='open the wikipedia article about "Jevons paradox"'>wikipedia search</a>
-        <a data-url="https://news.ycombinator.com" data-goal="open the comments page of the top story">hacker news</a>
-        <a data-url="https://hn.algolia.com" data-goal="search hacker news for typesafe jev and open the first result">hn search</a>
-        <a data-url="https://github.com/typesafe-ai" data-goal="open the typesafe-sdk-js repository">github</a>
+        <button id="send" type="submit">send</button>
       </div>
     </form>
-    <div id="log"></div>
   </aside>
-  <section>
-    <div class="urlbar" id="urlbar">no run yet</div>
-    <div class="shot" id="shot"><div class="empty">screenshots appear here after each step</div></div>
-    <div class="stats"><span>steps <b id="s-steps">0</b></span><span>jev latency <b id="s-lat">–</b></span><span>cost <b id="s-cost">$0.0000</b></span><span>status <b id="s-status">idle</b></span></div>
-  </section>
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const log = $('#log'), shot = $('#shot');
-let ctrl = null, steps = 0, cost = 0, lats = [];
+const chat = $('#chat'), shot = $('#shot'), msg = $('#msg');
+let session = sessionStorage.getItem('checkto-session') || null;
+let ctrl = null, chatCost = 0;
 
-document.querySelectorAll('.examples a').forEach(a => a.onclick = () => { $('#url').value = a.dataset.url; $('#goal').value = a.dataset.goal; });
-
-function bars(ans, key, labelMap) {
-  const a = ans[key]; if (!a || !a.probabilities) return '';
-  const top = Object.entries(a.probabilities).sort((x,y)=>y[1]-x[1]).slice(0,4);
-  return `<div class="bars">${top.map(([k,p]) => `<div class="bar"><b title="${esc(labelMap?.[k] ?? k)}">${esc(shortKey(k, key))}</b><i style="width:${Math.max(2, p*100)}%"></i><span>${(p*100).toFixed(0)}%</span></div>`).join('')}</div>`;
-}
-function shortKey(k, q) { return q === 'operation' ? k : k; }
+document.querySelectorAll('.hint a').forEach(a => a.onclick = () => { msg.value = a.dataset.m; msg.focus(); });
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function add(html, cls='') { const d = document.createElement('div'); d.className = 'step ' + cls; d.innerHTML = html; log.appendChild(d); log.scrollTop = log.scrollHeight; }
-function setShot(e) { shot.innerHTML = `<img src="data:image/jpeg;base64,${e.screenshot}">`; $('#urlbar').textContent = (e.title ? e.title + ' — ' : '') + e.url; }
-function stats(status) { $('#s-steps').textContent = steps; $('#s-cost').textContent = '$' + cost.toFixed(4); $('#s-lat').textContent = lats.length ? Math.round(lats.reduce((a,b)=>a+b,0)/lats.length) + 'ms avg' : '–'; if (status) $('#s-status').textContent = status; }
+function el(cls, html) { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; chat.appendChild(d); chat.scrollTop = chat.scrollHeight; return d; }
+function setShot(e) { if (e.screenshot) shot.innerHTML = `<img src="data:image/jpeg;base64,${e.screenshot}">`; $('#urlbar').textContent = (e.title ? e.title + ' — ' : '') + e.url; }
+function stats(o) { for (const [k,v] of Object.entries(o)) $('#s-' + k).textContent = v; }
 
+async function ensureSession() {
+  if (session) { const r = await fetch('/api/session/' + session); if (r.ok) return session; session = null; }
+  const r = await fetch('/api/session', { method:'POST' });
+  if (!r.ok) throw new Error((await r.json()).error || 'could not start a browser');
+  session = (await r.json()).id; sessionStorage.setItem('checkto-session', session); chatCost = 0; return session;
+}
+
+$('#new').onclick = async () => {
+  ctrl?.abort();
+  if (session) fetch('/api/session/' + session + '/close', { method:'POST' }).catch(()=>{});
+  session = null; sessionStorage.removeItem('checkto-session'); chatCost = 0;
+  chat.querySelectorAll('.msg, .typing').forEach(n => n.remove());
+  shot.innerHTML = '<div class="empty">new chat. send a task with a url to start.</div>'; $('#urlbar').textContent = 'no page open yet';
+  stats({ steps:0, lat:'–', cost:'$0.0000', status:'idle' });
+};
 $('#stop').onclick = () => ctrl?.abort();
+msg.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#f').requestSubmit(); } });
+
 $('#f').onsubmit = async ev => {
   ev.preventDefault();
-  log.innerHTML = ''; steps = 0; cost = 0; lats = []; stats('running'); $('#run').disabled = true; $('#stop').disabled = false;
+  const text = msg.value.trim(); if (!text) return;
+  msg.value = '';
+  el('msg user', esc(text));
+  const typing = el('typing', 'starting browser');
+  $('#send').disabled = true; $('#stop').disabled = false; stats({ status:'running', steps:0, lat:'–' });
   ctrl = new AbortController();
+  let reply = null, lats = [], nSteps = 0;
   try {
-    const res = await fetch('/api/run', { method:'POST', signal: ctrl.signal, headers:{'content-type':'application/json'},
-      body: JSON.stringify({ url: $('#url').value, goal: $('#goal').value, values: $('#values').value, maxSteps: +$('#max').value }) });
-    if (!res.ok) { add(`<div class="note">${esc(await res.text())}</div>`, 'end bad'); return; }
+    const id = await ensureSession();
+    typing.textContent = 'jev is working';
+    const res = await fetch('/api/session/' + id + '/task', { method:'POST', signal: ctrl.signal, headers:{'content-type':'application/json'},
+      body: JSON.stringify({ message: text, maxSteps: +$('#max').value }) });
+    if (!res.ok) { typing.remove(); el('msg agent bad', `<div class="result">${esc((await res.json().catch(()=>({}))).error || res.statusText)}</div>`); return; }
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {
       const { value, done } = await reader.read(); if (done) break;
       buf += dec.decode(value, { stream:true });
       let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i+1); if (line.trim()) handle(JSON.parse(line)); }
     }
-  } catch (e) { if (e.name !== 'AbortError') add(`<div class="note">${esc(e.message)}</div>`, 'end bad'); else stats('stopped'); }
-  finally { $('#run').disabled = false; $('#stop').disabled = true; ctrl = null; }
-};
+  } catch (e) {
+    if (e.name === 'AbortError') { finish({ status:'stopped', message:'stopped', steps:nSteps, totalCostUsd:0 }); }
+    else { typing.remove(); el('msg agent bad', `<div class="result">${esc(e.message)}</div>`); stats({ status:'error' }); }
+  } finally { typing.remove(); $('#send').disabled = false; $('#stop').disabled = true; ctrl = null; msg.focus(); }
 
-function handle(e) {
-  if (e.type === 'start') add(`<div class="head"><span>start</span><span>jev via ${esc(e.via)}</span></div><div class="action">${esc(e.url)}</div>`);
-  else if (e.type === 'screenshot') setShot(e);
-  else if (e.type === 'step') {
-    steps = e.step; cost += e.costUsd; lats.push(e.jevMs); stats();
-    setShot(e);
-    add(`<div class="head"><span>step ${e.step} · ${e.elementCount} elements</span><span>jev ${e.jevMs}ms · exec ${e.execMs}ms</span></div>
-         <div class="action">${esc(e.action)}</div>
-         ${e.note ? `<div class="note">${esc(e.note)}</div>` : ''}
-         ${bars(e.answers, 'operation')}
-         ${e.answers.goal_achieved ? `<div class="bar" style="margin-top:4px"><b>goal achieved?</b><i style="width:${Math.max(2, e.answers.goal_achieved.noul*100)}%"></i><span>${(e.answers.goal_achieved.noul*100).toFixed(0)}%</span></div>` : ''}`);
-  } else if (e.type === 'end') {
-    stats(e.status);
-    add(`<div class="head"><span>${esc(e.status)}</span><span>${e.steps} steps · $${e.totalCostUsd.toFixed(4)}</span></div><div class="action">${esc(e.message)}</div>`, 'end ' + (e.status === 'done' ? '' : 'bad'));
+  function handle(e) {
+    if (e.type === 'screenshot') setShot(e);
+    else if (e.type === 'step') {
+      if (!reply) { typing.remove(); reply = el('msg agent', `<div class="meta"><span>jev via openrouter</span><span id="rmeta"></span></div><div class="steps"></div>`); }
+      nSteps = e.step; lats.push(e.jevMs); chatCost += e.costUsd;
+      setShot(e);
+      const op = e.answers.operation, p = op?.probabilities?.[op.choice] ?? 0;
+      reply.querySelector('.steps').insertAdjacentHTML('beforeend',
+        `<div class="st"><span>${e.step}</span><b>${esc(e.action)}</b><span class="p" title="probability jev gave this operation"><i style="width:${Math.max(3, p*28)}px"></i>${(p*100).toFixed(0)}%</span>${e.note ? `<span class="n">${esc(e.note)}</span>` : ''}</div>`);
+      reply.querySelector('#rmeta').textContent = `${e.jevMs}ms jev · ${e.execMs}ms browser`;
+      stats({ steps:nSteps, lat: Math.round(lats.reduce((a,b)=>a+b,0)/lats.length) + 'ms avg', cost:'$' + chatCost.toFixed(4) });
+      chat.scrollTop = chat.scrollHeight;
+    } else if (e.type === 'end') finish(e);
   }
-}
+  function finish(e) {
+    if (!reply) { typing.remove(); reply = el('msg agent', `<div class="meta"><span>jev</span><span></span></div>`); }
+    reply.classList.add(e.status === 'done' ? 'ok' : 'bad');
+    reply.insertAdjacentHTML('beforeend', `<div class="result">${esc(e.status)} · ${e.steps} steps · $${(e.totalCostUsd||0).toFixed(4)}<br>${esc(e.message)}</div>`);
+    stats({ status: e.status }); chat.scrollTop = chat.scrollHeight;
+  }
+};
 </script>
 </body>
 </html>
