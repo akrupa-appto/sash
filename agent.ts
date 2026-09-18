@@ -69,7 +69,7 @@ function quotedStrings(goal: string): string[] {
 }
 
 export async function runTask(page: Page, input: RunInput, emit: (e: Event) => void, signal: AbortSignal) {
-  const maxSteps = Math.min(Math.max(input.maxSteps ?? 20, 1), 60);
+  const maxSteps = Math.min(Math.max(input.maxSteps ?? 60, 1), 60);
   const useSupervisor = input.supervisor !== false;
   const history: string[] = [];
   const typedSoFar: string[] = [];
@@ -189,12 +189,6 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             ? "`goal` is one concrete instruction from a supervisor for this step. Which browser operation carries it out on the current `page`? Elements marked (above/below the viewport) need scrolling before they can be seen, but they can still be clicked directly."
             : "Given `goal` (read it together with `earlier_tasks_in_this_chat`: it may be a follow-up like \"go on\" or \"the last one\"), the current `page`, the interactive `elements`, and the `history` of actions already taken, which single browser operation is the best next step toward the goal? Elements marked (above/below the viewport) can still be clicked directly; `page.scroll_position` says how far down the page is. If `page` is an error, captcha, or bot-block page, or `history` shows the same actions not changing the page, choose BLOCKED. For a multi-part goal, choose the next unfinished part using the history. For most/least/highest/lowest, use sort controls or compare the relevant values before choosing an item; default order is not proof of rank. A file preview is not a raw file. Do not repeat navigation to a tab already open. Choose DONE only when every part of the goal is visibly achieved.",
           criteria: opCriteria,
-        },
-        goal_achieved: {
-          type: "noul",
-          instructions: useSupervisor
-            ? "Does the current `page` already show that `overall_task` has been fully achieved?"
-            : "Does the current `page` (its title, text, and elements) show that `goal` has been fully achieved?",
         },
       };
       if (clickable.length)

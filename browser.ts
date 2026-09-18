@@ -181,15 +181,9 @@ export async function click(page: Page, id: number) {
 
 export async function typeText(page: Page, id: number, text: string, submit: boolean) {
   const l = loc(page, id);
-  await l.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-  await l.click({ timeout: 5000 }).catch(() => {});
-  const editable = await l.evaluate((el: any) => el.isContentEditable).catch(() => false);
-  if (editable) {
-    await l.press("Control+A").catch(() => {});
-    await l.pressSequentially(text, { delay: 5 });
-  } else {
-    await l.fill(text, { timeout: 5000 });
-  }
+  // fill handles focus, replacement and contenteditable fields itself. Avoid
+  // three extra CDP round trips (scroll, click, inspect) for every form field.
+  await l.fill(text, { timeout: 5000 });
   if (submit) await l.press("Enter", { timeout: 3000, noWaitAfter: true }).catch(() => {});
 }
 

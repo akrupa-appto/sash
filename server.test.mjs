@@ -36,6 +36,7 @@ test('session exposes the live view and preserves each task model', async () => 
     assert.equal(lastInput.model,model);
     assert.equal(lastInput.reasoning,'high');
     assert.equal(lastInput.liveView,true);
+    assert.equal(lastInput.maxSteps,60);
   }
   const bad = await post(`/api/session/${id}/task`,{message:'open https://example.test',model:'bad model id'});
   assert.equal(bad.status,400);
