@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
+import { runInNewContext } from 'node:vm';
 import { click, settle, snapshot } from './browser.ts';
 
 test('a slow navigation gets enough time without repeating the click', async () => {
@@ -35,6 +36,21 @@ test('snapshot does not retry unrelated errors', async () => {
   assert.equal(reads, 1);
 });
 
+test('snapshot waits for a visible disabled saving button even without a network request', async () => {
+  let saved = false;
+  const save = delay(400).then(() => { saved = true; });
+  const button = {textContent:'Saving…', getAttribute:()=>null, getClientRects:()=>[{}]};
+  const page = {
+    evaluate: async () => ({busy:!saved, url:'https://example.test', title:'Save', text:saved?'Saved':'Saving…', scroll:{y:0,max:0}, elements:[]}),
+    waitForLoadState: async () => {}, waitForTimeout: delay,
+    waitForFunction: async fn => {
+      const document = {querySelectorAll:()=>saved ? [] : [button]};
+      while (!runInNewContext(`(${fn.toString()})()`, {document})) await delay(5);
+    },
+  };
+  try { assert.equal((await snapshot(page)).text, 'Saved'); } finally { await save; }
+});
+
 test('settle waits for requests started shortly after a click', async () => {
   // A client-side click handler starts fetching after a debounce. The old page
   // has already reached networkidle, so waiting on it before that fetch returns
@@ -49,6 +65,7 @@ test('settle waits for requests started shortly after a click', async () => {
     pending = false;
   })();
   const page = {
+    waitForFunction: async () => {},
     waitForLoadState: async state => {
       if (state === 'networkidle' && pending) await request;
     },

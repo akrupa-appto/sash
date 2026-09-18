@@ -24,6 +24,12 @@ export type Snapshot = {
 const MAX_ELEMENTS = 240; // Jev choice questions allow up to 255 options
 const MAX_TEXT = 8000;
 
+const pageReady = () => !Array.from(document.querySelectorAll(
+  '[aria-busy="true"], button:disabled, input[type="submit"]:disabled, [role="button"][aria-disabled="true"]',
+)).some(el => el.getClientRects().length && (
+  el.getAttribute("aria-busy") === "true" || /\b(saving|loading|submitting|processing|uploading)\b/i.test(el.textContent || el.getAttribute("value") || "")
+));
+
 export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page; liveViewUrl: string; close: () => Promise<void> }> {
   const key = process.env.ANCHOR_API_KEY || process.env.ANCHORBROWSER_API_KEY;
   if (!key) throw new Error("Anchor Browser needs ANCHOR_API_KEY in the server's .env file");
@@ -118,6 +124,7 @@ const SNAPSHOT_JS = `(maxEls) => {
   const text = (document.body.innerText || '').replace(/[ \\t]+/g, ' ').replace(/\\n{2,}/g, '\\n').trim();
   const se = document.scrollingElement || document.documentElement;
   return {
+    busy: !(${pageReady.toString()})(),
     url: location.href,
     title: document.title,
     text,
@@ -134,6 +141,12 @@ export async function snapshot(page: Page): Promise<Snapshot> {
   for (let attempt = 0; ; attempt++) {
     try {
       raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
+      if (raw.busy) {
+        // A client-side save may not generate a network request. Only pay for
+        // another remote wait/read when the snapshot actually observes progress.
+        await page.waitForFunction(pageReady, undefined, { timeout: 10000 }).catch(() => {});
+        raw = await page.evaluate(SNAPSHOT_FN, MAX_ELEMENTS);
+      }
       break;
     } catch (err) {
       // Navigation can replace the document between settling and reading it.
