@@ -17,6 +17,15 @@ const feedbackByTab = new Map();
 const CLEARED_ON_VIEW = new Set([BadgeState.DELIVERABLE, BadgeState.HANDOFF]);
 const feedback = tabId => feedbackByTab.get(tabId) || { badge: BadgeState.NONE, cursor: undefined, observed: false };
 const contentState = tabId => { const { badge, cursor, observed } = feedback(tabId); return { badge, cursor, observed }; };
+// feedbackByTab is in-memory only, so an idle-triggered service-worker restart would otherwise
+// wipe every tab's badge/cursor/observed state (same failure mode as the run-state seq counter).
+// Persist it alongside runState and restore it on startup, before anything reads feedbackByTab.
+let savingFeedback = Promise.resolve();
+function persistFeedback() {
+  const copy = [...feedbackByTab];
+  savingFeedback = savingFeedback.catch(() => {}).then(() => chrome.storage.local.set({ feedbackByTab: copy }));
+  return savingFeedback;
+}
 // Never assume a previous injection survived a navigation: ping first. A script that does not
 // answer is gone, and the copy Chrome injects next pulls this same state for itself.
 async function pushFeedback(tabId) {
@@ -25,10 +34,24 @@ async function pushFeedback(tabId) {
   await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_STATE', state: contentState(tabId) }).catch(() => {});
   return true;
 }
+// A tab that's already the active one in a focused window never fires onActivated/onFocusChanged
+// again just because a run started touching it, so a brand-new entry defaulting to observed:false
+// would leave the cursor unpainted on exactly the tab the user is watching. Check once, on creation.
+async function isActiveTab(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.active) return false;
+    const win = await chrome.windows.get(tab.windowId);
+    return Boolean(win.focused);
+  } catch { return false; }
+}
 async function setFeedback(tabId, patch) {
   if (!Number.isInteger(tabId)) return undefined;
-  const next = { ...feedback(tabId), ...patch };
+  const existing = feedbackByTab.get(tabId);
+  const base = existing || { badge: BadgeState.NONE, cursor: undefined, observed: await isActiveTab(tabId) };
+  const next = { ...base, ...patch };
   feedbackByTab.set(tabId, next);
+  void persistFeedback();
   await pushFeedback(tabId);
   return next;
 }
@@ -54,7 +77,7 @@ chrome.windows.onFocusChanged.addListener(windowId => {
 });
 // A finished navigation means a fresh content script with no badge on it.
 chrome.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'complete' && feedbackByTab.has(tabId)) void pushFeedback(tabId); });
-chrome.tabs.onRemoved.addListener(tabId => { feedbackByTab.delete(tabId); });
+chrome.tabs.onRemoved.addListener(tabId => { if (feedbackByTab.delete(tabId)) void persistFeedback(); });
 // The tab contract closes a tab it opened; the page's own favicon has to come back before it does,
 // which is exactly what clearing this tab's feedback tells the content script to do.
 setFaviconRestorer(tabId => setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }));
@@ -67,12 +90,17 @@ let saving = Promise.resolve();
 let seq = 0;
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  const saved = (await chrome.storage.local.get('runState')).runState;
-  if (saved) state = { ...saved, running: false };
+  const saved = await chrome.storage.local.get(['runState', 'seq', 'feedbackByTab']);
+  // The service worker gets killed and restarted on idle while the panel stays open, so an
+  // in-memory-only seq would reset to 0 and the panel's lastSeq guard would then drop every
+  // broadcast (and the next getState reply) as "stale" forever. Restore it across restarts.
+  if (typeof saved.seq === 'number') seq = saved.seq;
+  if (Array.isArray(saved.feedbackByTab)) for (const [tabId, entry] of saved.feedbackByTab) feedbackByTab.set(tabId, entry);
+  if (saved.runState) state = { ...saved.runState, running: false };
   // Anything the old session was waiting on cannot be answered any more: say so rather than
   // leaving a card on screen that resolves to nothing.
   declinePending(RequestOutcome.EXPIRED);
-  if (saved?.running) {
+  if (saved.runState?.running) {
     state.status = 'stopped';
     state.messages.push({ role: 'agent', text: 'the browser restarted, so the task stopped. send a task to continue.' });
     await persist();
@@ -81,7 +109,7 @@ const ready = (async () => {
 function persist() {
   const copy = structuredClone(state);
   seq += 1;
-  saving = saving.catch(() => {}).then(() => chrome.storage.local.set({ runState: copy }));
+  saving = saving.catch(() => {}).then(() => chrome.storage.local.set({ runState: copy, seq }));
   chrome.runtime.sendMessage({ type: 'state', state: copy, seq }).catch(() => {});
   return saving;
 }
@@ -367,6 +395,7 @@ async function handle(message) {
     // releaseAll clears the toolbar badges; the favicon and cursor drawn into the pages themselves
     // have to go too, or a new chat starts with the last one's dots still on the user's tabs.
     for (const tabId of [...feedbackByTab.keys()]) { await setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }); feedbackByTab.delete(tabId); }
+    void persistFeedback();
     state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
     await persist(); return { ok: true, state, seq };
   }
