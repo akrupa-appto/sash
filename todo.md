@@ -33,6 +33,7 @@ every one of these is visible in adam's 2026-09-19 screenshots.
 
 - [ ] custom openrouter model ids offer "auto" as the only reasoning choice, because an unknown id has no metadata. look the id up in the cached model list before treating it as unknown.
 - [ ] an element can vanish between snapshot and click on a page that re-renders every second (`locator.evaluate: Timeout`). retag the page and retry once by role and name instead of burning a step.
+- [ ] a failed step still gets reported as a finished success. seen live: setting up a Zoho catch-all filter, `TYPE_TEXT "@pcstyle.dev" into [60]` fails with "the control is covered or not visible", the agent clicks "Update" anyway on the half-filled form, then tells the user the filter "has been updated to exclude me@pcstyle.dev" — the second condition was never entered. any action with `action failed` in its own log must not be treated as `finished`; re-check the field it touched (or bail and say so) before writing the summary line.
 
 ## implement
 
