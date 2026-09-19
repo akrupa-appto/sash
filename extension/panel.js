@@ -127,8 +127,31 @@ function render(state) {
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);
   controls();
-  $('#content').scrollTop = $('#content').scrollHeight;
+  scrollToEnd();
 }
+// A single scrollTop = scrollHeight read right after replaceChildren() is not actually stale —
+// browsers force layout on that read — but content can still grow *after* this point (the
+// Outfit web font swapping in via font-display:swap, an image finishing decode, the steps
+// <details> settling its final box), and nothing re-corrects the scroll position when that
+// happens. That's what leaves the scrollbar thumb short of the track end, or the actions
+// toggle sitting right at the clipped edge next to the status strip. So instead of a one-shot
+// scroll, #content watches its own size with a ResizeObserver and keeps riding the bottom for
+// as long as the person was already there, however late the real layout settles.
+const contentEl = $('#content');
+let pinnedToBottom = true;
+function scrollToEnd() {
+  requestAnimationFrame(() => { contentEl.scrollTop = contentEl.scrollHeight - contentEl.clientHeight; });
+}
+contentEl.addEventListener('scroll', () => {
+  pinnedToBottom = contentEl.scrollHeight - contentEl.clientHeight - contentEl.scrollTop <= 4;
+});
+// #content's own box never resizes from new messages — its *children* (#messages, the live
+// steps block) do, and that's exactly the growth a ResizeObserver on #content alone would miss.
+const clamp = () => { if (pinnedToBottom) contentEl.scrollTop = contentEl.scrollHeight - contentEl.clientHeight; };
+const contentResize = new ResizeObserver(clamp);
+contentResize.observe(contentEl);
+contentResize.observe($('#messages'));
+contentResize.observe($('#steps-wrap'));
 async function load() {
   const response = await request({ type: 'getState' });
   $('#mode').value = response.mode;

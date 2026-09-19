@@ -65,6 +65,54 @@ test('a finished run shows its answer after its own actions, not before them', {
   await page.close();
 });
 
+test('the transcript keeps riding the real bottom when content settles late, instead of overscrolling past it', { skip }, async () => {
+  // Enough messages (each with its own actions block) to make #content scroll — the bug only
+  // shows up once scrollHeight actually exceeds clientHeight.
+  const longMessages = [];
+  for (let i = 0; i < 25; i++) {
+    longMessages.push({ role: 'user', text: `do thing number ${i}` });
+    longMessages.push({ role: 'agent', text: `done with thing number ${i}; here is a longer answer so the message takes real vertical space in the transcript.`, steps });
+  }
+  const longFinished = { running: false, status: 'done', cost: 0.01, steps: [], messages: longMessages };
+  const page = await panel(longFinished);
+  // Let the initial render's own autoscroll settle before simulating anything further.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const before = await page.evaluate(() => {
+    const c = document.querySelector('#content');
+    return c.scrollHeight - c.clientHeight - c.scrollTop;
+  });
+  assert.ok(before <= 1, `first render should already land at the bottom (gap ${before})`);
+  // Simulate the real-world trigger: layout settling *after* render() already ran and scrolled —
+  // e.g. the Outfit web font swapping in, or a details block finishing its box — which grows the
+  // last message without any new render() call to re-trigger the naive one-shot autoscroll.
+  await page.evaluate(() => {
+    const last = document.querySelector('.message.agent:last-of-type > div');
+    last.style.fontSize = '48px';
+    last.style.lineHeight = '2';
+  });
+  // Give the fix a moment to react (ResizeObserver callbacks run on a later microtask/frame).
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#content');
+    return c.scrollHeight - c.clientHeight - c.scrollTop <= 1;
+  }, null, { timeout: 2000 }).catch(() => {});
+  const after = await page.evaluate(() => {
+    const c = document.querySelector('#content');
+    return { gap: c.scrollHeight - c.clientHeight - c.scrollTop, scrollHeight: c.scrollHeight, clientHeight: c.clientHeight };
+  });
+  assert.ok(after.scrollHeight > after.clientHeight, 'test setup should keep the transcript scrollable');
+  // (a) no overscroll / no lag: the container tracks the real bottom even after the late growth.
+  assert.ok(after.gap <= 1, `scrollTop should still sit at the real bottom after late layout growth (gap ${after.gap})`);
+  // (b) the last message's actions toggle is fully visible, not clipped under the status strip below #content.
+  const boxes = await page.evaluate(() => {
+    const toggle = document.querySelector('.message.agent:last-of-type .steps');
+    const strip = document.querySelector('#run-status');
+    return { toggle: toggle.getBoundingClientRect().toJSON(), strip: strip.getBoundingClientRect().toJSON() };
+  });
+  assert.ok(boxes.toggle.bottom <= boxes.strip.top + 1,
+    `actions toggle (bottom ${boxes.toggle.bottom}) should end above the status strip (top ${boxes.strip.top})`);
+  await page.close();
+});
+
 test('the live action list only shows while the run is in flight', { skip }, async () => {
   const page = await panel({ ...finished, running: true, status: 'working', messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);
