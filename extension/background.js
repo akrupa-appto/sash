@@ -62,6 +62,9 @@ setFaviconRestorer(tabId => setFeedback(tabId, { badge: BadgeState.NONE, cursor:
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
 let saving = Promise.resolve();
+// Broadcasts can race (a stale in-flight 'run' broadcast landing after a later 'clear'),
+// so panel.js uses this to drop any broadcast older than the last one it applied.
+let seq = 0;
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   const saved = (await chrome.storage.local.get('runState')).runState;
@@ -77,8 +80,9 @@ const ready = (async () => {
 })();
 function persist() {
   const copy = structuredClone(state);
+  seq += 1;
   saving = saving.catch(() => {}).then(() => chrome.storage.local.set({ runState: copy }));
-  chrome.runtime.sendMessage({ type: 'state', state: copy }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'state', state: copy, seq }).catch(() => {});
   return saving;
 }
 function safeError(error, settings = {}) {
@@ -345,7 +349,7 @@ async function handle(message) {
     const settings = await readSettings();
     let configured = true;
     try { validateSettings(settings); } catch { configured = false; }
-    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning };
+    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning, seq };
   }
   if (message.type === 'stop') {
     await stop();
@@ -364,7 +368,7 @@ async function handle(message) {
     // have to go too, or a new chat starts with the last one's dots still on the user's tabs.
     for (const tabId of [...feedbackByTab.keys()]) { await setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }); feedbackByTab.delete(tabId); }
     state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
-    await persist(); return { ok: true };
+    await persist(); return { ok: true, state, seq };
   }
   // The panel answering the one card it showed.
   if (message.type === 'answer') {
