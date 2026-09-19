@@ -244,10 +244,16 @@ async function execute(run, message) {
     state.cost = outcome?.totalCostUsd ?? state.cost;
     // The run is over: every tab it left standing says what it is now. A green dot holds a result,
     // a yellow one is waiting on the user, and anything else gets its own favicon back. Tabs the
-    // contract just closed are skipped — it restored their favicons on the way out.
+    // contract just closed are skipped — it restored their favicons on the way out. Where the
+    // contract marked a tab, that mark wins: the favicon has to say what the toolbar badge says,
+    // so one handed-off tab in a run that otherwise finished still reads as waiting on the user.
     const closed = new Set(ending?.closed || []);
+    const marked = new Map([
+      ...(ending?.deliverable || []).map(tabId => [tabId, BadgeState.DELIVERABLE]),
+      ...(ending?.handoff || []).map(tabId => [tabId, BadgeState.HANDOFF]),
+    ]);
     const finalBadge = outcome?.status === 'done' ? BadgeState.DELIVERABLE : outcome?.status === 'blocked' ? BadgeState.HANDOFF : BadgeState.NONE;
-    for (const tabId of new Set(pages.map(p => p.tabId))) if (!closed.has(tabId)) await setFeedback(tabId, { badge: finalBadge, cursor: undefined });
+    for (const tabId of new Set(pages.map(p => p.tabId))) if (!closed.has(tabId)) await setFeedback(tabId, { badge: marked.get(tabId) ?? finalBadge, cursor: undefined });
     // Keep the run's actions with the reply they produced so earlier runs still show their steps.
     state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
     state.messages = state.messages.slice(-20);
@@ -272,6 +278,9 @@ async function handle(message) {
   if (message.type === 'clear') {
     if (active) throw new Error('stop the current task before starting a new chat');
     if (state.sessionId) await releaseAll(state.sessionId);
+    // releaseAll clears the toolbar badges; the favicon and cursor drawn into the pages themselves
+    // have to go too, or a new chat starts with the last one's dots still on the user's tabs.
+    for (const tabId of [...feedbackByTab.keys()]) { await setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }); feedbackByTab.delete(tabId); }
     state = { running: false, messages: [], steps: [], status: 'ready' };
     await persist(); return { ok: true };
   }
