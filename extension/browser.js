@@ -18,6 +18,8 @@ export class ChromePage {
   async attach() {
     this.signal.throwIfAborted();
     if (!supportedUrl(this.currentUrl)) throw new Error('open a regular website first; Chrome settings, the web store, and extension pages cannot be controlled');
+    await chrome.tabs.update(this.tabId, { active: true });
+    this.signal.throwIfAborted();
     await chrome.debugger.attach({ tabId: this.tabId }, '1.3');
     this.attached = true;
     this.signal.throwIfAborted();

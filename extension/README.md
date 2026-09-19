@@ -26,7 +26,10 @@ From the repository root:
 npm ci
 npm run build:extension
 npm test
+npm run test:extension
 npm run package:extension
 ```
 
 Load `dist/checkto-extension` unpacked. `dist/checkto-extension.zip` is the distributable. All scripts are bundled locally; the extension downloads no executable code. `scripts/build-extension.mjs` replaces the Node browser/environment adapters with Chrome adapters while reusing the agent, Jev, planner, and DOM reader.
+
+`npm run test:extension` loads the built extension in a disposable Chromium profile and uses deterministic provider replies to verify real Chrome APIs, settings persistence, both agent modes, new-tab navigation, and stopping. Install the Playwright Chromium binary first with `npx playwright install chromium` if it is missing. Screenshots are written to `runs/extension-qa/`.

@@ -50,3 +50,6 @@
 - Manifest V3 side panel, native chrome.debugger transport, one selected tab/run at a time. Keys live only in chrome.storage.local with trusted-context access; provider requests go directly from the extension worker.
 - Reuse the existing Jev/planner/agent loop and DOM reader through an extension browser adapter. No Anchor, server, or remote code required by the extension.
 - Done: installable ZIP, settings save/clear/reload, tab click/type/select/navigation, cancellation/detach, repeatable tests, browser QA, reviewed PR.
+- Extension checks: 43 Node tests pass; real QA Chrome protocol fixture passes text/number/date/rich text, select, click, scrolling, navigation/back, password redaction, and abort. Installed-extension tests pass both modes, local settings persistence/removal, popup following, and stop with deterministic provider replies.
+- Native QA profile could not open the extension picker; the agy QA attempt was stopped. No service was restarted. Official Playwright disposable Chromium extension fixture provides installed-extension verification instead; the earlier restart permission question is no longer needed.
+- New-tab regression: activate the selected tab before debugger attach, otherwise Chrome can report the active panel tab as the opener and the agent loses the destination.
