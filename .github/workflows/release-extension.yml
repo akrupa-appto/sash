@@ -56,7 +56,7 @@ jobs:
           git add extension/manifest.json
           git commit -m "chore: extension v${{ steps.bump.outputs.version }}"
           git tag "extension-v${{ steps.bump.outputs.version }}"
-          git push origin HEAD:main --follow-tags
+          git push origin HEAD:main "extension-v${{ steps.bump.outputs.version }}"
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}
