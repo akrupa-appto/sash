@@ -12,5 +12,6 @@ await build({
     b.onResolve({ filter: /\/(browser|env)\.ts$/ }, args => ({ path: path.join(root, 'extension', args.path.endsWith('browser.ts') ? 'browser.js' : 'config.js') }));
   } }],
 });
-for (const file of ['manifest.json', 'panel.html', 'settings.html', 'style.css']) await copyFile(path.join(root, 'extension', file), path.join(output, file));
+await mkdir(path.join(output, 'fonts'), { recursive: true });
+for (const file of ['manifest.json', 'panel.html', 'settings.html', 'style.css', 'fonts/outfit.woff2']) await copyFile(path.join(root, 'extension', file), path.join(output, file));
 console.log(`unpacked extension: ${output}`);

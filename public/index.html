@@ -145,7 +145,7 @@ $('#record').onclick = async () => {
   finally { $('#record').disabled = false; $('#new').disabled = false; }
 };
 const incomingPrompt = new URLSearchParams(location.search).get('prompt');
-if (incomingPrompt) { msg.value = incomingPrompt; history.replaceState(null,'','/'); }
+if (incomingPrompt) { msg.value = incomingPrompt; history.replaceState(null,'','/app'); }
 
 
 const supervisorOn = () => !!$('#mode button.on')?.dataset.sup.startsWith('1');
