@@ -11,6 +11,13 @@ export type PausedRun = {
   step: number;
   question: string; // what the user was asked
   action?: string; // set when the pause was a high-risk confirmation: the action waiting for an answer
+  // Coverage and failure-confirmation state, carried over so a pause never resets these guards: an
+  // unconfirmed failed step must still block "done" after resuming, and an exploratory task must not
+  // get a fresh, easier floor just because it stopped to ask something.
+  realActions?: number;
+  pagesSeen?: string[];
+  coverageRefusals?: number;
+  pendingFailure?: { step: number; action: string; note: string; elementKey?: string; op?: string };
 };
 
 export type RunInput = {
@@ -138,8 +145,9 @@ function elementKey(e?: { role: string; name: string }): string | undefined {
   return e ? `${e.role}\u0000${e.name}` : undefined;
 }
 
-// A reply that opens with a refusal is not consent to an action that cannot be undone.
-const REFUSAL = /^\s*[""']?(no\b|nope\b|nah\b|don'?t\b|do not\b|stop\b|cancel\b|abort\b|never\b|wait\b)/i;
+// Consent to an action that cannot be undone must be an explicit yes, not merely the absence of a "no".
+// An unclear, off-topic, or hedging reply ("maybe", "what does that do?") is not approval either.
+const AFFIRM = /^\s*[""']?(yes\b|yeah\b|yep\b|yup\b|sure\b|ok(ay)?\b|go ahead\b|go for it\b|do it\b|confirm(ed)?\b|approved?\b|proceed\b)/i;
 
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
@@ -169,26 +177,27 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   let totalCost = 0;
   let step = input.resume?.step ?? 0;
   // The user was just asked about this exact action, so their reply, not another pause, decides it — but
-  // only for that action, and only when the reply is not a refusal. A "no" still reaches the planner in
-  // history, where it can pick something else; it just may never be read as a yes.
-  const approvedAction = input.resume?.action && !REFUSAL.test(input.goal) ? input.resume.action : undefined;
+  // only for that action, and only when the reply is a clear yes. A "no", "maybe", or anything else still
+  // reaches the planner in history, where it can pick something else; it just may never be read as a yes.
+  const approvedAction = input.resume?.action && AFFIRM.test(input.goal) ? input.resume.action : undefined;
   let riskApproved = Boolean(approvedAction);
   if (input.resume) history.push(`step ${step}: asked the user "${input.resume.question}" → they replied "${input.goal}"`);
   const actionCounts = new Map<string, number>();
   let consecutiveWaits = 0;
   // `goal` is the task even on a resume, where input.goal is only the user's reply to a question.
   const exploratory = isExploratoryTask(goal);
-  const pagesSeen = new Set<string>();
-  let realActions = 0;
+  const pagesSeen = new Set<string>(input.resume?.pagesSeen ?? []);
+  let realActions = input.resume?.realActions ?? 0;
   let coverageWarning: string | undefined;
-  let coverageRefusals = 0;
+  let coverageRefusals = input.resume?.coverageRefusals ?? 0;
   let lastFingerprint = "";
   let lastUrl = "";
   let lastText = "";
   const seenPages = new Set(page.context().pages());
   // An action that threw (covered control, detached node, timeout) did not happen. Until something
   // confirms the change it was meant to make, no "done" may be reported from history text alone.
-  let pendingFailure: { step: number; action: string; note: string; elementKey?: string; op?: string } | undefined;
+  // Carried over on resume: a pause must not make an unconfirmed failure disappear.
+  let pendingFailure: { step: number; action: string; note: string; elementKey?: string; op?: string } | undefined = input.resume?.pendingFailure;
   let failureRecheckAsked = false;
 
   const end = (status: EndEvent["status"], message: string, answer?: string) =>
@@ -196,7 +205,15 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   // Stop the run without executing anything and hand back everything it needs to carry on from the reply.
   // `question` stays the bare question so the panel can prompt with it; only the message carries the tag.
   const pause = (question: string, action?: string) =>
-    emit({ type: "end", status: "question", message: `${outcomeWord("question")}: ${question}`, question, pending: { goal, history: [...history], step, question, action }, totalCostUsd: totalCost, steps: step });
+    emit({
+      type: "end",
+      status: "question",
+      message: `${outcomeWord("question")}: ${question}`,
+      question,
+      pending: { goal, history: [...history], step, question, action, realActions, pagesSeen: [...pagesSeen], coverageRefusals, pendingFailure },
+      totalCostUsd: totalCost,
+      steps: step,
+    });
 
   // On an open-ended "test the app" task, refuse a "done" that has barely touched the app. Returns the
   // reason to send back to the models, or undefined when the run may finish. The floor never outlives the

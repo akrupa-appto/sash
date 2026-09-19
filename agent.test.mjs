@@ -417,6 +417,47 @@ test('a refusal is not an approval, and an approval covers only the action it wa
   assert.match(swapped.question, /Transfer funds/);
 });
 
+test('an unclear reply is not read as approval for a high-risk action', async () => {
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high', why: 'it removes the account for good' }];
+  decisions = [choice('CLICK')];
+  const paused = await run(true);
+
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high' }];
+  decisions = [choice('CLICK')];
+  const hedged = await run(true, 3, { goal: 'maybe, what does that do exactly?', resume: paused.pending });
+  assert.equal(executed, 0, 'a hedging, non-affirmative reply must not be read as a yes');
+  assert.equal(hedged.status, 'question');
+});
+
+test('an unconfirmed failed step still blocks "done" after the run pauses and resumes for something else', async () => {
+  const [origSnap, origClick, origType] = [snapFn, clickFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Condition value', kind: 'type', inViewport: true },
+  ] });
+  typeTextFn = async () => { throw new Error('the control is covered or not visible'); };
+  try {
+    // Step fails, then the very next planner call needs something only the user knows (unrelated question).
+    plans = [
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'question', question: 'which domain do you mean?' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' } }];
+    const paused = await run(true, 6);
+    assert.equal(paused.status, 'question');
+    assert.equal(paused.pending.pendingFailure?.note, 'action failed: the control is covered or not visible');
+
+    // Resuming answers the question, but the earlier failure was never confirmed, so a later "done" must
+    // still be forced through the re-check guard instead of quietly reporting success.
+    plans = [
+      { status: 'done', answer: 'the catch-all filter was updated' },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+    ];
+    decisions = [];
+    const resumed = await run(true, 6, { goal: 'gmail.com', resume: paused.pending });
+    assert.equal(resumed.status, 'blocked', 'the pending failure must survive the pause, not reset on resume');
+  } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
+});
+
 // A run that ends blocked or errored explains its reason but never names its outcome in plain terms, so a
 // one-word tag goes on the message itself: the panel shows the agent's own text verbatim.
 test('a run that finishes surfaces "done" on its own message', async () => {
