@@ -1,5 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 const events = () => {
   const listeners = new Set();
@@ -272,6 +273,13 @@ test('a different menu item or an unsupported tab is ignored', () => {
   chrome.contextMenus.onClicked.fire({ menuItemId: 'something-else', selectionText: 'nope' }, { id: 23, windowId: 7, url: 'https://example.test' });
   chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', selectionText: 'nope' }, { id: 24, windowId: 7, url: 'chrome://extensions' });
   assert.equal(taskStarted, started);
+});
+
+// Without these two manifest entries Chrome never fires either listener, so the code above is dead.
+test('the manifest declares the shortcut and the contextMenus permission the entry points need', async () => {
+  const manifest = JSON.parse(await readFile('extension/manifest.json', 'utf8'));
+  assert.equal(manifest.permissions.includes('contextMenus'), true);
+  assert.equal(manifest.commands['open-panel'].suggested_key.default, 'Ctrl+Shift+Period');
 });
 
 // --- host access is asked for before a site is touched -----------------------------------------
