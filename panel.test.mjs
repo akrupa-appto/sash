@@ -18,8 +18,10 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
-const browser = await chromium.launch();
-after(async () => { await browser.close(); server.close(); });
+// A checkout without `npx playwright install chromium` skips these instead of failing the suite.
+const browser = await chromium.launch().catch(() => undefined);
+const skip = browser ? false : 'chromium is not installed: npx playwright install chromium';
+after(async () => { await browser?.close(); server.close(); });
 
 const steps = [
   { step: 1, plan: 'switch to the upload tab', action: 'opened tab: ~/upload' },
@@ -51,7 +53,7 @@ async function panel(state) {
   return page;
 }
 
-test('a finished run shows its answer after its own actions, not before them', async () => {
+test('a finished run shows its answer after its own actions, not before them', { skip }, async () => {
   const page = await panel(finished);
   const order = await page.evaluate(() => [...document.querySelector('.message.agent').children].map(el => el.className || el.tagName.toLowerCase()));
   assert.deepEqual(order, ['message-label', 'steps', 'div']);
@@ -63,7 +65,7 @@ test('a finished run shows its answer after its own actions, not before them', a
   await page.close();
 });
 
-test('the live action list only shows while the run is in flight', async () => {
+test('the live action list only shows while the run is in flight', { skip }, async () => {
   const page = await panel({ ...finished, running: true, status: 'working', messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);
   assert.equal(await page.locator('#steps-label').innerText(), '2 actions');
