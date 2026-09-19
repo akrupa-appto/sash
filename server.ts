@@ -82,7 +82,8 @@ export const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/providers") {
     return json(res, 200, {
       providers: configuredProviders().map((id) => ({ id, label: PROVIDERS[id].label, prefix: PROVIDERS[id].prefix })),
-      default: plannerModel(),
+      // Only offer the env default when its provider is connected; otherwise the client opens the picker.
+      default: providerKey(parseModel(plannerModel()).provider) ? plannerModel() : "",
     });
   }
   if (req.method === "GET" && url.pathname === "/api/models") {

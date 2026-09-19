@@ -18,21 +18,26 @@ test('OpenAI models use the official endpoint, reasoning_effort, and fall back w
     return ok({ choices: [{ message: { content: '{"status":"done"}' }, finish_reason: 'stop' }] });
   });
   try {
-    const reply = await withKeys({ OPENAI_API_KEY: 'oa-key', OPENROUTER_API_KEY: undefined }, () => chat({ ...req, spec: 'openai:o4-mini' }));
+    const reply = await withKeys({ OPENAI_API_KEY: 'oa-key', OPENROUTER_API_KEY: undefined }, () => chat({ ...req, spec: 'openai:gpt-x-unknown' }));
     assert.equal(reply.content, '{"status":"done"}');
     assert.equal(reply.prefilled, false);
     assert.equal(calls[0].url, 'https://api.openai.com/v1/chat/completions');
     assert.equal(calls[0].headers.Authorization, 'Bearer oa-key');
-    assert.equal(calls[0].body.reasoning_effort, 'none');
+    assert.equal(calls[0].body.reasoning_effort, 'none', 'unknown model tries none first');
     assert.equal(calls[0].body.max_completion_tokens, 500);
     assert.deepEqual(calls[0].body.response_format, { type: 'json_object' });
     assert.equal(calls[0].body.temperature, undefined);
     assert.equal(calls[0].body.messages.length, 2, 'no assistant prefill for OpenAI');
     assert.equal(calls[1].body.reasoning_effort, undefined, 'second try lets the model use its default effort');
-    assert.ok(_memo.noEffortOff.has('o4-mini'));
+    assert.ok(_memo.noEffortOff.has('gpt-x-unknown'));
     // an explicit level goes through unchanged
-    await withKeys({ OPENAI_API_KEY: 'oa-key' }, () => chat({ ...req, spec: 'openai:o4-mini', effort: 'high' }));
+    await withKeys({ OPENAI_API_KEY: 'oa-key' }, () => chat({ ...req, spec: 'openai:gpt-x-unknown', effort: 'high' }));
     assert.equal(calls[2].body.reasoning_effort, 'high');
+    // documented families go straight to their fastest setting
+    await withKeys({ OPENAI_API_KEY: 'oa-key' }, () => chat({ ...req, spec: 'openai:gpt-5-mini' }));
+    assert.equal(calls[3].body.reasoning_effort, 'minimal');
+    await withKeys({ OPENAI_API_KEY: 'oa-key' }, () => chat({ ...req, spec: 'openai:gpt-5.2' }));
+    assert.equal(calls[4].body.reasoning_effort, 'none');
   } finally { fetchMock.mock.restore(); }
 });
 
@@ -105,5 +110,10 @@ test('reasoning inference follows the documented families', () => {
   assert.deepEqual(inferReasoning('gemini', 'gemini-3-flash-preview').supported_efforts, ['high', 'medium', 'low', 'minimal']);
   assert.equal(inferReasoning('gemini', 'gemini-2.5-flash-lite').default_enabled, false);
   assert.deepEqual(geminiThinking('gemini-2.5-pro', 'high'), { thinkingBudget: 8192 });
-  assert.deepEqual(geminiThinking('gemini-3-flash-preview', 'none'), { thinkingLevel: 'minimal' });
+  assert.throws(() => geminiThinking('gemini-3-flash-preview', 'none'), /cannot turn reasoning off/);
+  assert.deepEqual(geminiThinking('gemini-3-flash-preview', 'auto'), { thinkingLevel: 'minimal' });
+  assert.deepEqual(geminiThinking('gemini-3.1-pro-preview', 'auto'), { thinkingLevel: 'low' });
+  _memo.noEffortOff.delete('gemini-2.5-pro'); // an earlier test taught the memo that this model rejects a thinking change
+  assert.deepEqual(geminiThinking('gemini-2.5-pro', 'auto'), { thinkingBudget: 1024 });
+  assert.deepEqual(geminiThinking('gemini-2.5-flash', 'none'), { thinkingBudget: 0 });
 });

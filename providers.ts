@@ -130,10 +130,21 @@ async function openrouterChat(req: ChatRequest, model: string, key: string, retr
   };
 }
 
+// The fastest effort a model is documented to accept: "none" where allowed, otherwise its lowest level.
+// Unknown models try "none" once and fall back to the server default.
+export function fastestEffort(provider: ProviderId, model: string): Effort | undefined {
+  const meta = inferReasoning(provider, model);
+  if (!meta) return undefined;
+  if (!meta.mandatory) return "none";
+  const efforts = meta.supported_efforts ?? EFFORTS.filter((e) => e !== "none");
+  return [...efforts].sort((a, b) => EFFORTS.indexOf(a) - EFFORTS.indexOf(b))[0];
+}
+
 async function openaiChat(req: ChatRequest, model: string, key: string, retry = 0): Promise<ChatResult> {
-  // reasoning_effort values are model-dependent (none/minimal/low/medium/high/xhigh/max). "auto" asks
-  // for none, the fastest; models that reject it (o-series, GPT-5 before 5.1, GPT-6) fall back to their default.
-  const effort = req.effort === "auto" ? (noEffortOff.has(model) ? undefined : "none") : req.effort;
+  // reasoning_effort values are model-dependent (none/minimal/low/medium/high/xhigh/max). "auto" asks for the
+  // fastest documented setting; a model that still rejects "none" (o-series, GPT-5 before 5.1, GPT-6) falls back to its default.
+  const known = inferReasoning("openai", model);
+  const effort = req.effort === "auto" ? (noEffortOff.has(model) ? undefined : known ? fastestEffort("openai", model) : "none") : req.effort;
   if (effort === "none" && noEffortOff.has(model) && req.effort !== "auto") throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level");
   const body = {
     model,
@@ -167,7 +178,13 @@ async function openaiChat(req: ChatRequest, model: string, key: string, retry = 
 // Gemini 3 takes thinkingLevel; Gemini 2.5 takes a thinkingBudget in tokens (0 = off, -1 = dynamic).
 export function geminiThinking(model: string, effort: Effort | "auto"): Record<string, unknown> | undefined {
   const gen3 = /gemini-(?:[3-9]|\d{2})/.test(model);
-  if (effort === "auto") return noEffortOff.has(model) ? undefined : gen3 ? { thinkingLevel: "low" } : { thinkingBudget: 0 };
+  const meta = inferReasoning("gemini", model);
+  if (effort === "none" && meta?.mandatory) throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level");
+  if (effort === "auto") {
+    if (noEffortOff.has(model)) return undefined;
+    // Lowest documented level: minimal on Gemini 3 Flash, low on Gemini 3 Pro, off on 2.5 Flash, low on 2.5 Pro.
+    effort = fastestEffort("gemini", model) ?? (gen3 ? "low" : "none");
+  }
   if (gen3) return { thinkingLevel: { none: "minimal", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" }[effort] };
   return { thinkingBudget: { none: 0, minimal: 512, low: 1024, medium: 4096, high: 8192, xhigh: 24576, max: 24576 }[effort] };
 }

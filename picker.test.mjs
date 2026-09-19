@@ -9,6 +9,8 @@ test('reasoning choices follow the model metadata', () => {
   assert.deepEqual(values({ mandatory: false, supported_efforts: ['max', 'high', 'low'] }), ['auto', 'none', 'low', 'high', 'max']);
   assert.deepEqual(values({ mandatory: false, supported_efforts: ['xhigh', 'high', 'medium', 'low', 'none'] }), ['auto', 'none', 'low', 'medium', 'high', 'xhigh']);
   assert.deepEqual(values({ mandatory: false, supported_efforts: null }), ['auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(values({ mandatory: false, default_enabled: true }), ['auto', 'none'], 'reasoning without effort selection is on/off only');
+  assert.deepEqual(values({ mandatory: true }), ['auto']);
   assert.match(reasoningChoices({ mandatory: true, supported_efforts: ['high', 'low'] })[0].hint, /cannot turn reasoning off/);
   assert.equal(reasoningChoices({ mandatory: false, supported_efforts: ['high', 'low'], default_effort: 'high' }).find(c => c.value === 'high').hint, 'model default');
   assert.equal(reasoningSummary(undefined), 'no reasoning');
