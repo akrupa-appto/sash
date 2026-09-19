@@ -5,10 +5,11 @@ import { configure, clearConfig } from '../env.ts';
 const form = document.querySelector('#settings');
 const status = document.querySelector('#status');
 function show(message, error = false) { status.textContent = message; status.classList.toggle('error', error); }
-let picker;
+let picker, pickerProviders = '';
 function render(settings) {
   for (const key of Object.keys(defaults)) form.elements[key].value = settings[key];
   document.querySelector('#typesafe-field').hidden = settings.provider !== 'typesafe';
+  ensurePicker()?.warm(current().model).then(renderModel).catch(() => {});
   renderModel();
 }
 const current = () => ({ model: form.elements.model.value, reasoning: form.elements.reasoning.value || 'auto' });
@@ -17,10 +18,14 @@ function renderModel() {
   const label = document.querySelector('#model-label');
   label.textContent = picker ? picker.label(current()) : (current().model ? `${current().model} · reasoning ${current().reasoning}` : 'choose a model');
 }
-document.querySelector('#model-button').addEventListener('click', () => {
+// One picker per set of connected providers; keys typed above change which tabs it shows.
+function ensurePicker() {
   const providers = connected();
-  if (!providers.length) return show('add an OpenRouter, OpenAI, or Gemini key first, then choose a model.', true);
+  const signature = providers.map(p => p.id).join(',');
+  if (!providers.length) { picker?.dialog.remove(); picker = undefined; pickerProviders = ''; return undefined; }
+  if (picker && signature === pickerProviders) return picker;
   picker?.dialog.remove();
+  pickerProviders = signature;
   picker = createModelPicker({
     providers,
     // Lists come straight from each provider with the keys typed above; nothing is saved until "save settings".
@@ -28,7 +33,12 @@ document.querySelector('#model-button').addEventListener('click', () => {
     value: current(),
     onChange: next => { form.elements.model.value = next.model; form.elements.reasoning.value = next.reasoning; renderModel(); },
   });
-  picker.open(current());
+  return picker;
+}
+document.querySelector('#model-button').addEventListener('click', () => {
+  const p = ensurePicker();
+  if (!p) return show('add an OpenRouter, OpenAI, or Gemini key first, then choose a model.', true);
+  p.open(current());
 });
 readSettings().then(render).catch(err => show(err.message, true));
 form.elements.provider.addEventListener('change', () => { document.querySelector('#typesafe-field').hidden = form.elements.provider.value !== 'typesafe'; });
