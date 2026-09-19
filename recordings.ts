@@ -13,6 +13,7 @@ export function readRecording(id: string): Recording | undefined {
 }
 export function saveRecording(record: Recording) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
   const file = filename(record.id);
   fs.writeFileSync(file + '.tmp', JSON.stringify(record), { mode: 0o600 });
   fs.renameSync(file + '.tmp', file);

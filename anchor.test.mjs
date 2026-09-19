@@ -42,3 +42,15 @@ for (const failure of [false, true]) test(failure ? 'connection failure releases
     if(oldKey===undefined) delete process.env.ANCHOR_API_KEY; else process.env.ANCHOR_API_KEY=oldKey;
   }
 });
+
+test('failed initial pause releases the new session before any page is opened', async () => {
+  const oldKey=process.env.ANCHOR_API_KEY;process.env.ANCHOR_API_KEY='test';
+  const requests=[];
+  const f=mock.method(globalThis,'fetch',async (url,options)=>{
+    requests.push({url,...options});
+    if(url.endsWith('/recordings/pause'))return new Response('{}',{status:503});
+    return new Response(JSON.stringify({data:{id:'pause-failure'}}));
+  });
+  try{await assert.rejects(launch(),/could not connect/);assert.equal(requests.at(-1).method,'DELETE');assert.equal(requests.at(-1).url,'https://api.anchorbrowser.io/v1/sessions/pause-failure');}
+  finally{f.mock.restore();if(oldKey===undefined)delete process.env.ANCHOR_API_KEY;else process.env.ANCHOR_API_KEY=oldKey;}
+});

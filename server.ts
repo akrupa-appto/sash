@@ -116,7 +116,7 @@ export const server = http.createServer(async (req, res) => {
           `https://${os.hostname()}.exe.xyz:${PORT}`,
           `http://127.0.0.1:${PORT}`,
           `http://localhost:${PORT}`,
-          `${req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`,
+          process.env.PUBLIC_ORIGIN || `https://${os.hostname()}.exe.xyz`,
         ]);
         await browser.context.route(u => origins.has(u.origin) && u.pathname === '/playground', route =>
           route.fulfill({ contentType: 'text/html; charset=utf-8', body: fs.readFileSync(path.join(root, 'public', 'playground.html')) }));
