@@ -189,3 +189,33 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.runtime.onInstalled.addListener(({ reason }) => { if (reason === 'install') chrome.runtime.openOptionsPage(); });
+
+// Keyboard shortcut: open the side panel on the active tab's window (mirrors chatgpt's open-codex-side-panel).
+export async function openSidePanel(windowId) {
+  if (windowId == null) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    windowId = tab?.windowId;
+  }
+  if (windowId != null) await chrome.sidePanel.open({ windowId });
+}
+chrome.commands?.onCommand.addListener(command => {
+  if (command !== 'open-panel') return;
+  void openSidePanel();
+});
+
+// Right-click entry: send the selection or link into a chat run on the clicked tab.
+export const ASK_CHECKTO_MENU_ID = 'ask-checkto';
+export function contextMenuGoal(info) {
+  if (info.linkUrl) return `look at this link: ${info.linkUrl}`;
+  if (info.selectionText) return `help me with this selection: "${info.selectionText}"`;
+  return `help me with this page: ${info.pageUrl || ''}`;
+}
+if (chrome.contextMenus) {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: ASK_CHECKTO_MENU_ID, title: 'Ask Checkto', contexts: ['page', 'selection', 'link'] }, () => void chrome.runtime.lastError);
+  });
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== ASK_CHECKTO_MENU_ID || !tab || !supportedUrl(tab.url)) return;
+    void openSidePanel(tab.windowId).then(() => handle({ type: 'run', tabId: tab.id, goal: contextMenuGoal(info), mode: 'fast' })).catch(() => {});
+  });
+}
