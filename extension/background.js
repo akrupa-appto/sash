@@ -3,7 +3,7 @@ import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { readSettings, validateSettings } from './settings.js';
 import { BadgeState, RequestType } from './types.js';
-import { declineAll, denialKey, RequestOutcome } from './requests.js';
+import { declineAll, denialKey, pickBlocking, RequestOutcome } from './requests.js';
 import * as lease from './lease.js';
 import { Disposition, endRun, groupTab, markTab, releaseAll, resumeHandoffIfPresent, setFaviconRestorer } from './tabs.js';
 
@@ -404,6 +404,10 @@ async function handle(message) {
   }
   if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
+    // The panel disables the composer while a card is waiting, but this is the enforcement that
+    // actually matters: nothing may start a fresh run over a pending request and let it vanish
+    // uncounted. Answer it (or decline it) through 'answer' first.
+    if (pickBlocking(state.requests || [])) throw new Error('answer the pending request before starting a new task');
     if (!Number.isInteger(message.tabId) || typeof message.goal !== 'string' || !message.goal.trim() || message.goal.length > 10000) throw new Error('choose a tab and enter a task');
     if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
     // The session outlives one turn: it is what holds a handed-off tab until the next turn resumes it.

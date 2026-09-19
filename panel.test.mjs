@@ -250,3 +250,32 @@ test('a run waiting on the user reads as asking, not as ordinary chat text', { s
   assert.equal(await page.locator('.message.agent.asking > div').last().innerText(), 'which README do you mean?');
   await page.close();
 });
+
+// A pending request used to leave the ordinary chat box fully live: typing "yes" and hitting enter
+// silently destroyed the request instead of answering it (the run handler wiped `requests` on a new
+// run without declining it first). The composer must go inert, and a submit forced straight at the
+// form -- not just a disabled button -- must still be refused.
+test('the composer goes inert while a request is pending, and a submit cannot start a run over it', { skip }, async () => {
+  const request = { id: 'approve-1', type: 'approval', action: 'submit this $500 order', scopes: [{ id: 'once', label: 'allow once' }], denyLabel: 'deny' };
+  const page = await panel(waiting([request]));
+  assert.equal(await page.locator('#goal').isDisabled(), true);
+  assert.equal(await page.locator('#send').isDisabled(), true);
+  assert.match(await page.locator('#goal').getAttribute('placeholder'), /answer the request above/);
+  await captureSent(page);
+  await page.evaluate(() => {
+    document.querySelector('#goal').value = 'yes';
+    document.querySelector('#task-form').dispatchEvent(new Event('submit', { cancelable: true }));
+  });
+  assert.deepEqual(await page.evaluate(() => window.sent), [], 'no run message is sent while a request is pending');
+  assert.equal(await page.locator('.request-card').count(), 1, 'the pending request card is still there, not silently dropped');
+  await page.close();
+});
+
+test('once the pending request clears, the composer is available again', { skip }, async () => {
+  const page = await panel(waiting([{ id: 'ask-1', type: 'user_input', question: 'which folder?' }]));
+  assert.equal(await page.locator('#goal').isDisabled(), true);
+  await page.evaluate(s => window.onState({ type: 'state', state: s }), finished);
+  assert.equal(await page.locator('#goal').isDisabled(), false);
+  assert.equal(await page.locator('#goal').getAttribute('placeholder'), 'say what you need');
+  await page.close();
+});

@@ -165,6 +165,34 @@ test('stopping a turn that is waiting declines the request instead of dropping i
   } finally { pendingRequest = undefined; }
 });
 
+test('a new run is refused while a request is pending, and the request survives untouched', async () => {
+  await send({ type: 'clear' });
+  pendingRequest = { id: 'req-2', type: 'approval', action: 'submit this $500 order' };
+  const before = taskStarted;
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'submit this order', mode: 'fast' });
+    await until(() => taskStarted === before + 1);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-2']);
+
+    // The user, seeing an ordinary-looking chat box, types "yes" instead of answering the card.
+    // The handler must refuse the new run rather than silently overwriting `requests`.
+    const attempt = await send({ type: 'run', tabId: 12, goal: 'yes', mode: 'fast' });
+    assert.match(attempt.error, /pending request/);
+    assert.equal(taskStarted, before + 1, 'no new run started over the pending request');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-2'], 'the pending request is still there, not dropped');
+    assert.equal(data.runState.declined, undefined, 'nothing was declined either: it is simply still waiting');
+
+    // Answering the card properly still works afterwards -- the refusal is not a dead end.
+    nextOutcome = { status: 'done', message: 'order submitted', totalCostUsd: 0 };
+    await send({ type: 'answer', id: 'req-2', outcome: 'submitted', scope: 'once' });
+    await until(() => data.runState?.status === 'done');
+    assert.deepEqual(data.runState.requests, []);
+  } finally { pendingRequest = undefined; }
+});
+
 test('a paused request carries the coverage/failure guards back in when the answer resumes the run', async () => {
   await send({ type: 'clear' });
   const resumeState = { goal: 'open the readme', history: ['step 1: did CLICK [1] link "README.md"'], step: 1, realActions: 1, pagesSeen: ['fp1'], coverageRefusals: 0 };

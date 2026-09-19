@@ -10,6 +10,10 @@ let highlighted = 0;
 let mention;
 let submitting = false;
 let durationTimer;
+// The one request currently blocking the composer, or undefined when nothing is pending. Set once
+// per render from the same `pickBlocking` the request card itself uses, so the composer and the
+// card can never disagree about whether there is something to answer first.
+let pendingRequest;
 const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
 const request = async message => {
@@ -20,11 +24,17 @@ const request = async message => {
 };
 const site = tab => { try { return new URL(tab.url).hostname || tab.url; } catch { return tab.url || ''; } };
 function controls() {
-  $('#send').disabled = running || submitting || !configured || !$('#goal').value.trim() || !tabs.some(isWebsite);
+  const blocked = !running && !!pendingRequest;
+  $('#send').disabled = running || submitting || blocked || !configured || !$('#goal').value.trim() || !tabs.some(isWebsite);
   $('#send').hidden = running;
   $('#stop').hidden = !running;
   $('#new-chat').disabled = running || submitting;
   $('#mode').disabled = running || submitting;
+  // A card is waiting for an answer: the chat box itself must go inert, not just the send button,
+  // or submitting free text over it looks like it worked and quietly drops the pending request.
+  $('#goal').disabled = blocked;
+  $('#goal').placeholder = blocked ? 'answer the request above before sending a new message' : 'say what you need';
+  $('#send').title = blocked ? 'answer the request above first' : 'send task';
 }
 async function refreshTabs() {
   tabs = await chrome.tabs.query({});
@@ -251,11 +261,10 @@ function requestCard(pending) {
   card.append(form);
   return card;
 }
-function renderRequest(state) {
+function renderRequest(state, pending) {
   const reason = blockedText(state.blockedReason);
   $('#blocked').textContent = reason || '';
   $('#blocked').hidden = running || !reason;
-  const pending = running ? undefined : pickBlocking(state.requests || []);
   // An answer already on its way keeps its card exactly as it is: redrawing it would re-enable the
   // buttons the user just used and throw away what they typed into it.
   if (pending && answering === pending.id) return;
@@ -296,7 +305,10 @@ function render(state) {
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);
   renderLiveDuration();
-  renderRequest(state);
+  // The same pending request both gates the composer and is what the request card renders: computed
+  // once here so the two can never see a different answer to "is something waiting on the user".
+  pendingRequest = running ? undefined : pickBlocking(state.requests || []);
+  renderRequest(state, pendingRequest);
   controls();
   $('#content').scrollTop = $('#content').scrollHeight;
   // Re-tick every second while a run is live, so the duration divider can appear once a second has
@@ -330,7 +342,7 @@ $('#mention-tabs').addEventListener('click', () => {
 $('#new-chat').addEventListener('click', async () => { try { await request({ type: 'clear' }); selected = []; renderSelected(); $('#error').textContent = ''; } catch (err) { showError(err); } });
 $('#stop').addEventListener('click', async () => { try { await request({ type: 'stop' }); } catch (err) { showError(err); } });
 $('#task-form').addEventListener('submit', async event => {
-  event.preventDefault(); if (running || submitting) return;
+  event.preventDefault(); if (running || submitting || pendingRequest) return;
   $('#error').textContent = '';
   submitting = true; controls();
   try {
@@ -356,7 +368,7 @@ $('#goal').addEventListener('keydown', event => {
       closePicker();
     }
   }
-  if (event.key === 'Enter' && !event.shiftKey && !running) { event.preventDefault(); $('#task-form').requestSubmit(); }
+  if (event.key === 'Enter' && !event.shiftKey && !running && !pendingRequest) { event.preventDefault(); $('#task-form').requestSubmit(); }
 });
 document.addEventListener('click', event => { if (!event.target.closest('.compose-box')) closePicker(); });
 void load().catch(showError);
