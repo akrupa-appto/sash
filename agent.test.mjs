@@ -9,11 +9,12 @@ const snap = () => ({
 });
 let snapFn = () => snap();
 let clickFn = async () => { executed++; state = clickDestination === 'progress' ? `record-${executed}` : clickDestination; };
+let typeTextFn = async () => {};
 mock.module('./browser.ts', { namedExports: {
   snapshot: async () => snapFn(), screenshot: async () => '', settle: async () => {},
   describe: e => `[${e.id}] ${e.role} "${e.name}"`,
   click: async (p, id) => clickFn(p, id),
-  typeText: async () => {}, selectOption: async () => {}, scroll: async () => {},
+  typeText: async (...a) => typeTextFn(...a), selectOption: async () => {}, scroll: async () => {},
 }});
 mock.module('./jev.ts', { namedExports: {
   decide: async (_state, questions) => { lastQuestions = questions; return { answers: decisions.shift(), ms: 1, cost_usd: 0 }; },
@@ -167,6 +168,53 @@ test('an exact-name match beats a pick that only contains the planner-quoted nam
     await run(true, 5);
     assert.deepEqual(clicked, [2]);
   } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
+test('a step whose action failed cannot be reported as a success by the next planner call', async () => {
+  const [origSnap, origClick, origType] = [snapFn, clickFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Condition value', kind: 'type', inViewport: true },
+    { id: 2, role: 'button', name: 'Update', kind: 'click', inViewport: true },
+  ] });
+  typeTextFn = async () => { throw new Error('the control is covered or not visible'); };
+  clickFn = async () => { executed++; state = 'filter-saved'; };
+  try {
+    plans = [
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'continue', next: 'click the "Update" button', completes_task: true },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+    ];
+    decisions = [
+      { operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' } },
+      { operation: { choice: 'CLICK' }, click_target: { choice: 'el_2' } },
+    ];
+    const result = await run(true, 6);
+    assert.notEqual(result.status, 'done');
+    assert.equal(result.status, 'blocked');
+    assert.match(result.message, /control is covered or not visible/);
+    // the planner is told to re-check before the run gives up on it
+    assert.ok(planCalls[2].warnings.some(w => /did not happen/.test(w)), 'planner must be warned the step failed');
+  } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
+});
+
+test('a retry that succeeds on the same control clears the earlier failure', async () => {
+  const [origSnap, origClick, origType] = [snapFn, clickFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Condition value', kind: 'type', inViewport: true },
+  ] });
+  let typed = 0;
+  typeTextFn = async () => { if (++typed === 1) throw new Error('the control is covered or not visible'); state = 'typed'; };
+  try {
+    plans = [
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+    ];
+    decisions = Array.from({ length: 2 }, () => ({ operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' } }));
+    const result = await run(true, 6);
+    assert.equal(result.status, 'done');
+  } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
 });
 
 test('the planner sees every step of a long run, older ones shortened', async () => {

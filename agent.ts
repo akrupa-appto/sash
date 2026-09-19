@@ -114,6 +114,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   let lastUrl = "";
   let lastText = "";
   const seenPages = new Set(page.context().pages());
+  // An action that threw (covered control, detached node, timeout) did not happen. Until something
+  // confirms the change it was meant to make, no "done" may be reported from history text alone.
+  let pendingFailure: { step: number; action: string; note: string; elementId?: number } | undefined;
+  let failureRecheckAsked = false;
 
   const end = (status: EndEvent["status"], message: string, answer?: string) =>
     emit({ type: "end", status, message, answer, totalCostUsd: totalCost, steps: step });
@@ -181,6 +185,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       const warnings = [
         ...repeated,
         ...(waitCapped ? [`you have waited ${consecutiveWaits} times in a row. do not wait again now: read the page for the result of the pending operation and act on it (open the result, check the status, or continue the task). only wait again after a non-wait step.`] : []),
+        ...(pendingFailure ? [`step ${pendingFailure.step} did not happen: ${pendingFailure.note} (${pendingFailure.action}). that change is unconfirmed, so do not report the task done from the history. re-check the exact field or control that action touched on the page now; retry it if it is reachable, and if the page still does not show the intended change, answer with status "blocked" and say what did not apply.`] : []),
       ];
 
       // ---- 1. supervisor thinks: one concrete action, or done/blocked
@@ -210,7 +215,18 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         );
         totalCost += p.cost_usd;
         planMs = Math.round(p.ms);
-        if (p.status === "done") return end("done", p.why ?? "Task complete", p.answer);
+        if (p.status === "done") {
+          // A step that threw never applied its change. Force one re-check of the page before the
+          // planner's success is believed, and refuse it if the re-check still shows nothing.
+          if (pendingFailure) {
+            if (failureRecheckAsked)
+              return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
+            failureRecheckAsked = true;
+            history.push(`step ${step}: claimed the task was done, but step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing confirmed that change; re-reading the page before reporting success`);
+            continue;
+          }
+          return end("done", p.why ?? "Task complete", p.answer);
+        }
         if (p.status === "blocked") return end("blocked", p.why ?? "Cannot continue", p.answer);
         if (p.tabId !== undefined && input.browserTabs) {
           if (!tabs?.some(t => t.id === p.tabId)) return end("error", "the requested tab is no longer available");
@@ -317,6 +333,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       // element ids belong to that stale snapshot, so the retry re-tags the page and finds the same
       // control by role + name instead.
       let retry: { el: { role: string; name: string }; run: (id: number) => Promise<void> } | undefined;
+      let actionElementId: number | undefined;
+      let actionFailed = false;
 
       // ---- 3. execute
       try {
@@ -361,6 +379,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
             const e = snap.elements.find((x) => x.id === id);
             action = `CLICK ${e ? b.describe(e) : `[${id}]`}`;
+            actionElementId = id;
             if (e) retry = { el: e, run: (rid) => b.click(page, rid) };
             await b.click(page, id);
             break;
@@ -368,6 +387,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           case "TYPE_TEXT":
           case "TYPE_AND_ENTER": {
             const id = elId(pick("type_target"));
+            actionElementId = id;
             const e = snap.elements.find((x) => x.id === id);
             let text: string;
             const tv = pick("type_value");
@@ -407,6 +427,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
             if (!e || !Number.isInteger(idx) || idx < 0 || idx >= e.options!.length) throw new Error("No matching dropdown option selected");
             action = `SELECT "${e?.options?.[idx]}" in ${e ? b.describe(e) : `[${id}]`}`;
+            actionElementId = id;
             await b.selectOption(page, id, idx);
             break;
           }
@@ -444,7 +465,19 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
           } catch { /* the retry failed too: fall through and report the original failure */ }
         }
-        if (!recovered) note = `action failed: ${first.slice(0, 200)}`;
+        // A recovered retry did carry out the action, so it is not an unconfirmed failure.
+        if (!recovered) {
+          note = `action failed: ${first.slice(0, 200)}`;
+          actionFailed = true;
+        }
+      }
+      if (actionFailed) {
+        pendingFailure = { step, action, note: note!, elementId: actionElementId };
+        failureRecheckAsked = false;
+      } else if (pendingFailure && actionElementId !== undefined && actionElementId === pendingFailure.elementId) {
+        // The same control was acted on again and this time it worked: the earlier failure is settled.
+        pendingFailure = undefined;
+        failureRecheckAsked = false;
       }
       signal.throwIfAborted();
       await b.settle(page);
@@ -470,7 +503,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         note,
       });
 
-      if (chosen === "DONE") return end("done", `done, now on "${(await page.title().catch(() => "")) || page.url()}"`);
+      if (chosen === "DONE") {
+        if (pendingFailure)
+          return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
+        return end("done", `done, now on "${(await page.title().catch(() => "")) || page.url()}"`);
+      }
       // A changed page proves an action had an effect, not that the entire task succeeded.
       // Let the next planner pass inspect the destination before reporting completion.
       if (chosen === "BLOCKED") return end("blocked", "i could not find a way to do this on this page");
