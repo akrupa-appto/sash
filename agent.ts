@@ -123,6 +123,17 @@ function quotedStrings(goal: string): string[] {
   return out;
 }
 
+// A final "done" answer that names something the run never actually saw (a PR/run/file number, a quoted
+// title) is a prediction dressed as a fact, not proof. Pull out the answer's specific claims and check each
+// one shows up somewhere in what the run actually did or read; anything that doesn't is unsupported.
+function unsupportedClaims(answer: string, corpus: string): string[] {
+  const lower = corpus.toLowerCase();
+  const claims = new Set<string>();
+  for (const q of quotedStrings(answer)) claims.add(q);
+  for (const m of answer.matchAll(/#\d+|\b\d{2,}(?:\/\d+)?\b/g)) claims.add(m[0]);
+  return [...claims].filter((c) => c.trim().length > 1 && !lower.includes(c.toLowerCase()));
+}
+
 export async function runTask(page: Page, input: RunInput, emit: (e: Event) => void, signal: AbortSignal) {
   const maxSteps = Math.min(Math.max(input.maxSteps ?? 60, 1), 60);
   const useSupervisor = input.supervisor !== false;
@@ -256,6 +267,16 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             failureRecheckAsked = true;
             history.push(`step ${step}: claimed the task was done, but step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing confirmed that change; re-reading the page before reporting success`);
             continue;
+          }
+          if (p.answer) {
+            // `goal` is the task even on a resume, where input.goal is the user's reply; both count as read.
+            const corpus = [goal, input.goal, ...(input.previousTasks ?? []), ...history, snap.text, snap.title].join("\n");
+            const bad = unsupportedClaims(p.answer, corpus);
+            if (bad.length)
+              return end(
+                "blocked",
+                `the summary mentions ${bad.map((c) => `"${c}"`).join(", ")}, which never came up while working on this, so i'm not reporting it as done.`,
+              );
           }
           return end("done", p.why ?? "Task complete", p.answer);
         }
