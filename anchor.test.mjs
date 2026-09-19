@@ -32,8 +32,8 @@ for (const failure of [false, true]) test(failure ? 'connection failure releases
       await Promise.all([session.close(),session.close()]);
       assert.equal(disconnected,1);
     }
-    assert.deepEqual(requests.map(r => r.method),['POST','DELETE']);
-    assert.equal(requests[1].url,'https://api.anchorbrowser.io/v1/sessions/test-session');
+    assert.deepEqual(requests.map(r => r.method),['POST','POST','DELETE']);
+    assert.equal(requests[2].url,'https://api.anchorbrowser.io/v1/sessions/test-session');
     const config=JSON.parse(requests[0].body);
     assert.equal(config.session.timeout.max_duration,60);
     assert.equal(config.session.live_view.read_only,true);

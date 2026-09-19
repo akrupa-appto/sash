@@ -31,7 +31,7 @@ const pageReady = () => !Array.from(document.querySelectorAll(
   el.getAttribute("aria-busy") === "true" || /^(saving|loading|submitting|processing|uploading)(\s*[.…]+)?$/i.test((el.textContent || el.getAttribute("value") || "").trim())
 ));
 
-export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page; liveViewUrl: string; close: () => Promise<void> }> {
+export async function launch(): Promise<{ browser: Browser; context: BrowserContext; page: Page; liveViewUrl: string; anchorId: string; close: () => Promise<void> }> {
   const key = process.env.ANCHOR_API_KEY || process.env.ANCHORBROWSER_API_KEY;
   if (!key) throw new Error("Anchor Browser needs ANCHOR_API_KEY in the server's .env file");
   const headers = { "anchor-api-key": key, "content-type": "application/json" };
@@ -39,7 +39,7 @@ export async function launch(): Promise<{ browser: Browser; context: BrowserCont
     method: "POST", headers, signal: AbortSignal.timeout(45000),
     body: JSON.stringify({
       browser: { headless: { active: false }, viewport: { width: 1280, height: 800 } },
-      session: { timeout: { max_duration: 60, idle_timeout: 3 }, live_view: { read_only: true }, recording: { active: false } },
+      session: { timeout: { max_duration: 60, idle_timeout: 3 }, live_view: { read_only: true }, recording: { active: true } },
     }),
   });
   if (!response.ok) throw new Error(`Anchor Browser could not start a session (${response.status})`);
@@ -51,6 +51,8 @@ export async function launch(): Promise<{ browser: Browser; context: BrowserCont
   };
   let browser: Browser | undefined;
   try {
+    const paused = await fetch(`https://api.anchorbrowser.io/v1/sessions/${encodeURIComponent(data.id)}/recordings/pause`, { method: "POST", headers, signal: AbortSignal.timeout(15000) });
+    if (!paused.ok) throw new Error("could not initialize recording controls");
     if (!data.cdp_url || !data.live_view_url) throw new Error("Anchor Browser returned an incomplete session");
     browser = await chromium.connectOverCDP(data.cdp_url, { timeout: 30000 });
     const context = browser.contexts()[0];
@@ -61,7 +63,7 @@ export async function launch(): Promise<{ browser: Browser; context: BrowserCont
     const close = () => closing ??= (async () => {
       try { await endRemote(); } finally { await browser!.close().catch(() => {}); }
     })();
-    return { browser, context, page, liveViewUrl: data.live_view_url, close };
+    return { browser, context, page, liveViewUrl: data.live_view_url, anchorId: data.id, close };
   } catch {
     await endRemote().catch(() => {});
     await browser?.close().catch(() => {});

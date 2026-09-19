@@ -8,10 +8,13 @@
   :root { --bg:#0e0f11; --panel:#16181c; --line:#26292f; --fg:#e6e6e6; --dim:#8b909a; --acc:#7cf5b1; --warn:#f5c97c; --bad:#f57c7c; --user:#1f2a3a; }
   * { box-sizing:border-box }
   html, body { height:100% }
+  body { display:flex; flex-direction:column }
+  main { flex:1; min-height:0 }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
-  header { height:48px; padding:0 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center }
+  header { min-height:48px; flex-wrap:wrap; padding:0 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:center }
   header h1 { margin:0; font-size:15px; font-weight:600 }
   header span { color:var(--dim); font-size:12px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  header a { color:var(--dim); font-size:12px; }
   header button { padding:5px 10px; font-size:12px; flex-shrink:0 }
   main { display:grid; grid-template-columns: minmax(0,1fr) 440px; height:calc(100% - 48px) }
   @media (max-width:900px){ main{ grid-template-columns:minmax(0,1fr); grid-template-rows: 45vh minmax(0,1fr) } }
@@ -63,7 +66,8 @@
 </style>
 </head>
 <body>
-<header><h1>checkto</h1><span>tell the browser what to do</span><button id="new" class="secondary">new chat</button></header>
+<header><h1>checkto</h1><span>tell the browser what to do</span><a href="/playground" target="_blank">playground</a><a href="/gallery" target="_blank">recordings</a><button id="record" class="secondary" title="One video per chat. End the chat to make it playable.">start recording</button><button id="new" class="secondary">new chat</button></header>
+<div id="record-status" role="status" style="padding:0 18px;color:var(--dim);font-size:12px"></div>
 <main>
   <section>
     <div class="urlbar" id="urlbar">no page open yet</div>
@@ -121,7 +125,28 @@
 const $ = s => document.querySelector(s);
 const chat = $('#chat'), shot = $('#shot'), msg = $('#msg');
 let session = sessionStorage.getItem('checkto-session') || null;
-let ctrl = null, chatCost = 0;
+let ctrl = null, chatCost = 0, recording = false, opening = null;
+function recordingState(state) {
+  recording = state === 'recording';
+  $('#record').textContent = recording ? 'stop recording' : 'start recording';
+  $('#record').setAttribute('aria-pressed', String(recording));
+}
+$('#record').onclick = async () => {
+  $('#record').disabled = true; $('#new').disabled = true;
+  try {
+    const id = await ensureSession();
+    const r = await fetch('/api/session/' + id + '/recording-' + (recording ? 'stop' : 'start'), {method:'POST'});
+    const data = await r.json(); if (!r.ok) throw new Error(data.error);
+    recordingState(data.state);
+    const ids = JSON.parse(localStorage.getItem('checkto-recordings') || '[]');
+    if (!ids.includes(id)) localStorage.setItem('checkto-recordings', JSON.stringify([...ids,id]));
+    $('#record-status').textContent = recording ? 'recording this browser · end the chat when finished to prepare the video' : 'recording stopped · end the chat to watch it in recordings';
+  } catch(e) { $('#record-status').textContent = e.message; }
+  finally { $('#record').disabled = false; $('#new').disabled = false; }
+};
+const incomingPrompt = new URLSearchParams(location.search).get('prompt');
+if (incomingPrompt) { msg.value = incomingPrompt; history.replaceState(null,'','/'); }
+
 
 const supervisorOn = () => !!$('#mode button.on')?.dataset.sup.startsWith('1');
 const savedModel = localStorage.getItem('checkto-model');
@@ -174,15 +199,27 @@ function showLiveBrowser(url) {
 }
 
 async function ensureSession() {
-  if (session) { const r = await fetch('/api/session/' + session); if (r.ok) { showLiveBrowser((await r.json()).liveViewUrl); return session; } session = null; }
+  if (opening) return opening;
+  opening = openSession();
+  try { return await opening; } finally { opening = null; }
+}
+async function openSession() {
+  if (session) { const r = await fetch('/api/session/' + session); if (r.ok) { const data = await r.json(); showLiveBrowser(data.liveViewUrl); recordingState(data.recording); return session; } session = null; }
   const r = await fetch('/api/session', { method:'POST' });
   if (!r.ok) throw new Error((await r.json()).error || 'could not start a browser');
   const data = await r.json(); session = data.id; showLiveBrowser(data.liveViewUrl); sessionStorage.setItem('checkto-session', session); chatCost = 0; return session;
 }
 
+$('#new').textContent = 'end chat';
 $('#new').onclick = async () => {
   ctrl?.abort();
-  if (session) fetch('/api/session/' + session + '/close', { method:'POST' }).catch(()=>{});
+  $('#new').disabled = true; $('#record').disabled = true;
+  try {
+    if (opening) await opening;
+    if (session) { const r = await fetch('/api/session/' + session + '/close', { method:'POST' }); if (!r.ok) throw new Error('could not end chat; try again'); }
+  } catch(e) { $('#record-status').textContent = e.message; return; }
+  finally { $('#new').disabled = false; $('#record').disabled = false; }
+  recordingState('paused'); $('#record-status').textContent = 'chat ended · saved recordings are in the gallery';
   session = null; sessionStorage.removeItem('checkto-session'); chatCost = 0;
   chat.querySelectorAll('.msg, .typing').forEach(n => n.remove());
   shot.classList.remove('live'); shot.innerHTML = '<div class="empty">send a task and a website to start.</div>'; $('#urlbar').textContent = 'no page open yet';
@@ -245,6 +282,7 @@ $('#f').onsubmit = async ev => {
     stats({ status: e.status, cost:'$' + chatCost.toFixed(4) }); chat.scrollTop = chat.scrollHeight;
   }
 };
+if(session) ensureSession().catch(() => {});
 </script>
 </body>
 </html>
