@@ -46,7 +46,10 @@ export class ChromePage {
     if (Number.isInteger(tab.windowId)) await chrome.windows.update(tab.windowId, { focused: true });
     this.signal.throwIfAborted();
     try { await chrome.debugger.attach({ tabId: this.tabId }, '1.3'); }
-    catch (err) { throw new Error(`could not control this tab: ${err.message}. close DevTools or another browser-control extension on this tab, then try again.`); }
+    catch (err) {
+      if (/chrome-extension:/.test(err.message)) throw new Error(`could not control this tab: it is showing a page from another Chrome extension. switch it back to the website you want, then try again.`);
+      throw new Error(`could not control this tab: ${err.message}. close DevTools or another browser-control extension on this tab, then try again.`);
+    }
     this.attached = true;
     this.signal.throwIfAborted();
     await this.command('Page.enable');
