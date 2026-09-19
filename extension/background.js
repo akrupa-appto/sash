@@ -2,6 +2,7 @@ import { runTask } from '../agent.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { readSettings, validateSettings } from './settings.js';
+import { claim, release, get as getLease, setMuted } from './lease.js';
 
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready' };
@@ -40,6 +41,28 @@ export function detachMessage({ reason, title, url }) {
       : 'open the tab you want me to use and say "go on" to continue.';
   return `browser control of ${where} ended: ${why}. ${next}`;
 }
+// Unmute a tab only if our own lease says we're the one who muted it, and Chrome still
+// agrees it was muted by an extension. Either check failing means someone else — the
+// user, or another extension — is responsible for it, so we leave it alone.
+async function unmuteIfOurs(tabId) {
+  const lease = getLease(tabId);
+  if (!lease?.mutedByUs) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  if (tab?.mutedInfo?.reason === 'extension') await chrome.tabs.update(tabId, { muted: false }).catch(() => {});
+  setMuted(tabId, false);
+}
+// Mute every attached agent tab the user isn't currently watching, and unmute the one
+// that is. Tabs already muted — by the user or another extension — are left untouched.
+async function syncTabMute(pages, activeId) {
+  for (const page of pages) {
+    if (!page.attached) continue;
+    if (page.tabId === activeId) { await unmuteIfOurs(page.tabId); continue; }
+    const tab = await chrome.tabs.get(page.tabId).catch(() => undefined);
+    if (!tab || tab.mutedInfo?.muted) continue;
+    await chrome.tabs.update(page.tabId, { muted: true }).catch(() => {});
+    setMuted(page.tabId, true);
+  }
+}
 async function stop() {
   const run = active;
   if (!run) return;
@@ -58,13 +81,14 @@ async function execute(run, message) {
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
     let page = pages.find(p => p.tabId === id);
-    if (!page) { page = new ChromePage(tab, controller.signal, pages); pages.push(page); }
+    if (!page) { page = new ChromePage(tab, controller.signal, pages); pages.push(page); claim(id, { sessionId: run.id, openedByUs: false }); }
     if (!page.attached) await page.attach();
     else {
       await chrome.tabs.update(id, { active: true });
       if (Number.isInteger(tab.windowId)) await chrome.windows.update(tab.windowId, { focused: true });
     }
     state.tabId = id; state.tabTitle = tab.title || tab.url;
+    await syncTabMute(pages, id);
     await persist();
     return page;
   };
@@ -75,9 +99,11 @@ async function execute(run, message) {
     run.attaching.add(tab.id);
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
-    const work = page.attach().then(() => {
+    claim(tab.id, { sessionId: run.id, openedByUs: true });
+    const work = page.attach().then(async () => {
       controller.signal.throwIfAborted();
       state.tabId = tab.id; state.tabTitle = tab.title || tab.url;
+      await syncTabMute(pages, tab.id);
       return persist();
     }).catch(err => {
       if (!controller.signal.aborted) { run.popupError = err; controller.abort(); }
@@ -140,6 +166,8 @@ async function execute(run, message) {
     // Any attach that was already in flight must finish before the final detach.
     await Promise.allSettled([...attachments]);
     await Promise.allSettled(pages.map(p => p.detach()));
+    await Promise.allSettled(pages.map(p => unmuteIfOurs(p.tabId)));
+    for (const p of pages) release(p.tabId);
     if (run.popupError) outcome = { ...outcome, status: 'error', answer: undefined, message: safeError(run.popupError, settings) };
     // The agent reports an aborted run as "stopped" whether the user or Chrome ended it; only the user's stop is a plain stop.
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
@@ -172,7 +200,7 @@ async function handle(message) {
     if (active) throw new Error('a task is already running');
     if (!Number.isInteger(message.tabId) || typeof message.goal !== 'string' || !message.goal.trim() || message.goal.length > 10000) throw new Error('choose a tab and enter a task');
     if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
-    const run = { controller: new AbortController(), pages: [], attaching: new Set() };
+    const run = { id: crypto.randomUUID(), controller: new AbortController(), pages: [], attaching: new Set() };
     active = run; // Reserve before any storage, attachment, or API awaits.
     state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
     state.messages.push({ role: 'user', text: message.goal.trim() });
