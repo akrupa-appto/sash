@@ -217,6 +217,37 @@ test('a retry that succeeds on the same control clears the earlier failure', asy
   } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
 });
 
+test('the run reports the item it actually opened, not a same-named one it only considered', async () => {
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let clicked = [];
+  clickFn = async (_p, id) => {
+    clicked.push(id);
+    state = id === 2 ? 'pr-fix-login-bug' : 'pr-fix-login-bug-retry';
+  };
+  snapFn = () => ({
+    ...snap(),
+    elements: [
+      { id: 1, role: 'link', name: 'Fix login bug (retry)', kind: 'click', inViewport: true },
+      { id: 2, role: 'link', name: 'Fix login bug', kind: 'click', inViewport: true },
+    ],
+    text:
+      state === 'pr-fix-login-bug' ? 'PR #12 Fix login bug: 3/3 checks passing'
+      : state === 'pr-fix-login-bug-retry' ? 'PR #14 Fix login bug (retry): 1/3 checks failing'
+      : 'repository',
+  });
+  try {
+    // jev picks the wrong PR (el_1, the retry); the exact-name correction should send the click to
+    // the PR the supervisor actually named ("Fix login bug", el_2), and everything downstream —
+    // the click, and what the run tells the next planner call happened — must be about that PR only.
+    plans = [{ status: 'continue', next: 'open the "Fix login bug" pull request' }, { status: 'done', answer: 'ok' }];
+    decisions = [{ operation: { choice: 'CLICK' }, click_target: { choice: 'el_1' } }];
+    await run(true, 5);
+    assert.deepEqual(clicked, [2]);
+    assert.match(planCalls[1].history[0], /showing: "PR #12 Fix login bug: 3\/3 checks passing"/);
+    assert.doesNotMatch(planCalls[1].history[0], /PR #14/);
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
 test('the planner sees every step of a long run, older ones shortened', async () => {
   clickDestination = 'progress';
   plans = [...Array.from({ length: 30 }, () => ({ status: 'continue', next: 'x'.repeat(400) })), { status: 'done', answer: 'ok' }];
