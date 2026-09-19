@@ -10,6 +10,7 @@ export type Plan = {
   text?: string; // exact text to type, when the action types
   why?: string;
   answer?: string; // final reply for the user when done/blocked
+  tabId?: number; // extension only: switch to an existing tab before the next step
 };
 
 export type PlanContext = {
@@ -20,6 +21,8 @@ export type PlanContext = {
   page: { url: string; title: string; scroll: string; text: string; elements: string[] };
   step: number;
   maxSteps: number;
+  tabs?: { id: number; title: string; url: string }[];
+  currentTabId?: number;
 };
 
 const SYSTEM = `You supervise a browser agent for a user who sends tasks in a chat.
@@ -69,12 +72,13 @@ export function plannerModel() {
 
 // Some models (e.g. Sonnet 5) reject assistant prefill; remembered per process after the first 400.
 const noPrefill = new Set<string>();
+const noJsonMode = new Set<string>();
 // GLM requires reasoning. Other custom models can report that requirement too.
 const mandatoryReasoning = new Set<string>(["z-ai/glm-5.3-flash"]);
 
 export type ReasoningLevel = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plannerModel(), reasoning: ReasoningLevel = "auto"): Promise<Plan & { ms: number; cost_usd: number }> {
+export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plannerModel(), reasoning: ReasoningLevel = "auto", recovery = 0): Promise<Plan & { ms: number; cost_usd: number }> {
   const key = env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY needed for the supervisor");
   const user = JSON.stringify(
@@ -85,6 +89,7 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
       history: ctx.history,
       result_of_previous_action: ctx.lastResult ?? "none, this is the first step",
       page: ctx.page,
+      ...(ctx.tabs ? { open_tabs: ctx.tabs, current_tab_id: ctx.currentTabId } : {}),
     },
   );
   debugLog( `\n=== step ${ctx.step}\n${user}\n`);
@@ -99,12 +104,13 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://checkto.local", "X-Title": "checkto" },
     body: JSON.stringify({
       model,
-      max_tokens: { none: 600, minimal: 2048, low: 2048, medium: 4096, high: 8192, xhigh: 16384, max: 16384 }[effort],
+      max_tokens: Math.min(32768, { none: 1200, minimal: 4096, low: 4096, medium: 8192, high: 16384, xhigh: 32768, max: 32768 }[effort] * (recovery ? 2 : 1)),
+      ...(!noJsonMode.has(model) ? { response_format: { type: "json_object" } } : {}),
       reasoning: needsReasoning ? { effort } : { enabled: false },
       temperature: 0,
       usage: { include: true },
       messages: [
-        { role: "system", content: SYSTEM },
+        { role: "system", content: SYSTEM + (ctx.tabs ? '\nYou can also switch to an existing browser tab. open_tabs lists every available website tab across windows. To switch, return {"status":"continue","tabId":<numeric id>,"why":"reason"}; this uses one step and performs no page action. Read each relevant tab before comparing or summarizing multiple tabs. Tab references in the task identify exact IDs. Remember observed facts in your history when switching tabs. Never claim you read an unvisited tab.' : '') },
         { role: "user", content: user },
         ...(prefill ? [{ role: "assistant", content: "{" }] : []), // prefill: forces a JSON reply, no prose
       ],
@@ -115,19 +121,40 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
     const body = await res.text();
     if (reasoning === "auto" && !needsReasoning && res.status === 400 && /reasoning.*(?:mandatory|required|cannot be disabled)/i.test(body)) {
       mandatoryReasoning.add(model);
-      return plan(ctx, signal, model, reasoning);
+      return plan(ctx, signal, model, reasoning, recovery);
     }
     if (prefill && res.status === 400 && /prefill/i.test(body)) {
       noPrefill.add(model);
-      return plan(ctx, signal, model, reasoning);
+      return plan(ctx, signal, model, reasoning, recovery);
+    }
+    if (!noJsonMode.has(model) && res.status === 400 && /(?:response_format|json[_ ](?:object|mode)).*(?:unsupported|not supported|invalid)|(?:unsupported|not supported|invalid).*(?:response_format|json[_ ](?:object|mode))/i.test(body)) {
+      noJsonMode.add(model);
+      return plan(ctx, signal, model, reasoning, recovery);
     }
     throw new Error(`supervisor ${res.status}: ${body.slice(0, 300)}`);
   }
   const json = await res.json();
-  let content = String(json.choices?.[0]?.message?.content ?? "");
+  if (json.error) throw new Error(`planner request failed: ${String(json.error.message || json.error.code || 'provider error').slice(0, 300)}`);
+  const choice = json.choices?.[0];
+  if (choice?.message?.refusal || choice?.finish_reason === 'content_filter') throw new Error('the planner declined this request. edit the task and try again.');
+  const rawContent = choice?.message?.content;
+  let content = typeof rawContent === 'string' ? rawContent : Array.isArray(rawContent) ? rawContent.map(part => part.text || '').join('') : '';
   if (prefill && !content.trimStart().startsWith("{")) content = "{" + content;
   debugLog( `--- reply\n${content}\n`);
-  const p = extractJson(content) as Plan;
-  if (!["continue", "done", "blocked"].includes(p.status)) p.status = "continue";
+  let p: Plan;
+  try {
+    if (choice?.finish_reason === 'length') throw new Error('output limit reached');
+    p = extractJson(content) as Plan;
+    if (!p || !["continue", "done", "blocked"].includes(p.status)) throw new Error('invalid plan status');
+    if (p.tabId == null) delete p.tabId;
+    if (p.tabId != null && !Number.isInteger(p.tabId)) throw new Error('invalid tab ID');
+    if (p.status === 'continue' && !(typeof p.next === 'string' && p.next.trim()) && !(ctx.tabs && Number.isInteger(p.tabId))) throw new Error('missing next action');
+  } catch {
+    if (!recovery) {
+      const retry = await plan(ctx, signal, model, reasoning, 1);
+      return { ...retry, ms: retry.ms + ms, cost_usd: retry.cost_usd + Number(json.usage?.cost ?? 0) };
+    }
+    throw new Error(`the planner (${model}) returned ${choice?.finish_reason === 'length' ? 'an incomplete reply after reaching its output limit' : content.trim() ? 'an invalid reply' : 'an empty reply'} twice. no further action was taken. try again or choose another planner model in settings.`);
+  }
   return { ...p, ms, cost_usd: Number(json.usage?.cost ?? 0) };
 }

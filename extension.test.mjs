@@ -9,7 +9,7 @@ const event = () => ({ addListener() {}, removeListener() {} });
 function chromeMock() {
   const calls = [];
   const chrome = {
-    tabs: { update: async () => {} },
+    tabs: { update: async () => {}, get: async id => ({ id }) },
     storage: { local: {
       setAccessLevel: async (...args) => calls.push(['access', ...args]),
       get: async () => ({ settings: { openrouterKey: 'local-test-key' } }),

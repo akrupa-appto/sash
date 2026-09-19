@@ -53,3 +53,12 @@
 - Extension checks: 43 Node tests pass; real QA Chrome protocol fixture passes text/number/date/rich text, select, click, scrolling, navigation/back, password redaction, and abort. Installed-extension tests pass both modes, local settings persistence/removal, popup following, and stop with deterministic provider replies.
 - Native QA profile could not open the extension picker; the agy QA attempt was stopped. No service was restarted. Official Playwright disposable Chromium extension fixture provides installed-extension verification instead; the earlier restart permission question is no longer needed.
 - New-tab regression: activate the selected tab before debugger attach, otherwise Chrome can report the active panel tab as the opener and the agent loses the destination.
+
+## Extension correction (2026-09-19)
+- Adam reports the extension UI is poor and real tasks do not work. Mocked provider checks are not evidence that real tasks succeed. Await concrete failure details; do not claim that failure fixed without them.
+- Replace the single-tab dropdown with an @ mention menu covering all open tabs across windows. Let the agent switch among existing tabs, attaching on demand.
+- Keep the side panel focused on conversation and a compact composer. Settings remain separate and local-only.
+- Adam said no QA. Do not launch browser QA or run task probes for this revision. Build and code review only; disclose the verification limit.
+- User supplied result.mp4 (AgentMail task waits, cannot scroll, then clicks sidebar) and image.png (planner returns no JSON after one successful click). Empty/invalid/truncated planner output now gets one retry with a larger output budget and native JSON mode, preserving model and reasoning choices.
+- Extension snapshot and scroll now use the largest visible scrollable pane when the document does not scroll. The supplied recording cannot establish whether that alone resolves the AgentMail task; no claim of end-to-end success without a real run.
+- v0.2.0 is this update. Build and syntax checks only per no-QA instruction. Existing verification scripts updated for the new composer but not executed.
