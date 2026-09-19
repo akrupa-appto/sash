@@ -1,3 +1,5 @@
+import { blockedText, pickBlocking, RequestOutcome } from './requests.js';
+
 let running = false;
 let configured = false;
 let currentState;
@@ -120,6 +122,120 @@ function durationText({ startedAt, endedAt, stopped, live }) {
   if (elapsed < 1000) return '';
   return stopped ? `You stopped after ${formatDuration(elapsed)}` : `Worked for ${formatDuration(elapsed)}`;
 }
+// ---- the pending request card.
+// A turn can raise several blocking states; pickBlocking returns the one the user answers first,
+// so this block renders exactly one card no matter how many are queued behind it.
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+const answerRequest = async (pending, body) => {
+  try { await request({ type: 'answer', id: pending.id, ...body }); }
+  catch (err) { showError(err); }
+};
+function confirmScope(card, pending, scope) {
+  card.replaceChildren();
+  card.dataset.confirming = scope.id;
+  card.append(el('p', 'request-question', scope.confirm.title), el('p', 'confirm-warning', scope.confirm.warning));
+  const actions = el('div', 'request-actions');
+  const yes = el('button', undefined, scope.confirm.accept); yes.type = 'button';
+  yes.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, scope: scope.id }));
+  const no = el('button', 'secondary', scope.confirm.cancel); no.type = 'button';
+  no.addEventListener('click', () => renderRequest(currentState));
+  actions.append(yes, no);
+  card.append(actions);
+}
+function requestCard(pending) {
+  const card = el('div', 'notice request-card');
+  card.dataset.requestType = pending.type;
+  if (pending.kind) card.dataset.requestKind = pending.kind;
+  card.append(el('p', 'request-question', pending.question || `allow checkto to ${pending.action}?`));
+  if (pending.why) card.append(el('p', 'muted', pending.why));
+  if (pending.screenshot) {
+    const shot = document.createElement('img');
+    shot.className = 'request-shot'; shot.alt = ''; shot.src = `data:image/jpeg;base64,${pending.screenshot}`;
+    card.append(shot);
+  }
+  const actions = el('div', 'request-actions');
+  // Three scopes, not yes/no. The widest one is confirmed a second time with the warning spelled out.
+  if (pending.scopes?.length) {
+    for (const scope of pending.scopes) {
+      const button = el('button', scope.id === 'once' ? undefined : 'secondary', scope.label);
+      button.type = 'button'; button.dataset.scope = scope.id;
+      button.addEventListener('click', () => scope.confirm
+        ? confirmScope(card, pending, scope)
+        : void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, scope: scope.id }));
+      actions.append(button);
+    }
+    const deny = el('button', 'secondary', pending.denyLabel || 'deny'); deny.type = 'button';
+    deny.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.DECLINED }));
+    actions.append(deny);
+    card.append(actions);
+    return card;
+  }
+  const form = el('form', 'request-fields');
+  // A login wall hands back a described form: labels, input types and autocomplete hints, no values.
+  if (pending.kind === 'credential') {
+    const inputs = new Map();
+    for (const field of pending.fields || []) {
+      const label = el('label', 'request-field');
+      label.append(el('span', undefined, field.label));
+      const input = document.createElement('input');
+      input.type = field.secret ? 'password' : (['email', 'tel', 'url', 'number'].includes(field.inputType) ? field.inputType : 'text');
+      if (field.autocomplete) input.autocomplete = field.autocomplete;
+      input.required = !!field.required;
+      label.append(input); form.append(label); inputs.set(field.label, input);
+    }
+    if (pending.signInOptions?.length) form.append(el('p', 'muted', `or use the page's own buttons: ${pending.signInOptions.join(', ')}`));
+    const submit = el('button', undefined, pending.submit?.label || 'sign in'); submit.type = 'submit';
+    const tookOver = el('button', 'secondary', 'i signed in myself'); tookOver.type = 'button';
+    const cancel = el('button', 'secondary', 'cancel'); cancel.type = 'button';
+    tookOver.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.USER_TOOK_OVER }));
+    cancel.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.DECLINED }));
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const values = Object.fromEntries([...inputs].map(([label, input]) => [label, input.value]));
+      for (const input of inputs.values()) input.value = '';
+      void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, values });
+    });
+    actions.append(submit, tookOver, cancel);
+    form.append(actions);
+    card.append(form);
+    return card;
+  }
+  // Everything else is answered in words, with a picker in front of it when it is really a choice.
+  if (pending.options?.length) {
+    const options = el('div', 'request-options');
+    for (const option of pending.options) {
+      const button = el('button', 'secondary', option); button.type = 'button'; button.dataset.option = option;
+      button.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, choice: option }));
+      options.append(button);
+    }
+    form.append(options);
+  }
+  const free = document.createElement('input');
+  free.type = 'text'; free.className = 'request-text';
+  free.placeholder = pending.options?.length ? 'or answer in your own words' : 'your answer';
+  form.append(free);
+  const send = el('button', undefined, 'send'); send.type = 'submit';
+  const skip = el('button', 'secondary', 'skip'); skip.type = 'button';
+  skip.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.DECLINED }));
+  form.addEventListener('submit', event => { event.preventDefault(); void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, text: free.value }); });
+  actions.append(send, skip);
+  form.append(actions);
+  card.append(form);
+  return card;
+}
+function renderRequest(state) {
+  const reason = blockedText(state.blockedReason);
+  $('#blocked').textContent = reason || '';
+  $('#blocked').hidden = running || !reason;
+  const pending = running ? undefined : pickBlocking(state.requests || []);
+  $('#request').hidden = !pending;
+  $('#request').replaceChildren(...(pending ? [requestCard(pending)] : []));
+}
 function render(state) {
   currentState = state; running = state.running;
   $('#intro').hidden = !!state.messages.length;
@@ -146,13 +262,14 @@ function render(state) {
   $('#steps-label').textContent = summarySentence(state.steps);
   $('#steps').replaceChildren(...state.steps.map(stepElement));
   const latest = state.steps.at(-1);
-  $('#status-text').textContent = running ? (latest?.log?.ticker || latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', max_steps: 'step limit reached' }[state.status] || state.status);
+  $('#status-text').textContent = running ? (latest?.log?.ticker || latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', needs_input: 'waiting for your answer', max_steps: 'step limit reached' }[state.status] || state.status);
   $('#status-text').title = $('#status-text').textContent;
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);
   const liveText = durationText({ startedAt: state.startedAt, live: running });
   $('#live-duration').hidden = !running || !liveText;
   $('#live-duration').textContent = liveText;
+  renderRequest(state);
   controls();
   $('#content').scrollTop = $('#content').scrollHeight;
   // Re-tick every second while a run is live, so the duration divider can appear once a second has passed.

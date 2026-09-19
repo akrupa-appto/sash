@@ -95,3 +95,14 @@ Open, in the order Adam raised them (todo.md has the detail):
 5. Verification debt: OpenAI, Gemini, and custom-server planner paths have never been called with a real key on this machine; mocked-fetch tests only. The Google sign-in detach reason has not been confirmed against Chrome.
 
 Rules learned this session that are not yet in AGENTS.md: retarget stacked PRs to main before merging their parent (GitHub closes a PR whose base branch is deleted and will not reopen it); `git push --follow-tags` skips lightweight tags.
+
+## Blocking requests (2026-09-19, branch todo/feat-request-queue)
+
+- Every way a turn can stop and wait for the human lives in `extension/requests.js`, keyed by `types.js` `RequestType`. Do not add a second, parallel pause mechanism next to it.
+- One turn hands back exactly one request. `pickBlocking` walks `RequestType` in its declared key order and takes the most recent of the highest-priority kind; the panel renders whatever it returns. Reordering those keys reorders the product.
+- Stopping declines; it never drops. `declineAll` writes an outcome for every pending request, in the agent on abort and in the worker on a stop, a cleared chat, or a restarted worker (`expired`). Only a real refusal (`declined`, `stopped`) counts towards the denial tally.
+- After `DENIAL_LIMIT` (3) refusals of the same `denialKey`, the turn ends with the cutoff message instead of asking again. The count lives in the worker's run state and is cleared when that request is finally answered.
+- The credential handoff describes a form; it never carries a value. Fields are rebuilt through `credentialField`, which drops whatever the page held, so the snapshot's own values cannot travel to a model or into the run state. What the user types in the panel goes straight to `submitCredentials` and nowhere else: not persisted, not logged, not passed to the agent, which verifies from the page afterwards.
+- Only whole-internet approval (`origin` absent or `*`) gets the second confirm dialog. A single-origin "always" is granted on one click on purpose.
+- `panel.js` keeps one additive `renderRequest` block; `render()` was not restructured. Panel changes stay that shape.
+- Still owed, per AGENTS.md: this changed the planner prompt (new `blocked_reason`, `ask`, `approve`, `credential` statuses) and has only been run against mocked planners. One real lab run before this is trusted in production.

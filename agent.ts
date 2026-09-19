@@ -2,6 +2,18 @@ import type { Page } from "playwright";
 import { decide, writeText, type ChoiceAnswer, type Question } from "./jev.ts";
 import { plan, plannerModel, type ReasoningLevel } from "./planner.ts";
 import * as b from "./browser.ts";
+import {
+  approvalRequest,
+  askRequest,
+  blockedText,
+  credentialRequest,
+  declineAll,
+  denialCutoffMessage,
+  denialsExhausted,
+  isBlockedReason,
+  MAX_CREDENTIAL_FIELDS,
+  pickBlocking,
+} from "./extension/requests.js";
 
 export type RunInput = {
   url?: string; // omit to continue on the page the browser is already on
@@ -13,6 +25,7 @@ export type RunInput = {
   reasoning?: ReasoningLevel;
   model?: string; // planner model for this task; fast mode still uses Jev
   liveView?: boolean; // Anchor streams the browser directly; skip screenshot work
+  denials?: Record<string, number>; // how often this conversation already refused each request, by denialKey
   browserTabs?: {
     list: () => Promise<{ id: number; title: string; url: string }[]>;
     select: (id: number) => Promise<Page>;
@@ -47,13 +60,19 @@ export type StepEvent = {
   note?: string;
 };
 
+export type BlockingRequest = Record<string, unknown> & { id: string; type: string };
+
 export type EndEvent = {
   type: "end";
-  status: "done" | "blocked" | "max_steps" | "error" | "stopped";
+  status: "done" | "blocked" | "max_steps" | "error" | "stopped" | "needs_input";
   message: string;
   answer?: string; // supervisor's one-line reply for the user
   totalCostUsd: number;
   steps: number;
+  blockedReason?: string; // one of types.js BlockedReason, when the page blocked the run
+  requests?: BlockingRequest[]; // everything this turn is waiting on
+  request?: BlockingRequest; // the one the panel shows, by RequestType priority
+  declined?: Record<string, unknown>[]; // on stop: an explicit decline per pending request
 };
 
 export type Event =
@@ -124,6 +143,11 @@ function genericLog(chosen: string): StepLogEntry {
   return logEntry(g?.ticker ?? `Doing ${chosen}`, g?.past ?? `Did ${chosen}`);
 }
 
+// The site a handoff form belongs to. A page with an unparseable URL still names something.
+function originOf(url: string): string {
+  try { return new URL(url).origin; } catch { return url; }
+}
+
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
   for (const m of goal.matchAll(/["“”']([^"“”']{1,120})["“”']/g)) out.push(m[1].trim());
@@ -145,8 +169,36 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   let lastText = "";
   const seenPages = new Set(page.context().pages());
 
-  const end = (status: EndEvent["status"], message: string, answer?: string) =>
-    emit({ type: "end", status, message, answer, totalCostUsd: totalCost, steps: step });
+  // Everything this turn is waiting on. One card is shown, but each entry is answered or declined.
+  const pending: BlockingRequest[] = [];
+
+  const end = (status: EndEvent["status"], message: string, answer?: string, extra: Partial<EndEvent> = {}) =>
+    emit({
+      type: "end",
+      status,
+      message,
+      answer,
+      totalCostUsd: totalCost,
+      steps: step,
+      ...(pending.length ? { requests: [...pending], request: pickBlocking(pending) } : {}),
+      ...extra,
+    });
+
+  // Stopping is not dropping: every pending request gets an explicit decline so no card is left
+  // alive in the panel waiting for an answer that is never coming.
+  const stopped = () => {
+    const declined = declineAll(pending, "stopped");
+    pending.length = 0;
+    return end("stopped", "stopped", undefined, declined.length ? { declined } : {});
+  };
+
+  // Raise one blocking request and hand the turn back. Asking the same thing after the user has
+  // already refused it DENIAL_LIMIT times is worse than giving up once, so that ends the turn.
+  const ask = (request: BlockingRequest) => {
+    if (denialsExhausted(request, input.denials)) return end("blocked", denialCutoffMessage(request, input.denials));
+    pending.push(request);
+    return end("needs_input", String(request.question ?? request.action ?? "i need an answer to carry on."));
+  };
 
   try {
     if (input.url) {
@@ -157,7 +209,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
     emit({ type: "screenshot", screenshot: input.liveView ? "" : await b.screenshot(page), url: page.url(), title: await page.title() });
 
     while (step < maxSteps) {
-      if (signal.aborted) return end("stopped", "stopped");
+      if (signal.aborted) return stopped();
       step++;
 
       // Follow popups / new tabs if the site opened one.
@@ -241,7 +293,36 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         totalCost += p.cost_usd;
         planMs = Math.round(p.ms);
         if (p.status === "done") return end("done", p.why ?? "Task complete", p.answer);
-        if (p.status === "blocked") return end("blocked", p.why ?? "Cannot continue", p.answer);
+        if (p.status === "blocked") {
+          // A page that blocks the run says which of the four agreed reasons it was, so the panel
+          // shows what happened instead of a generic stop.
+          const reason = isBlockedReason(p.blocked_reason) ? p.blocked_reason : undefined;
+          return end("blocked", blockedText(reason) ?? p.why ?? "Cannot continue", p.answer, reason ? { blockedReason: reason } : {});
+        }
+        // Ask the user something mid-run: a picker when the planner listed options, free text otherwise.
+        if (p.status === "ask") return ask(askRequest({ question: p.question, options: p.options, why: p.why }));
+        // Permission for the action itself, in three scopes.
+        if (p.status === "approve") return ask(approvalRequest({ action: p.action ?? p.next, origin: p.origin, why: p.why }));
+        // A login wall: hand the page back as a typed form. Field labels and input types travel;
+        // what the user types never comes back through here, and nothing is read off the page.
+        if (p.status === "credential") {
+          const fields = snap.elements.filter((e) => e.kind === "type").slice(0, MAX_CREDENTIAL_FIELDS);
+          const submit = snap.elements.find((e) => e.kind === "click" && /sign ?in|log ?in|continue|submit|next/i.test(e.name));
+          const signInOptions = snap.elements
+            .filter((e) => e.kind === "click" && /(continue|sign ?in|log ?in) with/i.test(e.name))
+            .map((e) => e.name);
+          return ask(
+            credentialRequest({
+              origin: originOf(snap.url),
+              fields: fields.map((e) => ({ id: e.id, label: e.name, inputType: e.role, required: true })),
+              signInOptions: p.sign_in_options ?? signInOptions,
+              submit: submit && { id: submit.id, label: submit.name },
+              // Reuse the run's own screenshot path; a live view streams the page already.
+              screenshot: input.liveView ? "" : await b.screenshot(page),
+              why: p.why,
+            }),
+          );
+        }
         if (p.tabId !== undefined && input.browserTabs) {
           if (!tabs?.some(t => t.id === p.tabId)) return end("error", "the requested tab is no longer available");
           history.push(`step ${step}: read "${snap.title}" (${snap.url}): ${snap.text.slice(0, 4000)}; switching to tab ${p.tabId}${p.why ? `: ${p.why}` : ''}`);
@@ -509,7 +590,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
     }
     return end("max_steps", `i stopped after ${maxSteps} steps without finishing. send a more specific task, or say "go on".`);
   } catch (err) {
-    if (signal.aborted) return end("stopped", "stopped");
+    if (signal.aborted) return stopped();
     return end("error", (err as Error).message.slice(0, 500));
   }
 }

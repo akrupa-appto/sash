@@ -1,5 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { RequestType } from './extension/types.js';
+import { declineAll, pickBlocking } from './extension/requests.js';
 
 let state, decisions, plans, executed, lastQuestions, planCalls = [], clickDestination = 'file-preview';
 const snap = () => ({
@@ -28,11 +30,11 @@ const choice = (operation, achieved = 0) => ({
   operation: { choice: operation }, goal_achieved: { noul: achieved },
   click_target: { choice: 'el_1' },
 });
-async function run(supervisor, maxSteps = 3) {
+async function run(supervisor, maxSteps = 3, extra = {}) {
   state = 'repository'; executed = 0; planCalls = [];
   const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
   const events = [];
-  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}) }, e => events.push(e), new AbortController().signal);
+  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}), ...extra }, e => events.push(e), new AbortController().signal);
   return events.at(-1);
 }
 
@@ -192,4 +194,117 @@ test('history records what appeared on the page after an action, not only that i
     await run(true, 5);
     assert.match(planCalls[1].history[0], /showing: "Run finished: 7\/8 tests passed on "#42 feat: browser settings""/);
   } finally { snapFn = orig; clickDestination = 'file-preview'; }
+});
+
+// ---- blocking states: one request per turn, a named reason, and an end to repeated asking.
+
+test('a page that blocks the run names which of the four reasons it was', async () => {
+  plans = [{ status: 'blocked', blocked_reason: 'captcha_failed', why: 'stuck' }];
+  decisions = [];
+  const result = await run(true);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.blockedReason, 'captcha_failed');
+  assert.match(result.message, /captcha/);
+  assert.equal(executed, 0);
+});
+
+test('an invented blocked reason is not carried through as one of ours', async () => {
+  plans = [{ status: 'blocked', blocked_reason: 'the vibes were off', why: 'this is a preview, not the raw file' }];
+  decisions = [];
+  const result = await run(true);
+  assert.equal(result.blockedReason, undefined);
+  assert.equal(result.message, 'this is a preview, not the raw file');
+});
+
+test('a credential handoff describes the form and never carries what is already in it', async () => {
+  const orig = snapFn;
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'email', name: 'Email', kind: 'type', value: 'me@pcstyle.dev', inViewport: true },
+    { id: 2, role: 'password', name: 'Password', kind: 'type', value: 'hunter2', inViewport: true },
+    { id: 3, role: 'button', name: 'Sign in', kind: 'click', inViewport: true },
+    { id: 4, role: 'button', name: 'Continue with Google', kind: 'click', inViewport: true },
+  ] });
+  try {
+    plans = [{ status: 'credential', why: 'the site wants a sign-in' }];
+    decisions = [];
+    const result = await run(true);
+    assert.equal(result.status, 'needs_input');
+    assert.equal(result.request.type, 'user_input');
+    assert.equal(result.request.kind, 'credential');
+    assert.equal(result.request.origin, 'https://example.test');
+    assert.deepEqual(result.request.fields.map(f => [f.label, f.inputType, f.autocomplete, f.elementId]), [
+      ['Email', 'email', 'email', 1],
+      ['Password', 'password', 'current-password', 2],
+    ]);
+    assert.equal(result.request.submit.label, 'Sign in');
+    assert.deepEqual(result.request.signInOptions, ['Continue with Google']);
+    // The form describes the fields; what the page already holds never travels with it, and the
+    // agent types nothing itself.
+    assert.ok(result.request.fields.every(f => !('value' in f)));
+    assert.doesNotMatch(JSON.stringify(result), /hunter2|me@pcstyle\.dev/);
+    assert.equal(executed, 0);
+  } finally { snapFn = orig; }
+});
+
+test('a mid-run question becomes a picker when the planner listed the choices', async () => {
+  plans = [{ status: 'ask', question: 'which inbox should i use?', options: ['work', 'personal'] }];
+  decisions = [];
+  const picker = await run(true);
+  assert.equal(picker.status, 'needs_input');
+  assert.equal(picker.request.type, 'option_picker');
+  assert.deepEqual(picker.request.options, ['work', 'personal']);
+  assert.equal(picker.request.allowFreeText, true);
+  plans = [{ status: 'ask', question: 'what should the subject line say?' }];
+  const open = await run(true);
+  assert.equal(open.request.type, 'user_input');
+  assert.equal(open.request.options, undefined);
+});
+
+test('an approval offers three scopes, and only whole-internet access is confirmed twice', async () => {
+  plans = [{ status: 'approve', action: 'send the message', origin: 'https://example.test' }];
+  decisions = [];
+  const oneSite = await run(true);
+  assert.equal(oneSite.status, 'needs_input');
+  assert.equal(oneSite.request.type, 'approval');
+  assert.deepEqual(oneSite.request.scopes.map(s => s.id), ['once', 'conversation', 'always']);
+  assert.equal(oneSite.request.scopes.at(-1).confirm, undefined);
+  plans = [{ status: 'approve', action: 'act on any site i open', origin: '*' }];
+  const everywhere = await run(true);
+  assert.match(everywhere.request.scopes.at(-1).confirm.warning, /any site/);
+});
+
+test('after repeated denials the turn ends saying so instead of asking a fourth time', async () => {
+  const request = { status: 'approve', action: 'send the message', origin: 'https://example.test' };
+  plans = [request]; decisions = [];
+  const stillAsking = await run(true, 3, { denials: { 'approval:send the message': 2 } });
+  assert.equal(stillAsking.status, 'needs_input');
+  plans = [request];
+  const giveUp = await run(true, 3, { denials: { 'approval:send the message': 3 } });
+  assert.equal(giveUp.status, 'blocked');
+  assert.match(giveUp.message, /after 3 denials/);
+  assert.match(giveUp.message, /send the message/);
+  assert.equal(giveUp.request, undefined);
+});
+
+test('stopping declines every pending request type instead of dropping them', () => {
+  const queue = Object.values(RequestType).map((type, i) => ({ id: `r${i}`, type }));
+  const declined = declineAll(queue, 'stopped');
+  assert.deepEqual(declined.map(d => d.type), Object.values(RequestType));
+  assert.ok(declined.every(d => d.outcome === 'declined' && d.reason === 'stopped'));
+  // Something already answered is not declined a second time.
+  assert.deepEqual(declineAll([{ id: 'x', type: RequestType.PLAN, outcome: 'submitted' }]), []);
+});
+
+test('one turn hands back one request: the highest priority, most recent of its kind', () => {
+  const queue = [
+    { id: 'plan', type: RequestType.PLAN },
+    { id: 'elicitation', type: RequestType.ELICITATION },
+    { id: 'approval-old', type: RequestType.APPROVAL },
+    { id: 'approval-new', type: RequestType.APPROVAL },
+    { id: 'setup', type: RequestType.SETUP_STEP },
+  ];
+  assert.equal(pickBlocking(queue).id, 'setup');
+  assert.equal(pickBlocking(queue.filter(r => r.type !== RequestType.SETUP_STEP)).id, 'approval-new');
+  assert.equal(pickBlocking(queue.map(r => ({ ...r, outcome: 'declined' }))), undefined);
+  assert.equal(pickBlocking([]), undefined);
 });

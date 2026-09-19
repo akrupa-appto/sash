@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { chromium } from 'playwright';
+import { approvalRequest, credentialRequest } from './extension/requests.js';
 
 // The panel is rendered in a real browser: the bug this guards against was DOM order, not logic.
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2' };
@@ -110,5 +111,102 @@ test('the live action list only shows while the run is in flight, and ticks a "W
 test('a live run younger than one second shows no duration yet', { skip }, async () => {
   const page = await panel({ ...finished, running: true, status: 'working', startedAt: Date.now(), messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#live-duration').isHidden(), true);
+  await page.close();
+});
+
+// ---- the pending request card.
+const waiting = requests => ({ running: false, status: 'needs_input', cost: 0, steps: [], messages: [{ role: 'user', text: 'do it' }], requests });
+// Every answer the panel sends, captured in the page.
+const captureSent = page => page.evaluate(() => {
+  window.sent = [];
+  chrome.runtime.sendMessage = async message => { window.sent.push(message); return { ok: true }; };
+});
+
+test('a page that blocked the run says in the panel which check stopped it', { skip }, async () => {
+  const page = await panel({ ...finished, status: 'blocked', blockedReason: 'captcha_failed' });
+  assert.equal(await page.locator('#blocked').isVisible(), true);
+  assert.match(await page.locator('#blocked').innerText(), /captcha/);
+  assert.equal(await page.locator('#status-text').innerText(), 'needs your attention');
+  // A run that ended cleanly says nothing about being blocked.
+  await page.evaluate(s => window.onState({ type: 'state', state: s }), finished);
+  assert.equal(await page.locator('#blocked').isHidden(), true);
+  await page.close();
+});
+
+test('several blocking conditions at once still render one card, the highest priority one', { skip }, async () => {
+  const page = await panel(waiting([
+    { id: 'plan-1', type: 'plan', question: 'does this plan look right?' },
+    { id: 'elicit-1', type: 'elicitation', question: 'which folder?' },
+    approvalRequest({ action: 'send the message', origin: 'https://example.test' }),
+    { id: 'pick-1', type: 'option_picker', question: 'which tab did you mean?', options: ['first', 'second'] },
+    { id: 'input-1', type: 'user_input', question: 'what name should i put on it?' },
+  ]));
+  assert.equal(await page.locator('.request-card').count(), 1);
+  assert.equal(await page.locator('.request-card').getAttribute('data-request-type'), 'user_input');
+  assert.match(await page.locator('.request-question').innerText(), /what name should i put on it/);
+  // Drop the winner and the next one down takes the single slot, in priority order.
+  await page.evaluate(s => window.onState({ type: 'state', state: s }), waiting([
+    { id: 'plan-1', type: 'plan', question: 'does this plan look right?' },
+    approvalRequest({ action: 'send the message', origin: 'https://example.test' }),
+    { id: 'pick-1', type: 'option_picker', question: 'which tab did you mean?', options: ['first', 'second'] },
+  ]));
+  assert.equal(await page.locator('.request-card').count(), 1);
+  assert.equal(await page.locator('.request-card').getAttribute('data-request-type'), 'option_picker');
+  await page.close();
+});
+
+test('a mid-run question offers the choices and a free-text answer beside them', { skip }, async () => {
+  const page = await panel(waiting([{ id: 'pick-1', type: 'option_picker', question: 'which tab did you mean?', options: ['first', 'second'], allowFreeText: true }]));
+  assert.deepEqual(await page.locator('.request-options button').allInnerTexts(), ['first', 'second']);
+  assert.equal(await page.locator('.request-text').count(), 1);
+  await captureSent(page);
+  await page.locator('.request-options button').first().click();
+  assert.deepEqual(await page.evaluate(() => window.sent), [{ type: 'answer', id: 'pick-1', outcome: 'submitted', choice: 'first' }]);
+  await page.close();
+});
+
+test('the handoff form is typed, starts empty, and keeps nothing once it is sent', { skip }, async () => {
+  const request = credentialRequest({
+    origin: 'https://example.test',
+    fields: [
+      { id: 1, label: 'Email', inputType: 'email', required: true },
+      { id: 2, label: 'Password', inputType: 'password', required: true },
+    ],
+    signInOptions: ['Continue with Google'],
+    submit: { id: 3, label: 'Sign in' },
+  });
+  const page = await panel(waiting([request]));
+  assert.equal(await page.locator('.request-card').getAttribute('data-request-kind'), 'credential');
+  assert.deepEqual(
+    await page.locator('.request-field input').evaluateAll(els => els.map(e => [e.type, e.autocomplete, e.value])),
+    [['email', 'email', ''], ['password', 'current-password', '']],
+  );
+  await captureSent(page);
+  await page.locator('.request-field input').nth(0).fill('me@pcstyle.dev');
+  await page.locator('.request-field input').nth(1).fill('hunter2');
+  await page.locator('.request-fields button[type=submit]').click();
+  const sent = await page.evaluate(() => window.sent);
+  assert.deepEqual(sent, [{ type: 'answer', id: request.id, outcome: 'submitted', values: { Email: 'me@pcstyle.dev', Password: 'hunter2' } }]);
+  // The panel holds no copy of what was typed once it has gone to the worker.
+  assert.deepEqual(await page.locator('.request-field input').evaluateAll(els => els.map(e => e.value)), ['', '']);
+  await page.close();
+});
+
+test('the widest approval scope is confirmed a second time with the warning spelled out', { skip }, async () => {
+  const request = approvalRequest({ action: 'act on any site you open', origin: '*' });
+  const page = await panel(waiting([request]));
+  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'always allow', 'deny']);
+  await captureSent(page);
+  await page.locator('button[data-scope=always]').click();
+  assert.deepEqual(await page.evaluate(() => window.sent), [], 'the widest scope is not granted on the first click');
+  assert.match(await page.locator('.confirm-warning').innerText(), /any site you open/);
+  await page.locator('.request-actions button').first().click();
+  assert.deepEqual(await page.evaluate(() => window.sent), [{ type: 'answer', id: request.id, outcome: 'submitted', scope: 'always' }]);
+  // A single-origin approval is granted on the first click, with no second dialog.
+  const oneSite = approvalRequest({ action: 'send the message', origin: 'https://example.test' });
+  await page.evaluate(s => window.onState({ type: 'state', state: s }), waiting([oneSite]));
+  await captureSent(page);
+  await page.locator('button[data-scope=always]').click();
+  assert.deepEqual(await page.evaluate(() => window.sent), [{ type: 'answer', id: oneSite.id, outcome: 'submitted', scope: 'always' }]);
   await page.close();
 });
