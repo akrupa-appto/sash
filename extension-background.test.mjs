@@ -17,6 +17,8 @@ let attachGate;
 const accessPrompts = [];
 const grantedOrigins = [];
 let allowAccess = true;
+const sidePanelOpens = [];
+const menuCreated = [];
 
 globalThis.chrome = {
   storage: { local: {
@@ -32,7 +34,11 @@ globalThis.chrome = {
   },
   tabs: {
     get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }),
-    query: async ({ windowId }) => [{ id: windowId === 7 ? 12 : 99, windowId, active: true }],
+    // Window 7's active tab is 12. The keyboard shortcut asks for the current window instead of
+    // naming one, and gets the same tab back, so it has a windowId to open the panel on.
+    query: async ({ windowId, currentWindow } = {}) => (currentWindow
+      ? [{ id: 12, windowId: 7, url: 'https://example.test', active: true }]
+      : [{ id: windowId === 7 ? 12 : 99, windowId, active: true }]),
     sendMessage: async (tabId, message) => { sentToTabs.push({ tabId, message }); return message.type === 'CONTENT_PING' ? { ok: liveContentScript } : { ok: true }; },
     onCreated: events(), onUpdated: events(), onActivated: events(), onRemoved: events(),
   },
@@ -41,7 +47,10 @@ globalThis.chrome = {
     contains: async ({ origins }) => origins.every(o => grantedOrigins.includes(o)),
     request: async ({ origins }) => { grantedOrigins.push(...origins); return true; },
   },
-  debugger: { onDetach: events() }, sidePanel: { setPanelBehavior: async () => {} },
+  debugger: { onDetach: events() },
+  sidePanel: { setPanelBehavior: async () => {}, open: async opts => { sidePanelOpens.push(opts); } },
+  commands: { onCommand: events() },
+  contextMenus: { create: (opts, cb) => { menuCreated.push(opts); cb?.(); }, removeAll: cb => cb(), onClicked: events() },
 };
 mock.module('./extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
@@ -216,7 +225,57 @@ test('a content script asks the worker for its own tab state instead of being as
   assert.equal(answered, false);
 });
 
+// --- the keyboard shortcut and the right-click entry -------------------------------------------
+test('the context menu registers "Ask Checkto" on page, selection and link', () => {
+  assert.equal(menuCreated.length, 1);
+  assert.equal(menuCreated[0].id, 'ask-checkto');
+  assert.deepEqual(menuCreated[0].contexts, ['page', 'selection', 'link']);
+});
+
+test('the open-panel keyboard command opens the side panel on the active tab window', async () => {
+  const before = sidePanelOpens.length;
+  chrome.commands.onCommand.fire('open-panel');
+  await until(() => sidePanelOpens.length === before + 1);
+  assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
+});
+
+test('an unrelated command is ignored', async () => {
+  const before = sidePanelOpens.length;
+  chrome.commands.onCommand.fire('some-other-command');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(sidePanelOpens.length, before);
+});
+
+test('right-clicking a selection sends it into a new chat run', async () => {
+  await send({ type: 'clear' });
+  const started = taskStarted;
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', selectionText: 'hello world' }, { id: 21, windowId: 7, url: 'https://example.test' });
+  await until(() => taskStarted === started + 1);
+  await until(() => sidePanelOpens.at(-1)?.windowId === 7);
+  assert.equal(data.runState.messages.at(-1).text, 'help me with this selection: "hello world"');
+  finishTask();
+  await until(() => data.runState?.running === false);
+});
+
+test('right-clicking a link sends the link URL into a new chat run', async () => {
+  await send({ type: 'clear' });
+  const started = taskStarted;
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', linkUrl: 'https://example.test/page' }, { id: 22, windowId: 7, url: 'https://example.test' });
+  await until(() => taskStarted === started + 1);
+  assert.equal(data.runState.messages.at(-1).text, 'look at this link: https://example.test/page');
+  finishTask();
+  await until(() => data.runState?.running === false);
+});
+
+test('a different menu item or an unsupported tab is ignored', () => {
+  const started = taskStarted;
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'something-else', selectionText: 'nope' }, { id: 23, windowId: 7, url: 'https://example.test' });
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', selectionText: 'nope' }, { id: 24, windowId: 7, url: 'chrome://extensions' });
+  assert.equal(taskStarted, started);
+});
+
 // --- host access is asked for before a site is touched -----------------------------------------
+// Last in the file: it empties the granted origins, so anything after it would have to re-grant.
 test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {
   await send({ type: 'clear' });
   grantedOrigins.length = 0;
