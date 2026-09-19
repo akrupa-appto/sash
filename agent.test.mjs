@@ -9,11 +9,12 @@ const snap = () => ({
 });
 let snapFn = () => snap();
 let clickFn = async () => { executed++; state = clickDestination === 'progress' ? `record-${executed}` : clickDestination; };
+let typeTextFn = async () => {};
 mock.module('./browser.ts', { namedExports: {
   snapshot: async () => snapFn(), screenshot: async () => '', settle: async () => {},
   describe: e => `[${e.id}] ${e.role} "${e.name}"`,
   click: async (p, id) => clickFn(p, id),
-  typeText: async () => {}, selectOption: async () => {}, scroll: async () => {},
+  typeText: async (...a) => typeTextFn(...a), selectOption: async () => {}, scroll: async () => {},
 }});
 mock.module('./jev.ts', { namedExports: {
   decide: async (_state, questions) => { lastQuestions = questions; return { answers: decisions.shift(), ms: 1, cost_usd: 0 }; },
@@ -28,11 +29,13 @@ const choice = (operation, achieved = 0) => ({
   operation: { choice: operation }, goal_achieved: { noul: achieved },
   click_target: { choice: 'el_1' },
 });
-async function run(supervisor, maxSteps = 3) {
+// `extra` is either the task as a bare string, or extra RunInput fields (goal, resume, …).
+async function run(supervisor, maxSteps = 3, extra = {}) {
+  const over = typeof extra === 'string' ? { goal: extra } : extra;
   state = 'repository'; executed = 0; planCalls = [];
   const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
   const events = [];
-  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}) }, e => events.push(e), new AbortController().signal);
+  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}), ...over }, e => events.push(e), new AbortController().signal);
   return events.at(-1);
 }
 
@@ -169,6 +172,84 @@ test('an exact-name match beats a pick that only contains the planner-quoted nam
   } finally { snapFn = origSnap; clickFn = origClick; }
 });
 
+test('a step whose action failed cannot be reported as a success by the next planner call', async () => {
+  const [origSnap, origClick, origType] = [snapFn, clickFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Condition value', kind: 'type', inViewport: true },
+    { id: 2, role: 'button', name: 'Update', kind: 'click', inViewport: true },
+  ] });
+  typeTextFn = async () => { throw new Error('the control is covered or not visible'); };
+  clickFn = async () => { executed++; state = 'filter-saved'; };
+  try {
+    plans = [
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'continue', next: 'click the "Update" button', completes_task: true },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+    ];
+    decisions = [
+      { operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' } },
+      { operation: { choice: 'CLICK' }, click_target: { choice: 'el_2' } },
+    ];
+    const result = await run(true, 6);
+    assert.notEqual(result.status, 'done');
+    assert.equal(result.status, 'blocked');
+    assert.match(result.message, /control is covered or not visible/);
+    // the planner is told to re-check before the run gives up on it
+    assert.ok(planCalls[2].warnings.some(w => /did not happen/.test(w)), 'planner must be warned the step failed');
+  } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
+});
+
+test('a retry that succeeds on the same control clears the earlier failure', async () => {
+  const [origSnap, origClick, origType] = [snapFn, clickFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Condition value', kind: 'type', inViewport: true },
+  ] });
+  let typed = 0;
+  typeTextFn = async () => { if (++typed === 1) throw new Error('the control is covered or not visible'); state = 'typed'; };
+  try {
+    plans = [
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+    ];
+    decisions = Array.from({ length: 2 }, () => ({ operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' } }));
+    const result = await run(true, 6);
+    assert.equal(result.status, 'done');
+  } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
+});
+
+test('the run reports the item it actually opened, not a same-named one it only considered', async () => {
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let clicked = [];
+  clickFn = async (_p, id) => {
+    clicked.push(id);
+    state = id === 2 ? 'pr-fix-login-bug' : 'pr-fix-login-bug-retry';
+  };
+  snapFn = () => ({
+    ...snap(),
+    elements: [
+      { id: 1, role: 'link', name: 'Fix login bug (retry)', kind: 'click', inViewport: true },
+      { id: 2, role: 'link', name: 'Fix login bug', kind: 'click', inViewport: true },
+    ],
+    text:
+      state === 'pr-fix-login-bug' ? 'PR #12 Fix login bug: 3/3 checks passing'
+      : state === 'pr-fix-login-bug-retry' ? 'PR #14 Fix login bug (retry): 1/3 checks failing'
+      : 'repository',
+  });
+  try {
+    // jev picks the wrong PR (el_1, the retry); the exact-name correction should send the click to
+    // the PR the supervisor actually named ("Fix login bug", el_2), and everything downstream —
+    // the click, and what the run tells the next planner call happened — must be about that PR only.
+    plans = [{ status: 'continue', next: 'open the "Fix login bug" pull request' }, { status: 'done', answer: 'ok' }];
+    decisions = [{ operation: { choice: 'CLICK' }, click_target: { choice: 'el_1' } }];
+    await run(true, 5);
+    assert.deepEqual(clicked, [2]);
+    assert.match(planCalls[1].history[0], /showing: "PR #12 Fix login bug: 3\/3 checks passing"/);
+    assert.doesNotMatch(planCalls[1].history[0], /PR #14/);
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
 test('the planner sees every step of a long run, older ones shortened', async () => {
   clickDestination = 'progress';
   plans = [...Array.from({ length: 30 }, () => ({ status: 'continue', next: 'x'.repeat(400) })), { status: 'done', answer: 'ok' }];
@@ -182,6 +263,54 @@ test('the planner sees every step of a long run, older ones shortened', async ()
   } finally { clickDestination = 'file-preview'; }
 });
 
+test('a final answer naming a fact the run never observed is not passed through as done', async () => {
+  plans = [{ status: 'done', answer: 'Merged pull request #4821 and closed "Fix login redirect".' }];
+  const result = await run(true);
+  assert.notEqual(result.status, 'done');
+  assert.equal(result.answer, undefined);
+  assert.match(result.message, /#4821/);
+});
+
+test('a final answer whose claims match the run history is passed through as done', async () => {
+  plans = [{ status: 'done', answer: 'Opened "README.md" as requested.' }];
+  const result = await run(true);
+  assert.equal(result.status, 'done');
+  assert.equal(result.answer, 'Opened "README.md" as requested.');
+});
+
+test('a "test the app" run cannot report done after a single navigation', async () => {
+  clickDestination = 'progress';
+  plans = [{ status: 'continue', next: 'open the app' }, ...Array.from({ length: 12 }, () => ({ status: 'done', answer: 'tested the app, all good' }))];
+  decisions = [choice('CLICK')];
+  try {
+    const result = await run(true, 12, 'test the app and try out everything');
+    assert.equal(executed, 1);
+    assert.equal(result.status, 'blocked', 'a one-click run must not be allowed to report done');
+    assert.notEqual(result.answer, 'tested the app, all good');
+    assert.match(result.message, /not reporting that as tested/);
+    assert.ok(planCalls.at(-1).warnings.some(w => /took 1 real action/.test(w)), 'the planner must be told the run is too shallow');
+  } finally { clickDestination = 'file-preview'; }
+});
+
+test('the coverage floor lifts once the app has really been exercised', async () => {
+  clickDestination = 'progress';
+  plans = [...Array.from({ length: 5 }, () => ({ status: 'continue', next: 'use the app' })), { status: 'done', answer: 'covered five sections' }];
+  decisions = Array.from({ length: 5 }, () => choice('CLICK'));
+  try {
+    const result = await run(true, 12, 'test the app and try out everything');
+    assert.equal(executed, 5);
+    assert.equal(result.status, 'done');
+    assert.equal(result.answer, 'covered five sections');
+  } finally { clickDestination = 'file-preview'; }
+});
+
+test('the coverage floor does not delay a one-step task that is not about testing an app', async () => {
+  plans = [{ status: 'done', answer: 'opened raw readme' }];
+  const result = await run(true, 3);
+  assert.equal(result.status, 'done');
+  assert.equal(result.answer, 'opened raw readme');
+});
+
 test('history records what appeared on the page after an action, not only that it changed', async () => {
   clickDestination = 'progress';
   const orig = snapFn;
@@ -192,4 +321,167 @@ test('history records what appeared on the page after an action, not only that i
     await run(true, 5);
     assert.match(planCalls[1].history[0], /showing: "Run finished: 7\/8 tests passed on "#42 feat: browser settings""/);
   } finally { snapFn = orig; clickDestination = 'file-preview'; }
+});
+
+test('an element that vanishes between snapshot and click is retried by name instead of burning the step', async () => {
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let attempts = [];
+  // The page re-renders every snapshot, so the element carries a new id each time.
+  let nextId = 1;
+  snapFn = () => ({ ...snap(), elements: [{ id: nextId++, role: 'link', name: 'README.md', kind: 'click', inViewport: true }] });
+  clickFn = async (_p, id) => {
+    attempts.push(id);
+    if (attempts.length === 1) throw new Error('locator.evaluate: Timeout 30000ms exceeded.\n  waiting for locator');
+    state = 'file-preview';
+  };
+  try {
+    plans = [{ status: 'continue', next: 'open README.md' }, { status: 'done', answer: 'opened' }];
+    decisions = [choice('CLICK')];
+    const events = [];
+    state = 'repository'; planCalls = [];
+    const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
+    await runTask(page, { goal: 'open the raw README.md', supervisor: true, maxSteps: 5 }, e => events.push(e), new AbortController().signal);
+    assert.equal(attempts.length, 2, 'the click is retried once against a fresh snapshot');
+    assert.notEqual(attempts[1], attempts[0], 'the retry uses the re-tagged element id, not the stale one');
+    const step1 = events.find(e => e.type === 'step');
+    assert.doesNotMatch(step1.note ?? '', /action failed/);
+    assert.match(step1.note, /re-tagged/);
+    assert.equal(events.at(-1).status, 'done');
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
+test('a planner question stops the run unexecuted, and the next message continues that run', async () => {
+  plans = [
+    { status: 'continue', next: 'open README.md' },
+    { status: 'question', question: 'which README do you mean, the root one or docs/README.md?', why: 'two files match' },
+  ];
+  decisions = [choice('CLICK')];
+  const asked = await run(true);
+  assert.equal(asked.status, 'question');
+  assert.equal(asked.question, 'which README do you mean, the root one or docs/README.md?');
+  assert.equal(executed, 1, 'the question must not carry out another action');
+  assert.equal(planCalls.length, 2);
+
+  plans = [{ status: 'done', answer: 'opened the root readme' }];
+  decisions = [];
+  const resumed = await run(true, 3, { goal: 'the root one', resume: asked.pending });
+  assert.equal(resumed.status, 'done');
+  // The resumed run is the same task with everything it had already read, plus the user's answer.
+  assert.equal(planCalls[0].task, 'open the raw README.md');
+  assert.match(planCalls[0].history[0], /supervisor said "open README.md"/);
+  assert.match(planCalls[0].history.at(-1), /which README do you mean.*they replied "the root one"/);
+  assert.equal(planCalls[0].step, 3);
+});
+
+test('a high-risk action waits for the user before it runs, a low-risk one does not', async () => {
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high', why: 'it removes the account for good' }];
+  decisions = [choice('CLICK')];
+  const paused = await run(true);
+  assert.equal(paused.status, 'question');
+  assert.equal(executed, 0, 'nothing may be executed before the user answers');
+  assert.match(paused.question, /Delete account/);
+  assert.equal(paused.pending.action, 'click the "Delete account" button');
+
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high' }, { status: 'done', answer: 'deleted' }];
+  decisions = [choice('CLICK')];
+  const resumed = await run(true, 3, { goal: 'yes, go ahead', resume: paused.pending });
+  assert.equal(resumed.status, 'done');
+  assert.equal(executed, 1, 'the answer lets exactly that action through');
+
+  plans = [{ status: 'continue', next: 'open README.md', risk: 'low' }, { status: 'done', answer: 'ok' }];
+  decisions = [choice('CLICK')];
+  const low = await run(true);
+  assert.equal(low.status, 'done');
+  assert.equal(executed, 1);
+});
+
+test('a refusal is not an approval, and an approval covers only the action it was asked about', async () => {
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high', why: 'it removes the account for good' }];
+  decisions = [choice('CLICK')];
+  const paused = await run(true);
+  assert.equal(paused.pending.action, 'click the "Delete account" button');
+
+  // "no" resumes the run, but the action it refused must still not run.
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high' }];
+  decisions = [choice('CLICK')];
+  const refused = await run(true, 3, { goal: 'no, leave it alone', resume: paused.pending });
+  assert.equal(executed, 0, 'a refused action must not be carried out');
+  assert.equal(refused.status, 'question', 'the run asks again rather than treating "no" as a yes');
+
+  // A yes to one irreversible action is not a yes to a different one.
+  plans = [{ status: 'continue', next: 'click the "Transfer funds" button', risk: 'high' }];
+  decisions = [choice('CLICK')];
+  const swapped = await run(true, 3, { goal: 'yes, go ahead', resume: paused.pending });
+  assert.equal(executed, 0, 'approval must not carry over to another high-risk action');
+  assert.equal(swapped.status, 'question');
+  assert.match(swapped.question, /Transfer funds/);
+});
+
+test('an unclear reply is not read as approval for a high-risk action', async () => {
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high', why: 'it removes the account for good' }];
+  decisions = [choice('CLICK')];
+  const paused = await run(true);
+
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high' }];
+  decisions = [choice('CLICK')];
+  const hedged = await run(true, 3, { goal: 'maybe, what does that do exactly?', resume: paused.pending });
+  assert.equal(executed, 0, 'a hedging, non-affirmative reply must not be read as a yes');
+  assert.equal(hedged.status, 'question');
+});
+
+test('an unconfirmed failed step still blocks "done" after the run pauses and resumes for something else', async () => {
+  const [origSnap, origClick, origType] = [snapFn, clickFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Condition value', kind: 'type', inViewport: true },
+  ] });
+  typeTextFn = async () => { throw new Error('the control is covered or not visible'); };
+  try {
+    // Step fails, then the very next planner call needs something only the user knows (unrelated question).
+    plans = [
+      { status: 'continue', next: 'type the domain into the condition value field' },
+      { status: 'question', question: 'which domain do you mean?' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' } }];
+    const paused = await run(true, 6);
+    assert.equal(paused.status, 'question');
+    assert.equal(paused.pending.pendingFailure?.note, 'action failed: the control is covered or not visible');
+
+    // Resuming answers the question, but the earlier failure was never confirmed, so a later "done" must
+    // still be forced through the re-check guard instead of quietly reporting success.
+    plans = [
+      { status: 'done', answer: 'the catch-all filter was updated' },
+      { status: 'done', answer: 'the catch-all filter was updated' },
+    ];
+    decisions = [];
+    const resumed = await run(true, 6, { goal: 'gmail.com', resume: paused.pending });
+    assert.equal(resumed.status, 'blocked', 'the pending failure must survive the pause, not reset on resume');
+  } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
+});
+
+// A run that ends blocked or errored explains its reason but never names its outcome in plain terms, so a
+// one-word tag goes on the message itself: the panel shows the agent's own text verbatim.
+test('a run that finishes surfaces "done" on its own message', async () => {
+  plans = [{ status: 'done', answer: 'read the file' }];
+  decisions = [choice('DONE')];
+  const result = await run(true);
+  assert.equal(result.status, 'done');
+  assert.match(result.message, /^done: /);
+});
+
+test('a run that ends blocked surfaces "could not finish" on its own message', async () => {
+  plans = [{ status: 'blocked', why: 'this is a preview, not the raw file' }];
+  decisions = [choice('CLICK')];
+  const result = await run(true);
+  assert.equal(result.status, 'blocked');
+  assert.match(result.message, /^could not finish: /);
+});
+
+test('a run that pauses for the user surfaces "needs you" on its own message', async () => {
+  plans = [{ status: 'question', question: 'which README do you mean?', why: 'two files match' }];
+  decisions = [];
+  const result = await run(true);
+  assert.equal(result.status, 'question');
+  assert.match(result.message, /^needs you: /);
+  // The question itself stays clean for the prompt the panel shows.
+  assert.equal(result.question, 'which README do you mean?');
 });

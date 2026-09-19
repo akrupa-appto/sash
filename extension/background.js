@@ -60,6 +60,9 @@ setFaviconRestorer(tabId => setFeedback(tabId, { badge: BadgeState.NONE, cursor:
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready' };
 let saving = Promise.resolve();
+// Broadcasts can race (a stale in-flight 'run' broadcast landing after a later 'clear'),
+// so panel.js uses this to drop any broadcast older than the last one it applied.
+let seq = 0;
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   const saved = (await chrome.storage.local.get('runState')).runState;
@@ -72,8 +75,9 @@ const ready = (async () => {
 })();
 function persist() {
   const copy = structuredClone(state);
+  seq += 1;
   saving = saving.catch(() => {}).then(() => chrome.storage.local.set({ runState: copy }));
-  chrome.runtime.sendMessage({ type: 'state', state: copy }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'state', state: copy, seq }).catch(() => {});
   return saving;
 }
 function safeError(error, settings = {}) {
@@ -205,7 +209,7 @@ async function execute(run, message) {
     const mentioned = await Promise.all((message.tabIds || []).map(id => chrome.tabs.get(id)));
     const references = mentioned.map(t => `tab ${t.id}: ${t.title || ''} (${t.url})`).join('\n');
     await runTask(page, {
-      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), supervisor: mode === 'careful', model: settings.model,
+      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), resume: message.resume, supervisor: mode === 'careful', model: settings.model,
       reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true,
       browserTabs: {
         list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
@@ -254,6 +258,8 @@ async function execute(run, message) {
     ]);
     const finalBadge = outcome?.status === 'done' ? BadgeState.DELIVERABLE : outcome?.status === 'blocked' ? BadgeState.HANDOFF : BadgeState.NONE;
     for (const tabId of new Set(pages.map(p => p.tabId))) if (!closed.has(tabId)) await setFeedback(tabId, { badge: marked.get(tabId) ?? finalBadge, cursor: undefined });
+    // A run that stopped to ask something waits here: the user's next message continues it with its own context.
+    state.pending = outcome?.status === 'question' ? outcome.pending : undefined;
     // Keep the run's actions with the reply they produced so earlier runs still show their steps.
     state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
     state.messages = state.messages.slice(-20);
@@ -269,7 +275,7 @@ async function handle(message) {
     const settings = await readSettings();
     let configured = true;
     try { validateSettings(settings); } catch { configured = false; }
-    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning };
+    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning, seq };
   }
   if (message.type === 'stop') { await stop(); return { ok: true }; }
   if (message.type === 'getBadge') return { badge: feedback(message.tabId).badge };
@@ -282,7 +288,7 @@ async function handle(message) {
     // have to go too, or a new chat starts with the last one's dots still on the user's tabs.
     for (const tabId of [...feedbackByTab.keys()]) { await setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }); feedbackByTab.delete(tabId); }
     state = { running: false, messages: [], steps: [], status: 'ready' };
-    await persist(); return { ok: true };
+    await persist(); return { ok: true, state, seq };
   }
   if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
@@ -292,10 +298,12 @@ async function handle(message) {
     const sessionId = state.sessionId || crypto.randomUUID();
     const run = { controller: new AbortController(), pages: [], attaching: new Set(), sessionId, turnId: crypto.randomUUID() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
+    // This message answers the question the last run stopped on, so it continues that run instead of starting one.
+    const resume = state.pending;
+    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, pending: undefined };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
-    void execute(run, { ...message, goal: message.goal.trim() });
+    void execute(run, { ...message, goal: message.goal.trim(), resume });
     return { ok: true };
   }
   throw new Error('unknown request');
