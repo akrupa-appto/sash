@@ -239,3 +239,14 @@ test('the widest approval scope is confirmed a second time with the warning spel
   assert.deepEqual(await page.evaluate(() => window.sent), [{ type: 'answer', id: oneSite.id, outcome: 'submitted', scope: 'always' }]);
   await page.close();
 });
+
+test('a run waiting on the user reads as asking, not as ordinary chat text', { skip }, async () => {
+  const page = await panel({
+    running: false, status: 'needs_input', steps: [],
+    messages: [{ role: 'user', text: 'open the readme' }, { role: 'agent', text: 'which README do you mean?', steps }],
+    requests: [{ id: 'ask-1', type: 'user_input', question: 'which README do you mean?' }],
+  });
+  assert.equal(await page.locator('#status-text').innerText(), 'waiting for your answer');
+  assert.equal(await page.locator('.message.agent.asking > div').last().innerText(), 'which README do you mean?');
+  await page.close();
+});

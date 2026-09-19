@@ -266,8 +266,10 @@ function renderRequest(state) {
 function render(state) {
   currentState = state; running = state.running;
   $('#intro').hidden = !!state.messages.length;
-  $('#messages').replaceChildren(...state.messages.map(m => {
-    const el = document.createElement('div'); el.className = `message ${m.role}`;
+  // The run stopped on a request: the last reply is what the user has to answer, not a finished result.
+  const waiting = !running && state.status === 'needs_input';
+  $('#messages').replaceChildren(...state.messages.map((m, i) => {
+    const el = document.createElement('div'); el.className = `message ${m.role}${waiting && m.role === 'agent' && i === state.messages.length - 1 ? ' asking' : ''}`;
     const label = document.createElement('span'); label.className = 'message-label'; label.textContent = m.role === 'user' ? 'you' : 'checkto';
     const body = document.createElement('div'); body.textContent = m.text;
     el.append(label);

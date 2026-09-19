@@ -68,6 +68,12 @@ dialog.mp::backdrop{background:rgba(0,0,0,.55);backdrop-filter:blur(2px)}
 .mp-error{color:var(--bad,#f57c7c);font-size:12px}
 `;
 
+// A typed custom model ID may already be in a fetched OpenRouter model list (this account can use it, it's
+// just not surfaced in the picker's search yet). Look it up there instead of treating it as unknown metadata.
+export function findCachedModel(models, id) {
+  return models?.find(m => m.id === id);
+}
+
 // providers: [{id,label,prefix}] connected providers. fetchModels(id) resolves a list of
 // {id,name,reasoning,context,price}. value: {model, reasoning}. onChange(value, info) fires on "use model".
 export function createModelPicker({ providers, fetchModels, value, onChange, allowCustom = true }) {
@@ -132,7 +138,9 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
   dlg.querySelectorAll('[role=tab]').forEach(b => b.addEventListener('click', () => loadProvider(b.dataset.provider)));
   $('.mp-search').addEventListener('input', renderList);
   $('.mp-list').addEventListener('click', e => { const row = e.target.closest('.mp-row'); if (row) { $('.mp-custom input').value = ''; select(row.dataset.id, models.find(m => m.id === row.dataset.id)); } });
-  $('.mp-custom input').addEventListener('input', e => { const v = e.target.value.trim(); if (v) select(v, undefined); else if (state.custom) { state.model = ''; state.info = undefined; state.custom = false; renderList(); renderReasoning(); } });
+  // A typed ID may already be in the cached OpenRouter model list (a custom/unlisted-in-search model this
+  // account can use); use its real reasoning metadata instead of falling back to "unknown model, auto only".
+  $('.mp-custom input').addEventListener('input', e => { const v = e.target.value.trim(); if (v) select(v, findCachedModel(cache.get('openrouter'), v)); else if (state.custom) { state.model = ''; state.info = undefined; state.custom = false; renderList(); renderReasoning(); } });
   $('.mp-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.reasoning = b.dataset.value; renderReasoning(); } });
   $('.mp-close').addEventListener('click', () => dlg.close());
   $('.mp-cancel').addEventListener('click', () => dlg.close());

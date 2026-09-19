@@ -138,6 +138,8 @@ function declinePending(reason = 'stopped') {
   }
   state.declined = declined;
   state.requests = [];
+  // Nothing left to resume: the guards it carried die with the request it was raised for.
+  state.resumeState = undefined;
   return declined;
 }
 // Fill the handed-back form on the real page. The values pass straight through: they are never
@@ -258,7 +260,7 @@ async function execute(run, message) {
     const mentioned = await Promise.all((message.tabIds || []).map(id => chrome.tabs.get(id)));
     const references = mentioned.map(t => `tab ${t.id}: ${t.title || ''} (${t.url})`).join('\n');
     await runTask(page, {
-      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), supervisor: mode === 'careful', model: settings.model,
+      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), resume: message.resume, supervisor: mode === 'careful', model: settings.model,
       reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true, denials: state.denials,
       browserTabs: {
         list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
@@ -311,6 +313,9 @@ async function execute(run, message) {
     // reason in plain words; a stop leaves nothing pending because the agent declined it already.
     state.blockedReason = outcome?.blockedReason;
     state.requests = outcome?.requests ?? [];
+    // A run that paused on a request carries the coverage/failure guards here; answering that request
+    // resumes with this, so a pause never resets them regardless of what kind of request it raised.
+    state.resumeState = outcome?.resumeState;
     if (outcome?.declined?.length) state.declined = outcome.declined;
     state.endedAt = Date.now();
     // Keep the run's actions with the reply they produced so earlier runs still show their steps,
@@ -393,7 +398,9 @@ async function handle(message) {
     delete denials[denialKey(request)];
     state.denials = denials;
     await persist();
-    return handle({ type: 'run', tabId: state.tabId, goal: resume, mode: (await readSettings()).mode });
+    // Whatever kind of request this answered, the run resumes with the coverage/failure guards it
+    // paused with — a pause must never reset those just because a different kind of request raised it.
+    return handle({ type: 'run', tabId: state.tabId, goal: resume, mode: (await readSettings()).mode, resume: state.resumeState });
   }
   if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
@@ -403,7 +410,7 @@ async function handle(message) {
     const sessionId = state.sessionId || crypto.randomUUID();
     const run = { controller: new AbortController(), pages: [], attaching: new Set(), sessionId, turnId: crypto.randomUUID() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined, requests: [], blockedReason: undefined };
+    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined, requests: [], blockedReason: undefined, resumeState: undefined };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
     void execute(run, { ...message, goal: message.goal.trim() });

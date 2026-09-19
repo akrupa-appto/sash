@@ -15,6 +15,8 @@ let taskStarted = 0;
 let finishTask;
 let attachGate;
 let pendingRequest; // set to make the fixture run end waiting on the user
+let nextOutcome; // set to make the fake run end straight away with that outcome
+let lastInput;
 
 globalThis.chrome = {
   storage: { local: {
@@ -42,10 +44,12 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, _input, emit, signal) => {
+mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   taskStarted++;
   activeSignal = signal;
+  lastInput = input;
   emit({ type: 'step', step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload', costUsd: 0 });
+  if (nextOutcome) { const outcome = nextOutcome; nextOutcome = undefined; emit({ type: 'end', totalCostUsd: 0, ...outcome }); return; }
   await new Promise(resolve => {
     finishTask = resolve;
     signal.addEventListener('abort', resolve, { once: true });
@@ -159,6 +163,25 @@ test('stopping a turn that is waiting declines the request instead of dropping i
     // An answer to a request nobody is waiting on any more is refused, not silently accepted.
     assert.match((await send({ type: 'answer', id: 'req-1', outcome: 'submitted', scope: 'once' })).error, /no longer waiting/);
   } finally { pendingRequest = undefined; }
+});
+
+test('a paused request carries the coverage/failure guards back in when the answer resumes the run', async () => {
+  await send({ type: 'clear' });
+  const resumeState = { goal: 'open the readme', history: ['step 1: did CLICK [1] link "README.md"'], step: 1, realActions: 1, pagesSeen: ['fp1'], coverageRefusals: 0 };
+  const request = { id: 'ask-1', type: 'user_input', question: 'which README do you mean?' };
+  nextOutcome = { status: 'needs_input', message: request.question, requests: [request], request, resumeState };
+  await send({ type: 'run', tabId: 12, goal: 'open the readme', mode: 'careful' });
+  await until(() => data.runState?.running === false);
+  assert.equal(data.runState.status, 'needs_input');
+  assert.equal(data.runState.messages.at(-1).text, 'which README do you mean?');
+  assert.deepEqual(data.runState.resumeState, resumeState);
+
+  nextOutcome = { status: 'done', message: 'finished', answer: 'opened the root readme' };
+  await send({ type: 'answer', id: 'ask-1', text: 'the root one' });
+  await until(() => data.runState?.status === 'done');
+  assert.deepEqual(lastInput.resume, resumeState, "the answer carries the paused run's guards back into the agent");
+  assert.equal(lastInput.goal, 'the root one');
+  assert.equal(data.runState.resumeState, undefined);
 });
 
 test('a finished run keeps its actions on the reply it produced', async () => {
