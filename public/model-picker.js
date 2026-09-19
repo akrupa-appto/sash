@@ -98,7 +98,8 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
 
   function renderTabs() { dlg.querySelectorAll('[role=tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.provider === state.provider))); }
   function renderReasoning() {
-    const choices = reasoningChoices(state.info?.reasoning);
+    // A custom ID has no metadata: every level stays selectable and the provider decides.
+    const choices = reasoningChoices(state.custom ? { supported_efforts: null, mandatory: false } : state.info?.reasoning);
     if (!choices.some(c => c.value === state.reasoning)) state.reasoning = 'auto';
     $('.mp-seg').innerHTML = choices.map(c => `<button type="button" data-value="${c.value}" aria-pressed="${String(c.value === state.reasoning)}" title="${esc(c.hint)}">${esc(c.label)}</button>`).join('');
     $('.mp-hint').textContent = choices.find(c => c.value === state.reasoning)?.hint || '';

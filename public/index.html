@@ -217,7 +217,7 @@ $('#f').onsubmit = async ev => {
   const supervisor = supervisorOn();
   await providersReady;
   const { model, reasoning } = choice;
-  if (supervisor && !model) { picker?.open(choice); return; }
+  if (supervisor && !model) { if (picker) picker.open(choice); else $('#model-label').textContent = 'models could not load; reload the page'; return; }
   msg.value = '';
   el('msg user', esc(text));
   const typing = el('typing', 'starting browser');

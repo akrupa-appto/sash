@@ -39,6 +39,15 @@ test('settings clamp budgets and require the right provider keys', () => {
   assert.throws(() => validateSettings(direct, 'careful'), /OpenRouter/);
 });
 
+test('the default text model stays a fallback while an explicit one is passed through', async () => {
+  const { configure, clearConfig, env } = await import('./extension/config.js');
+  configure(normalizeSettings({ openaiKey: 'k', model: 'openai:gpt-5.2' }));
+  assert.equal(env.TEXT_MODEL, undefined);
+  configure(normalizeSettings({ openaiKey: 'k', model: 'openai:gpt-5.2', textModel: 'openai:gpt-5-mini' }));
+  assert.equal(env.TEXT_MODEL, 'openai:gpt-5-mini');
+  clearConfig();
+});
+
 test('provider settings are snapshotted per run and cleared after use', () => {
   const direct = normalizeSettings({ provider: 'typesafe', typesafeKey: 'direct-key', openrouterKey: 'router-key' });
   configure(direct);

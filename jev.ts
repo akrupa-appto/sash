@@ -1,5 +1,5 @@
 import { env } from "./env.ts";
-import { chat, parseModel, providerKey } from "./providers.ts";
+import { chat, parseModel, providerKey, PROVIDERS } from "./providers.ts";
 // Thin client for Jev (TypeSafe System One). Works against TypeSafe directly or via OpenRouter.
 
 export type Question =
@@ -85,7 +85,13 @@ export async function decide(
 // TEXT_MODEL picks the model (with the same provider prefixes as the planner). Without it, a cheap
 // OpenRouter model is used, or the planner's own provider when there is no OpenRouter key.
 export function textModel(): string {
-  const candidates = [env.TEXT_MODEL, "anthropic/claude-haiku-4.5", env.PLANNER_MODEL].filter((m): m is string => !!m);
+  // An explicit TEXT_MODEL is honoured or refused, never silently swapped for another provider.
+  if (env.TEXT_MODEL) {
+    const { provider } = parseModel(env.TEXT_MODEL);
+    if (!providerKey(provider)) throw new Error(`${PROVIDERS[provider].keyEnv} needed for the text model ${env.TEXT_MODEL}`);
+    return env.TEXT_MODEL;
+  }
+  const candidates = ["anthropic/claude-haiku-4.5", env.PLANNER_MODEL].filter((m): m is string => !!m);
   const usable = candidates.find((m) => providerKey(parseModel(m).provider));
   if (!usable) throw new Error("OPENROUTER_API_KEY needed for text generation");
   return usable;
