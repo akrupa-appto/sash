@@ -123,7 +123,7 @@ async function execute(run, message) {
       },
     }, event => {
       if (event.type === 'step') {
-        state.steps.push({ step: event.step, action: event.action, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
+        state.steps.push({ step: event.step, action: event.action, log: event.log, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
         state.cost = (state.cost || 0) + event.costUsd;
       }
       if (event.type === 'end') { outcome = event; return; }
@@ -145,8 +145,13 @@ async function execute(run, message) {
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
-    // Keep the run's actions with the reply they produced so earlier runs still show their steps.
-    state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
+    state.endedAt = Date.now();
+    // Keep the run's actions with the reply they produced so earlier runs still show their steps,
+    // and the run's own duration/stop-state so the duration divider reads right after it moves off screen.
+    state.messages.push({
+      role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings),
+      steps: state.steps.slice(-60), startedAt: state.startedAt, endedAt: state.endedAt, stopped: state.status === 'stopped',
+    });
     state.messages = state.messages.slice(-20);
     clearConfig();
     state.running = false;
@@ -174,7 +179,7 @@ async function handle(message) {
     if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
     const run = { controller: new AbortController(), pages: [], attaching: new Set() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
+    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
     void execute(run, { ...message, goal: message.goal.trim() });

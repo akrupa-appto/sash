@@ -7,6 +7,7 @@ let matches = [];
 let highlighted = 0;
 let mention;
 let submitting = false;
+let durationTimer;
 const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
 const request = async message => {
@@ -92,12 +93,32 @@ function chooseTab(tab) {
   input.setRangeText('', mention.start, mention.end, 'end');
   closePicker(); renderSelected(); input.focus(); controls();
 }
-const actionLabel = n => `${n} ${n === 1 ? 'action' : 'actions'}`;
+// A finished step's row always shows its expanded sentence: by the time an entry exists the action is
+// already done, so there is no live/ticker form to show here (the ticker is used in #status-text instead).
 function stepElement(s) {
   const el = document.createElement('div'); el.className = 'step';
-  el.textContent = `${s.step}. ${s.plan || s.action}`;
-  for (const text of [s.plan ? s.action : '', s.note].filter(Boolean)) { const p = document.createElement('p'); p.textContent = text; el.append(p); }
+  el.textContent = `${s.step}. ${s.log?.expanded || s.plan || s.action}`;
+  for (const text of [s.log ? '' : (s.plan ? s.action : ''), s.note].filter(Boolean)) { const p = document.createElement('p'); p.textContent = text; el.append(p); }
   return el;
+}
+// The collapsed <details> summary reads as one joined sentence ("opened the upload tab, clicked upload"),
+// not a step count or a stack trace: the first fragment starts a sentence, the rest read lowercase mid-sentence.
+function summarySentence(steps) {
+  if (!steps.length) return 'activity';
+  return steps.map((s, i) => (s.log ? (i === 0 ? s.log.fragmentCapitalized : s.log.fragment) : (s.plan || s.action))).join(', ');
+}
+// Three states only, phrased as what happened to the run, not as the agent's failure.
+function formatDuration(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
+}
+function durationText({ startedAt, endedAt, stopped, live }) {
+  if (!startedAt) return '';
+  if (live) return Date.now() - startedAt >= 1000 ? 'Working' : '';
+  if (!endedAt) return '';
+  const elapsed = endedAt - startedAt;
+  if (elapsed < 1000) return '';
+  return stopped ? `You stopped after ${formatDuration(elapsed)}` : `Worked for ${formatDuration(elapsed)}`;
 }
 function render(state) {
   currentState = state; running = state.running;
@@ -108,26 +129,35 @@ function render(state) {
     const body = document.createElement('div'); body.textContent = m.text;
     el.append(label);
     // The actions belong above the reply they produced, so the answer stays the last thing on screen.
+    // The duration divider sits between them: it is that run's own outcome, not the current run's.
     if (m.steps?.length) {
       const wrap = document.createElement('details'); wrap.className = 'steps';
-      const summary = document.createElement('summary'); summary.textContent = actionLabel(m.steps.length);
+      const summary = document.createElement('summary'); summary.textContent = summarySentence(m.steps);
       wrap.append(summary, ...m.steps.map(stepElement));
       el.append(wrap);
+      const text = durationText({ startedAt: m.startedAt, endedAt: m.endedAt, stopped: m.stopped, live: false });
+      if (text) { const d = document.createElement('div'); d.className = 'duration'; d.textContent = text; el.append(d); }
     }
     el.append(body);
     return el;
   }));
   // The live list only covers the run in flight; once it ends the steps move onto that run's reply.
   $('#steps-wrap').hidden = !running || !state.steps.length;
-  $('#steps-label').textContent = actionLabel(state.steps.length);
+  $('#steps-label').textContent = summarySentence(state.steps);
   $('#steps').replaceChildren(...state.steps.map(stepElement));
   const latest = state.steps.at(-1);
-  $('#status-text').textContent = running ? (latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', max_steps: 'step limit reached' }[state.status] || state.status);
+  $('#status-text').textContent = running ? (latest?.log?.ticker || latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', max_steps: 'step limit reached' }[state.status] || state.status);
   $('#status-text').title = $('#status-text').textContent;
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);
+  const liveText = durationText({ startedAt: state.startedAt, live: running });
+  $('#live-duration').hidden = !running || !liveText;
+  $('#live-duration').textContent = liveText;
   controls();
   $('#content').scrollTop = $('#content').scrollHeight;
+  // Re-tick every second while a run is live, so the duration divider can appear once a second has passed.
+  clearInterval(durationTimer);
+  if (running) durationTimer = setInterval(() => render(currentState), 1000);
 }
 async function load() {
   const response = await request({ type: 'getState' });
