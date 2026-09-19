@@ -101,7 +101,7 @@ async function execute(run, message) {
       reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true,
       browserTabs: {
         list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
-        select: selectTab, currentId: () => state.tabId,
+        select: selectTab, currentId: page => page.tabId,
       },
     }, event => {
       if (event.type === 'step') {

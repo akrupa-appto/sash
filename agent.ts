@@ -16,7 +16,7 @@ export type RunInput = {
   browserTabs?: {
     list: () => Promise<{ id: number; title: string; url: string }[]>;
     select: (id: number) => Promise<Page>;
-    currentId: () => number;
+    currentId: (page: Page) => number;
   };
 };
 
@@ -119,7 +119,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       }
       const snap = await b.snapshot(page);
       const tabs = await input.browserTabs?.list();
-      const currentTabId = input.browserTabs?.currentId();
+      const currentTabId = input.browserTabs?.currentId(page);
       // Tell the models whether the previous action changed anything.
       if (history.length && lastFingerprint) {
         history[history.length - 1] +=

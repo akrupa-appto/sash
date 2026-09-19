@@ -127,7 +127,7 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
       noPrefill.add(model);
       return plan(ctx, signal, model, reasoning, recovery);
     }
-    if (!noJsonMode.has(model) && res.status === 400 && /(?:response_format|json[_ ](?:object|mode)).*(?:unsupported|not supported|invalid)|(?:unsupported|not supported|invalid).*(?:response_format|json[_ ](?:object|mode))/i.test(body)) {
+    if (!noJsonMode.has(model) && [400, 404, 422].includes(res.status) && /response_format|json[_ ](?:object|mode)/i.test(body)) {
       noJsonMode.add(model);
       return plan(ctx, signal, model, reasoning, recovery);
     }
@@ -148,6 +148,7 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
     if (!p || !["continue", "done", "blocked"].includes(p.status)) throw new Error('invalid plan status');
     if (p.tabId == null) delete p.tabId;
     if (p.tabId != null && !Number.isInteger(p.tabId)) throw new Error('invalid tab ID');
+    if (p.tabId !== undefined && !ctx.tabs?.some(tab => tab.id === p.tabId)) throw new Error('tab ID is not in the open tabs');
     if (p.tabId !== undefined && p.tabId === ctx.currentTabId) throw new Error('already on the requested tab');
     if (p.status === 'continue' && !(typeof p.next === 'string' && p.next.trim()) && !(ctx.tabs && Number.isInteger(p.tabId))) throw new Error('missing next action');
   } catch {
