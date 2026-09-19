@@ -88,6 +88,12 @@ function newText(prev: string, cur: string, max = 240): string {
   return fresh ? `, showing: "${fresh.slice(0, max)}${fresh.length > max ? "…" : ""}"` : "";
 }
 
+// A failure that reads like the element went away between the snapshot and the action, rather than a
+// real refusal by the page (navigation, dialog, disabled control).
+function staleElementTimeout(message: string): boolean {
+  return /timeout|not attached|element is not|no element|detached|destroyed|not visible|no node found/i.test(message);
+}
+
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
   for (const m of goal.matchAll(/["“”']([^"“”']{1,120})["“”']/g)) out.push(m[1].trim());
@@ -307,6 +313,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       const chosen = op.choice;
       let jevMs = res.ms;
       let stepCost = res.cost_usd;
+      // A page that re-renders while we think can drop the element between snapshot and action. The
+      // element ids belong to that stale snapshot, so the retry re-tags the page and finds the same
+      // control by role + name instead.
+      let retry: { el: { role: string; name: string }; run: (id: number) => Promise<void> } | undefined;
 
       // ---- 3. execute
       try {
@@ -351,6 +361,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
             const e = snap.elements.find((x) => x.id === id);
             action = `CLICK ${e ? b.describe(e) : `[${id}]`}`;
+            if (e) retry = { el: e, run: (rid) => b.click(page, rid) };
             await b.click(page, id);
             break;
           }
@@ -373,6 +384,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
             typedSoFar.push(text);
             action = `${chosen} ${JSON.stringify(text)} into ${e ? b.describe(e) : `[${id}]`}`;
+            if (e) retry = { el: e, run: (rid) => b.typeText(page, rid, text, chosen === "TYPE_AND_ENTER", e?.contentEditable) };
             await b.typeText(page, id, text, chosen === "TYPE_AND_ENTER", e?.contentEditable);
             break;
           }
@@ -416,7 +428,23 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             break;
         }
       } catch (err) {
-        note = `action failed: ${(err as Error).message.split("\n")[0].slice(0, 200)}`;
+        const first = (err as Error).message.split("\n")[0];
+        let recovered = false;
+        // A page that re-renders every second can drop the element between snapshot and action, which
+        // shows up as a locator timeout. Re-tag the page and try the same action once more against the
+        // element that now carries the same role and name, instead of burning the step.
+        if (retry && staleElementTimeout(first)) {
+          try {
+            const fresh = await b.snapshot(page);
+            const match = fresh.elements.find((x) => x.role === retry!.el.role && x.name === retry!.el.name);
+            if (match) {
+              await retry.run(match.id);
+              recovered = true;
+              note = "element vanished before the action; re-tagged the page and retried by name";
+            }
+          } catch { /* the retry failed too: fall through and report the original failure */ }
+        }
+        if (!recovered) note = `action failed: ${first.slice(0, 200)}`;
       }
       signal.throwIfAborted();
       await b.settle(page);
