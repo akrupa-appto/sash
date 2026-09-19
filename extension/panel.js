@@ -92,22 +92,35 @@ function chooseTab(tab) {
   input.setRangeText('', mention.start, mention.end, 'end');
   closePicker(); renderSelected(); input.focus(); controls();
 }
+const actionLabel = n => `${n} ${n === 1 ? 'action' : 'actions'}`;
+function stepElement(s) {
+  const el = document.createElement('div'); el.className = 'step';
+  el.textContent = `${s.step}. ${s.plan || s.action}`;
+  for (const text of [s.plan ? s.action : '', s.note].filter(Boolean)) { const p = document.createElement('p'); p.textContent = text; el.append(p); }
+  return el;
+}
 function render(state) {
   currentState = state; running = state.running;
   $('#intro').hidden = !!state.messages.length;
   $('#messages').replaceChildren(...state.messages.map(m => {
     const el = document.createElement('div'); el.className = `message ${m.role}`;
     const label = document.createElement('span'); label.className = 'message-label'; label.textContent = m.role === 'user' ? 'you' : 'checkto';
-    const body = document.createElement('div'); body.textContent = m.text; el.append(label,body); return el;
-  }));
-  $('#steps-wrap').hidden = !state.steps.length;
-  $('#steps-label').textContent = `${state.steps.length} ${state.steps.length === 1 ? 'action' : 'actions'}`;
-  $('#steps').replaceChildren(...state.steps.map(s => {
-    const el = document.createElement('div'); el.className = 'step';
-    el.textContent = `${s.step}. ${s.plan || s.action}`;
-    for (const text of [s.plan ? s.action : '', s.note].filter(Boolean)) { const p = document.createElement('p'); p.textContent = text; el.append(p); }
+    const body = document.createElement('div'); body.textContent = m.text;
+    el.append(label);
+    // The actions belong above the reply they produced, so the answer stays the last thing on screen.
+    if (m.steps?.length) {
+      const wrap = document.createElement('details'); wrap.className = 'steps';
+      const summary = document.createElement('summary'); summary.textContent = actionLabel(m.steps.length);
+      wrap.append(summary, ...m.steps.map(stepElement));
+      el.append(wrap);
+    }
+    el.append(body);
     return el;
   }));
+  // The live list only covers the run in flight; once it ends the steps move onto that run's reply.
+  $('#steps-wrap').hidden = !running || !state.steps.length;
+  $('#steps-label').textContent = actionLabel(state.steps.length);
+  $('#steps').replaceChildren(...state.steps.map(stepElement));
   const latest = state.steps.at(-1);
   $('#status-text').textContent = running ? (latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', max_steps: 'step limit reached' }[state.status] || state.status);
   $('#status-text').title = $('#status-text').textContent;
