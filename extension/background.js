@@ -37,7 +37,9 @@ async function execute(run, message) {
   let settings;
   let outcome;
   const { controller, pages } = run;
+  const pendingTabs = new Map();
   const selectTab = async id => {
+    if (pendingTabs.has(id)) await pendingTabs.get(id);
     controller.signal.throwIfAborted();
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
@@ -67,14 +69,18 @@ async function execute(run, message) {
       if (!controller.signal.aborted) { run.popupError = err; controller.abort(); }
     });
     attachments.add(work);
-    work.finally(() => attachments.delete(work));
+    pendingTabs.set(tab.id, work);
+    work.finally(() => { attachments.delete(work); pendingTabs.delete(tab.id); });
   };
   const created = tab => {
     if (pages.some(p => p.tabId === tab.openerTabId)) { candidates.set(tab.id, true); attachPopup(tab); }
   };
   const updated = (_id, _change, tab) => attachPopup(tab);
-  const detached = source => {
-    if (pages.some(p => p.tabId === source.tabId) && !run.cleaning) controller.abort();
+  const detached = (source, reason) => {
+    const page = pages.find(p => p.tabId === source.tabId);
+    if (!page || run.cleaning) return;
+    page.attached = false; page.initialized = false;
+    if (reason === 'canceled_by_user' || source.tabId === state.tabId) controller.abort();
   };
   chrome.tabs.onCreated.addListener(created);
   chrome.tabs.onUpdated.addListener(updated);

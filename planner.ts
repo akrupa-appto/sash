@@ -148,6 +148,7 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
     if (!p || !["continue", "done", "blocked"].includes(p.status)) throw new Error('invalid plan status');
     if (p.tabId == null) delete p.tabId;
     if (p.tabId != null && !Number.isInteger(p.tabId)) throw new Error('invalid tab ID');
+    if (p.tabId !== undefined && p.tabId === ctx.currentTabId) throw new Error('already on the requested tab');
     if (p.status === 'continue' && !(typeof p.next === 'string' && p.next.trim()) && !(ctx.tabs && Number.isInteger(p.tabId))) throw new Error('missing next action');
   } catch {
     if (!recovery) {

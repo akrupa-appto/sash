@@ -121,7 +121,7 @@ const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTi
 chrome.tabs.onCreated.addListener(scheduleRefresh); chrome.tabs.onRemoved.addListener(scheduleRefresh); chrome.tabs.onUpdated.addListener(scheduleRefresh); chrome.tabs.onActivated.addListener(scheduleRefresh);
 function showError(err) { $('#error').textContent = err.message || String(err); }
 document.querySelectorAll('.settings-link').forEach(b => b.addEventListener('click', () => chrome.runtime.openOptionsPage()));
-document.querySelectorAll('[data-task]').forEach(b => b.addEventListener('click', () => { $('#goal').value = b.dataset.task; $('#goal').focus(); controls(); if (b.dataset.task.includes('tabs')) $('#mention-tabs').click(); }));
+document.querySelectorAll('[data-task]').forEach(b => b.addEventListener('click', event => { event.stopPropagation(); $('#goal').value = b.dataset.task; $('#goal').focus(); controls(); if (b.dataset.task.includes('tabs')) $('#mention-tabs').click(); }));
 $('#mention-tabs').addEventListener('click', () => {
   const input = $('#goal'); input.focus();
   const prefix = input.selectionStart && !/\s$/.test(input.value.slice(0, input.selectionStart)) ? ' @' : '@';
@@ -152,7 +152,10 @@ $('#goal').addEventListener('keydown', event => {
   if (mention) {
     if (event.key === 'Escape') { event.preventDefault(); closePicker(); return; }
     if (['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); highlighted = (highlighted + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % (matches.length || 1); renderPicker(); document.getElementById(`tab-option-${matches[highlighted]?.id}`)?.scrollIntoView({ block: 'nearest' }); return; }
-    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); if (matches[highlighted]) chooseTab(matches[highlighted]); return; }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      if (matches[highlighted]) { event.preventDefault(); chooseTab(matches[highlighted]); return; }
+      closePicker();
+    }
   }
   if (event.key === 'Enter' && !event.shiftKey && !running) { event.preventDefault(); $('#task-form').requestSubmit(); }
 });
