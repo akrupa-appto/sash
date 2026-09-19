@@ -95,3 +95,8 @@ Open, in the order Adam raised them (todo.md has the detail):
 5. Verification debt: OpenAI, Gemini, and custom-server planner paths have never been called with a real key on this machine; mocked-fetch tests only. The Google sign-in detach reason has not been confirmed against Chrome.
 
 Rules learned this session that are not yet in AGENTS.md: retarget stacked PRs to main before merging their parent (GitHub closes a PR whose base branch is deleted and will not reopen it); `git push --follow-tags` skips lightweight tags.
+
+- 2026-09-19 (pr4-agent-fixes): the three "done" guards run in a fixed order and the order is the decision, not an accident. Guards that hand the run back to work come first (the failed-step re-check, then the "test the app" coverage floor, both of which `continue`), and only then the guard that ends the run (unsupported claims in the answer). A shallow or unconfirmed run gets a chance to earn its success; a fabricated claim never does. Same order on the planner's `done` and on jev's own `DONE`.
+- 2026-09-19: a retag-retry that recovers a vanished element is not a failed step. The retry runs first in the catch block and only a still-failing action sets `pendingFailure`, otherwise every re-rendering page would end runs as unconfirmed.
+- 2026-09-19: `outcomeWord` also tags the pause message ("needs you: …"), but `EndEvent.question` stays the bare question so the panel can prompt with it unchanged.
+- 2026-09-19: the exploratory-task check and the claim corpus both read the run's `goal`, not `input.goal`; on a resume `input.goal` is only the user's reply to a question.
