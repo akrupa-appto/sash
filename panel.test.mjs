@@ -65,6 +65,29 @@ test('a finished run shows its answer after its own actions, not before them', {
   await page.close();
 });
 
+// The plum tokens once lived on .panel-page, so settings.html rendered the old cream theme.
+test('the settings page renders the same plum theme as the panel', { skip }, async () => {
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    const store = {};
+    window.chrome = {
+      storage: { local: { get: async () => ({ ...store }), set: async () => {}, remove: async () => {} }, onChanged: { addListener() {}, removeListener() {} } },
+      permissions: { request: async () => true, contains: async () => true },
+      runtime: { sendMessage: async () => ({ ok: true }), onMessage: { addListener() {} } },
+    };
+  });
+  await page.goto(`${base}/settings.html`);
+  const theme = await page.evaluate(() => {
+    const style = getComputedStyle(document.body);
+    return { bg: style.backgroundColor, fg: style.color, font: style.fontFamily, scheme: getComputedStyle(document.documentElement).colorScheme };
+  });
+  assert.equal(theme.bg, 'rgb(23, 16, 32)');
+  assert.equal(theme.fg, 'rgb(245, 235, 240)');
+  assert.equal(theme.scheme, 'dark');
+  assert.match(theme.font, /^Outfit/);
+  await page.close();
+});
+
 test('the live action list only shows while the run is in flight', { skip }, async () => {
   const page = await panel({ ...finished, running: true, status: 'working', messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);
