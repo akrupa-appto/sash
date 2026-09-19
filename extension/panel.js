@@ -29,9 +29,17 @@ async function refreshTabs() {
   const activeId = current[0]?.id;
   tabs.sort((a,b) => Number(b.id === activeId) - Number(a.id === activeId) || a.windowId - b.windowId || a.index - b.index);
   selected = selected.map(t => tabs.find(tab => tab.id === t.id) || { ...t, closed: true });
+  renderTabCard(current[0]);
   renderSelected();
   controls();
   if (mention) renderPicker();
+}
+function renderTabCard(tab) {
+  const usable = tab && isWebsite(tab);
+  $('#tab-card-title').textContent = usable ? (tab.title || site(tab)) : 'open a website tab';
+  const icon = $('#tab-card-icon'), mark = $('#tab-card-mark');
+  icon.hidden = !(usable && tab.favIconUrl); if (!icon.hidden) icon.src = tab.favIconUrl;
+  mark.hidden = !icon.hidden; mark.textContent = usable ? (site(tab).replace(/^www\./, '').slice(0, 1) || '·') : '·';
 }
 function renderSelected() {
   $('#selected-tabs').replaceChildren(...selected.map(tab => {

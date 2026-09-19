@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>checkto · say it once. the browser does the rest.</title>
+<meta name="description" content="checkto is a browser that takes instructions in plain words. give it the site and the job, then watch it work.">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=cabinet-grotesk@700,800&display=swap" rel="stylesheet">
+<style>
+  :root { --ground:#ECEAF4; --ink:#12111A; --cobalt:#2E3BFF; --coral:#FF5C3A; --white:#fff; --dim:rgba(18,17,26,.62); --line:rgba(18,17,26,.1) }
+  * { box-sizing:border-box }
+  html { -webkit-font-smoothing:antialiased }
+  body { margin:0; background:var(--ground); color:var(--ink); font:16px/1.5 Satoshi, system-ui, sans-serif }
+  main { overflow-x:hidden; width:100%; max-width:100% }
+  a { color:inherit; text-decoration:none }
+  img { display:block; max-width:100% }
+  h1,h2,h3,p { margin:0 }
+  .display { font-family:"Cabinet Grotesk", Satoshi, sans-serif; font-weight:800; letter-spacing:-.035em }
+  .h1 { font-size:clamp(3rem,5vw,5.5rem); line-height:.96 }
+  .h2 { font-size:clamp(2.2rem,4vw,4rem); line-height:1; letter-spacing:-.03em }
+  .wrap { max-width:72rem; margin:0 auto; padding:0 1.5rem }
+  .btn { display:inline-block; border-radius:999px; padding:1rem 1.75rem; font-weight:500; font-size:1rem; line-height:1.2 }
+  .btn.ink { background:var(--ink); color:#fff }
+  .btn.ghost { background:#fff; color:var(--ink); border:1px solid rgba(18,17,26,.15) }
+  .btn.white { background:#fff; color:var(--ink) }
+  section { padding:8rem 0 }
+  @media (min-width:768px) { section { padding:12rem 0 } }
+
+  /* nav */
+  nav { position:fixed; top:1.25rem; left:50%; transform:translateX(-50%); z-index:40; display:flex; align-items:center; gap:1.5rem; padding:.5rem .5rem .5rem 1.25rem; border-radius:999px; backdrop-filter:blur(14px); background:rgba(255,255,255,.62); border:1px solid rgba(255,255,255,.85); font-size:15px; white-space:nowrap }
+  nav .brand { font-family:"Cabinet Grotesk", sans-serif; font-weight:800; font-size:1.125rem; letter-spacing:-.02em }
+  nav .brand i { font-style:normal; color:var(--cobalt) }
+  nav a:not(.brand):not(.btn):hover { color:var(--cobalt) }
+  nav .btn { padding:.5rem 1rem; font-size:15px }
+  @media (max-width:767px) { nav .link { display:none } }
+
+  /* signature cursor */
+  #cursor { position:fixed; z-index:50; left:0; top:0; width:34px; height:34px; pointer-events:none; filter:drop-shadow(0 6px 10px rgba(46,59,255,.33)) }
+  .ring { position:absolute; width:14px; height:14px; border:2px solid var(--cobalt); border-radius:50%; opacity:0; pointer-events:none }
+  .heading { position:relative; display:inline-block }
+
+  /* hero */
+  .hero { position:relative; padding:11rem 0 6rem; text-align:center }
+  @media (min-width:768px) { .hero { padding-top:14rem } }
+  .hero::before { content:""; position:absolute; inset:0; z-index:0; background:radial-gradient(60% 50% at 50% 0%, #fff 0%, var(--ground) 60%), radial-gradient(30% 30% at 80% 20%, rgba(46,59,255,.13), transparent 70%), radial-gradient(25% 25% at 15% 30%, rgba(255,92,58,.12), transparent 70%) }
+  .hero > * { position:relative }
+  .hero h1 { max-width:64rem; margin:0 auto }
+  .hero h1 img { display:inline-block; vertical-align:-.12em; height:.82em; width:1.9em; object-fit:cover; object-position:28% 42%; border-radius:999px; border:3px solid #fff; box-shadow:0 10px 25px -10px rgba(18,17,26,.5); filter:grayscale(1) contrast(1.25) }
+  .hero p { max-width:36rem; margin:2rem auto 0; font-size:1.125rem; color:var(--dim); line-height:1.6 }
+  @media (min-width:768px) { .hero p { font-size:1.25rem } }
+  .ctas { display:flex; flex-wrap:wrap; justify-content:center; gap:.75rem; margin-top:2.5rem }
+
+  /* demo browser */
+  .demo-wrap { position:relative; max-width:72rem; margin:6rem auto 0; padding:0 1.5rem }
+  @media (min-width:768px) { .demo-wrap { margin-top:8rem } }
+  .demo-wrap::before { content:""; position:absolute; left:-8rem; right:-8rem; top:-6rem; bottom:-10rem; z-index:0; background:radial-gradient(50% 60% at 50% 60%, var(--ink) 0%, transparent 70%); opacity:.9 }
+  .demo { position:relative; z-index:1; background:#fff; border-radius:1rem; overflow:hidden; text-align:left; box-shadow:0 40px 120px -30px rgba(18,17,26,.4), 0 0 0 1px rgba(18,17,26,.08) }
+  .demo .bar { display:flex; align-items:center; gap:.75rem; padding:.75rem 1rem; border-bottom:1px solid var(--line); background:#F6F5FA }
+  .demo .dots { display:flex; gap:6px } .demo .dots i { width:12px; height:12px; border-radius:50%; display:block } 
+  .demo .url { flex:1; border-radius:.5rem; background:#fff; border:1px solid var(--line); padding:.5rem 1rem; font:13px/1.4 ui-monospace, Menlo, monospace; color:var(--dim); min-height:2.25rem }
+  .demo .url b { display:inline-block; width:7px; height:1em; background:var(--cobalt); vertical-align:middle; margin-left:2px; animation:blink 1s steps(2) infinite }
+  @keyframes blink { 50% { opacity:0 } }
+  .demo .body { display:grid } @media (min-width:768px) { .demo .body { grid-template-columns:1fr 300px } }
+  .demo .page { position:relative; aspect-ratio:16/10; overflow:hidden; background:#fff }
+  .demo .page img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:top; filter:grayscale(1) contrast(1.1); opacity:.9 }
+  .target { position:absolute; border:2px solid var(--cobalt); background:rgba(46,59,255,.12); border-radius:6px; opacity:0 }
+  #demo-cursor { position:absolute; width:28px; height:28px; left:45%; top:85% }
+  .demo ol { list-style:none; margin:0; padding:1.25rem; font-size:14px; border-left:1px solid var(--line); background:#F6F5FA; display:flex; flex-direction:column; gap:.75rem }
+  .demo li { display:flex; gap:.75rem; opacity:.3 } .demo li span { width:20px; height:20px; border-radius:50%; border:1px solid rgba(18,17,26,.3); display:grid; place-items:center; font-size:10px; flex-shrink:0 }
+  .demo li.cost { margin-top:auto; padding-top:1rem; border-top:1px solid var(--line); color:var(--dim); font:12px ui-monospace, Menlo, monospace; opacity:1 }
+
+  /* bento */
+  .bento { display:grid; grid-template-columns:repeat(6,1fr); grid-auto-flow:dense; gap:1rem; grid-auto-rows:200px; margin-top:4rem }
+  @media (min-width:768px) { .bento { grid-auto-rows:230px } }
+  .card { background:#fff; border:1px solid var(--line); border-radius:1.5rem; padding:1.75rem; display:flex; flex-direction:column; justify-content:space-between; position:relative; overflow:hidden }
+  .card h3 { font-family:"Cabinet Grotesk", sans-serif; font-weight:700; font-size:1.5rem; letter-spacing:-.02em }
+  .card p { color:var(--dim); font-size:14px; margin-top:.25rem }
+  .card.live { grid-column:span 6; grid-row:span 2; padding:0 }
+  .card.live img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:left top; filter:grayscale(1) contrast(1.15); transition:transform .7s }
+  .card.live:hover img { transform:scale(1.05) }
+  .card.live .shade { position:absolute; inset:0; background:linear-gradient(to top, var(--ink), rgba(18,17,26,.4) 50%, transparent) }
+  .card.live .text { position:absolute; bottom:0; padding:2rem; color:#fff } .card.live .text h3 { font-size:1.875rem } .card.live .text p { color:rgba(255,255,255,.75); max-width:28rem; font-size:1rem }
+  .card.fast, .card.careful { grid-column:span 3 }
+  .card.video { grid-column:span 6 } .card.ext { grid-column:span 6; background:var(--ink); color:#fff } .card.ext p { color:rgba(255,255,255,.7) }
+  @media (min-width:768px) { .card.live { grid-column:span 4 } .card.fast, .card.careful { grid-column:span 2 } .card.video, .card.ext { grid-column:span 3 } }
+  .tag { align-self:flex-start; border-radius:999px; color:#fff; font-size:12px; font-weight:500; padding:.25rem .75rem } .tag.c { background:var(--cobalt) } .tag.r { background:var(--coral) }
+  .marquee-wrap { position:absolute; left:0; right:0; bottom:1.5rem; overflow:hidden }
+  .marquee { display:flex; gap:3rem; width:max-content; animation:marquee 38s linear infinite; font:14px ui-monospace, Menlo, monospace; color:rgba(18,17,26,.5); white-space:nowrap }
+  @keyframes marquee { to { transform:translateX(-50%) } }
+
+  /* pinned gallery */
+  .tabs { background:#fff }
+  .split { display:grid; gap:4rem } @media (min-width:768px) { .split { grid-template-columns:1fr 1fr } }
+  .split p { margin-top:1.5rem; color:var(--dim); max-width:24rem; font-size:1.125rem }
+  kbd { font:inherit; background:var(--ground); padding:0 .375rem; border-radius:4px }
+  .gallery { display:flex; flex-direction:column; gap:1.5rem }
+  .gallery div { border-radius:1.5rem; padding:2rem; height:380px; display:flex; flex-direction:column; justify-content:flex-end }
+  .gallery small { font:12px ui-monospace, Menlo, monospace } .gallery h3 { font-family:"Cabinet Grotesk", sans-serif; font-weight:700; font-size:1.875rem; margin-top:.5rem; letter-spacing:-.02em }
+  .g1 { background:var(--ground) } .g1 small { color:var(--cobalt) } .g2 { background:var(--ink); color:#fff } .g2 small { color:#FFB48A } .g3 { background:var(--cobalt); color:#fff } .g3 small { color:rgba(255,255,255,.7) }
+
+  /* manifesto */
+  .reveal { max-width:64rem; margin:0 auto; font-family:"Cabinet Grotesk", sans-serif; font-weight:700; font-size:clamp(1.8rem,3.6vw,3.4rem); line-height:1.15; letter-spacing:-.02em }
+  .word { display:inline-block; opacity:.14 }
+
+  /* action */
+  .cta { padding-top:0 }
+  .cta .box { position:relative; overflow:hidden; border-radius:2.5rem; background:var(--ink); color:#fff; padding:3rem 1.5rem; text-align:center }
+  @media (min-width:768px) { .cta .box { padding:6rem } }
+  .cta .box::before { content:""; position:absolute; inset:0; background:radial-gradient(40% 60% at 70% 20%, rgba(46,59,255,.4), transparent 70%), radial-gradient(30% 40% at 20% 90%, rgba(255,92,58,.33), transparent 70%) }
+  .cta .box > * { position:relative }
+  .cta .box p { margin:1.5rem auto 0; max-width:32rem; color:rgba(255,255,255,.7); font-size:1.125rem }
+  .cta .btn { margin-top:2.5rem; font-size:1.125rem; padding:1rem 2rem }
+  footer { display:flex; flex-wrap:wrap; justify-content:space-between; gap:1rem; margin-top:4rem; font-size:14px; color:rgba(18,17,26,.5) } footer div { display:flex; gap:1.5rem }
+  @media (prefers-reduced-motion:reduce) { .marquee { animation:none } .demo .url b { animation:none } }
+</style>
+</head>
+<body>
+<main>
+<svg id="cursor" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2 L20 11 L12.5 12.8 L9.5 20 Z" fill="#2E3BFF" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+<nav>
+  <a class="brand" href="/">checkto<i>.</i></a>
+  <a class="link" href="#how">how it works</a>
+  <a class="link" href="#tabs">extension</a>
+  <a class="link" href="/gallery">recordings</a>
+  <a class="btn ink" href="/app">try a task</a>
+</nav>
+
+<section class="hero">
+  <h1 class="display h1">say it once.<br>the browser <img src="/img/github.png" alt=""> does the rest.</h1>
+  <p>you type what you want done and which site. checkto opens it, reads the page like you do, clicks the right things, and shows you the whole run.</p>
+  <div class="ctas"><a class="btn ink" href="/app">give it a task</a><a class="btn ghost" href="#tabs">put it in chrome</a></div>
+
+  <div class="demo-wrap" id="demo-wrap">
+    <div class="demo" id="demo">
+      <div class="bar"><div class="dots"><i style="background:#FF5C3A"></i><i style="background:#F5C97C"></i><i style="background:#7CF5B1"></i></div><div class="url"><span id="typed"></span><b></b></div></div>
+      <div class="body">
+        <div class="page">
+          <img src="/img/github.png" alt="github organisation page with repositories sorted by stars">
+          <div class="target" id="t1" style="left:8.5%;top:14.5%;width:10%;height:6%"></div>
+          <div class="target" id="t2" style="left:84%;top:33%;width:7.5%;height:5%"></div>
+          <div class="target" id="t3" style="left:20.5%;top:49%;width:10.5%;height:4.5%;border-color:#FF5C3A;background:rgba(255,92,58,.12)"></div>
+          <svg id="demo-cursor" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2 L20 11 L12.5 12.8 L9.5 20 Z" fill="#2E3BFF" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        </div>
+        <ol id="steps">
+          <li><span>1</span>open github.com/typesafe-ai</li>
+          <li><span>2</span>open the repositories tab</li>
+          <li><span>3</span>sort by stars</li>
+          <li><span>4</span>open typesafe-sdk-js, then the raw README</li>
+          <li class="cost">30.2s · $0.0026 in model cost</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2 class="display h2 heading">two speeds. one browser you can watch.</h2>
+    <div class="bento">
+      <div class="card live"><img src="/img/app.png" alt="the checkto app with a live browser on the left and the conversation on the right"><div class="shade"></div><div class="text"><h3>watch it live</h3><p>a real browser, streamed. you see every click as it happens, and you can stop it at any point.</p></div></div>
+      <div class="card fast"><span class="tag c">fast</span><div><h3>short, specific tasks</h3><p>one model picks each action. most runs finish in under ten seconds.</p></div></div>
+      <div class="card careful"><span class="tag r">careful</span><div><h3>multi-step work</h3><p>a planner thinks before each action. slower, and it gets the long ones right.</p></div></div>
+      <div class="card video"><div><h3>every run becomes a video</h3><p>send the recording to whoever asked for the thing.</p></div><div class="marquee-wrap"><div class="marquee"><span>audit 12 invoices</span><span>sort github by stars</span><span>open the top story's comments</span><span>find the changelog</span><span>fill the intake form</span><span>audit 12 invoices</span><span>sort github by stars</span><span>open the top story's comments</span><span>find the changelog</span><span>fill the intake form</span></div></div></div>
+      <div class="card ext"><h3>or run it in your own chrome</h3><p>the extension works on your open tabs. your model keys stay on your machine.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="tabs" class="tabs">
+  <div class="wrap split">
+    <div id="pin"><h2 class="display h2 heading">one task,<br>many tabs.</h2><p>type <kbd>@</kbd> in the side panel to bring any open tab into the conversation. checkto moves between them on its own.</p></div>
+    <div class="gallery" id="gallery">
+      <div class="g1"><small>@ mail.google.com</small><h3>"find the invoice from friday"</h3></div>
+      <div class="g2"><small>@ app.xero.com</small><h3>"and put it against the right bill"</h3></div>
+      <div class="g3"><small>@ slack.com</small><h3>"tell sam it's done"</h3></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap"><p class="reveal" id="reveal">it reads the page the way you do. it does not need an api, a login flow you wrote, or a script that breaks when a button moves. if you can do it in a browser, you can hand it over.</p></div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <div class="box"><h2 class="display h2 heading">give it something boring.</h2><p>the first runs are on us. no card, no setup, just a task and a site.</p><a class="btn white" href="/app">start a task</a></div>
+    <footer><span>checkto</span><div><a href="/playground">playground</a><a href="/gallery">recordings</a><a href="#tabs">extension</a></div></footer>
+  </div>
+</section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script>
+if (window.gsap && window.ScrollTrigger) {
+  gsap.registerPlugin(ScrollTrigger);
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // demo frame: scale in, then fade out on the way past
+  gsap.fromTo('#demo', { scale: .8, opacity: .6 }, { scale: 1, opacity: 1, ease: 'none', scrollTrigger: { trigger: '#demo-wrap', start: 'top 90%', end: 'top 30%', scrub: true } });
+  gsap.to('#demo', { opacity: 0, scale: .96, ease: 'none', scrollTrigger: { trigger: '#demo-wrap', start: 'bottom 45%', end: 'bottom 5%', scrub: true } });
+
+  // in-frame run: type the task, move the cursor to real controls on the screenshot, tick the steps
+  const steps = document.querySelectorAll('#steps li:not(.cost)'), typed = document.getElementById('typed');
+  const task = 'go to github.com/typesafe-ai, sort by stars and open the raw README';
+  const run = gsap.timeline({ repeat: -1, repeatDelay: 2.5, paused: reduced });
+  run.add(() => { typed.textContent = ''; }, 0);
+  for (let i = 1; i <= task.length; i++) run.add(() => { typed.textContent = task.slice(0, i); }, i * .03);
+  run.set(steps, { opacity: .3 }, '>').set('#demo-cursor', { left: '45%', top: '85%' });
+  run.to(steps[0], { opacity: 1, duration: .2 }, '>+.4');
+  run.to('#demo-cursor', { left: '13%', top: '17%', duration: .9, ease: 'power2.inOut' }, '<');
+  run.to('#t1', { opacity: 1, duration: .2 }).to('#demo-cursor', { scale: .8, duration: .08, yoyo: true, repeat: 1 });
+  run.to(steps[1], { opacity: 1, duration: .2 }, '>+.5').to('#t1', { opacity: 0, duration: .3 }, '<');
+  run.to('#demo-cursor', { left: '87%', top: '35%', duration: .9, ease: 'power2.inOut' }, '<');
+  run.to('#t2', { opacity: 1, duration: .2 }).to('#demo-cursor', { scale: .8, duration: .08, yoyo: true, repeat: 1 });
+  run.to(steps[2], { opacity: 1, duration: .2 }, '>+.5').to('#t2', { opacity: 0, duration: .3 }, '<');
+  run.to('#demo-cursor', { left: '25%', top: '51%', duration: .8, ease: 'power2.inOut' }, '<');
+  run.to('#t3', { opacity: 1, duration: .2 }).to('#demo-cursor', { scale: .8, duration: .08, yoyo: true, repeat: 1 });
+  run.to(steps[3], { opacity: 1, duration: .2 }, '>+.5').to('#t3', { opacity: 0, duration: .3 }, '>+1');
+
+  // signature: a cursor that travels to each heading and clicks it
+  const cur = document.getElementById('cursor');
+  const xTo = gsap.quickTo(cur, 'x', { duration: .9, ease: 'power3.out' }), yTo = gsap.quickTo(cur, 'y', { duration: .9, ease: 'power3.out' });
+  const park = () => { xTo(innerWidth - 90); yTo(innerHeight - 110); };
+  park(); addEventListener('resize', () => ScrollTrigger.refresh());
+  document.querySelectorAll('.heading').forEach(h => {
+    const ring = document.createElement('span'); ring.className = 'ring'; h.appendChild(ring);
+    const aim = () => { const r = h.getBoundingClientRect(); xTo(Math.min(r.right + 8, innerWidth - 40)); yTo(r.top + r.height * .55); ring.style.right = '-24px'; ring.style.top = (r.height * .5 - 7) + 'px'; };
+    ScrollTrigger.create({ trigger: h, start: 'top 60%', end: 'bottom 30%',
+      onEnter: () => { aim(); gsap.fromTo(ring, { opacity: 1, scale: .4 }, { opacity: 0, scale: 3, duration: .7, delay: .5 }); gsap.fromTo(cur, { scale: 1 }, { scale: .82, duration: .1, delay: .5, yoyo: true, repeat: 1 }); },
+      onEnterBack: aim, onLeave: park, onLeaveBack: park });
+  });
+
+  gsap.from('.card', { y: 40, opacity: 0, duration: .8, stagger: .08, scrollTrigger: { trigger: '#how', start: 'top 70%' } });
+  ScrollTrigger.matchMedia({ '(min-width: 768px)': () => { ScrollTrigger.create({ trigger: '#pin', start: 'top 120px', endTrigger: '#gallery', end: 'bottom bottom', pin: true, pinSpacing: false }); } });
+
+  const p = document.getElementById('reveal');
+  p.innerHTML = p.textContent.trim().split(/\s+/).map(w => `<span class="word">${w}</span>`).join(' ');
+  gsap.to(p.querySelectorAll('.word'), { opacity: 1, stagger: .06, ease: 'none', scrollTrigger: { trigger: p, start: 'top 80%', end: 'bottom 45%', scrub: true } });
+} else {
+  document.getElementById('cursor').remove();
+  document.querySelectorAll('.word, #steps li').forEach(e => e.style.opacity = 1);
+  document.getElementById('typed').textContent = 'go to github.com/typesafe-ai, sort by stars and open the raw README';
+}
+</script>
+</body>
+</html>

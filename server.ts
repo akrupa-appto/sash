@@ -68,9 +68,18 @@ export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   const m = url.pathname.match(/^\/api\/session\/([a-f0-9]+)(?:\/(task|close|recording-start|recording-stop))?$/);
 
-  if (req.method === "GET" && url.pathname === "/") {
+  if (req.method === "GET" && url.pathname === "/app") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     return res.end(indexHtml());
+  }
+  if (req.method === "GET" && url.pathname === "/") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    return res.end(fs.readFileSync(path.join(root, "public", "home.html")));
+  }
+  const image = url.pathname.match(/^\/img\/([a-z0-9-]+\.png)$/);
+  if (req.method === "GET" && image && fs.existsSync(path.join(root, "public", "img", image[1]))) {
+    res.writeHead(200, { "content-type": "image/png", "cache-control": "public, max-age=86400" });
+    return res.end(fs.readFileSync(path.join(root, "public", "img", image[1])));
   }
   if (req.method === "GET" && ["/playground", "/gallery"].includes(url.pathname)) {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
