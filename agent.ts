@@ -211,7 +211,11 @@ function unsupportedClaims(answer: string, corpus: string): string[] {
   const lower = corpus.toLowerCase();
   const claims = new Set<string>();
   for (const q of quotedStrings(answer)) claims.add(q);
-  for (const m of answer.matchAll(/#\d+|\b\d{2,}(?:\/\d+)?\b/g)) claims.add(m[0]);
+  // A bare 2-3 digit number (a count the run computed itself, e.g. "closed 12 tabs") is too easy to
+  // trip on even when it's correct: the digits rarely appear verbatim anywhere in the corpus. Only
+  // treat bare numbers as claims worth checking when they're a ratio (more likely a copied stat, like
+  // "4/5 tests passing") or long enough to plausibly be a specific identifier (a PR/issue/file number).
+  for (const m of answer.matchAll(/#\d+|\b\d{2,}\/\d+\b|\b\d{4,}\b/g)) claims.add(m[0]);
   return [...claims].filter((c) => c.trim().length > 1 && !lower.includes(c.toLowerCase()));
 }
 

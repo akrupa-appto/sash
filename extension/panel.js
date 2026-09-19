@@ -311,7 +311,7 @@ function render(state) {
   pendingRequest = running ? undefined : pickBlocking(state.requests || []);
   renderRequest(state, pendingRequest);
   controls();
-  scrollToEnd();
+  if (pinnedToBottom) scrollToEnd();
   // Re-tick every second while a run is live, so the duration divider can appear once a second has
   // passed. Only that one line is redrawn: a full render would collapse an open activity list and
   // throw away the scroll position under the user every second.

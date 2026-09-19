@@ -86,7 +86,10 @@ test('background agent tabs are muted while not watched, and only checkto-muted 
   // Tab 22 opens as a popup from 21 and takes over: both 20 (already muted by us) and
   // 21 (already muted, but not by us) are background tabs now. Neither should be touched.
   chrome.tabs.onCreated.fire({ id: 22, openerTabId: 21, url: 'https://example.test/popup-2' });
-  await until(() => updateCalls.length > updatesBeforeTab22 || tabRecord(22).mutedInfo.muted !== undefined);
+  // tabRecord(22).mutedInfo defaults to { muted: false }, so ".muted !== undefined" was already
+  // true the instant the tab record was created — the wait resolved before the async attach/select
+  // work below even ran. Wait for the actual observable effect of that work landing instead.
+  await until(() => updateCalls.length > updatesBeforeTab22 || data.runState?.tabId === 22);
   assert.equal(updateCalls.some(c => c.id === 21), false, 'an unrelated already-muted tab must be left alone');
   assert.equal(tabRecord(21).mutedInfo.reason, 'user');
 
