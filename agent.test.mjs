@@ -246,6 +246,25 @@ test('a credential handoff describes the form and never carries what is already 
   } finally { snapFn = orig; }
 });
 
+// "Continue with Google" reads like a submit button, but clicking it after a password is typed sends
+// the user somewhere else entirely. It is an alternative, never this form's submit.
+test('a federated sign-in button is offered as an option, never picked as the form submit', async () => {
+  const orig = snapFn;
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'button', name: 'Continue with Google', kind: 'click', inViewport: true },
+    { id: 2, role: 'email', name: 'Email', kind: 'type', inViewport: true },
+    { id: 3, role: 'password', name: 'Password', kind: 'type', inViewport: true },
+    { id: 4, role: 'button', name: 'Log in', kind: 'click', inViewport: true },
+  ] });
+  try {
+    plans = [{ status: 'credential', why: 'the site wants a sign-in' }];
+    decisions = [];
+    const result = await run(true);
+    assert.equal(result.request.submit.label, 'Log in');
+    assert.deepEqual(result.request.signInOptions, ['Continue with Google']);
+  } finally { snapFn = orig; }
+});
+
 test('a mid-run question becomes a picker when the planner listed the choices', async () => {
   plans = [{ status: 'ask', question: 'which inbox should i use?', options: ['work', 'personal'] }];
   decisions = [];

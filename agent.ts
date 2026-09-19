@@ -143,6 +143,11 @@ function genericLog(chosen: string): StepLogEntry {
   return logEntry(g?.ticker ?? `Doing ${chosen}`, g?.past ?? `Did ${chosen}`);
 }
 
+// A button that signs in through someone else ("continue with Google"), rather than submitting this form.
+function isFederated(name: string): boolean {
+  return /(continue|sign ?in|log ?in) with/i.test(name);
+}
+
 // The site a handoff form belongs to. A page with an unparseable URL still names something.
 function originOf(url: string): string {
   try { return new URL(url).origin; } catch { return url; }
@@ -307,10 +312,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // what the user types never comes back through here, and nothing is read off the page.
         if (p.status === "credential") {
           const fields = snap.elements.filter((e) => e.kind === "type").slice(0, MAX_CREDENTIAL_FIELDS);
-          const submit = snap.elements.find((e) => e.kind === "click" && /sign ?in|log ?in|continue|submit|next/i.test(e.name));
-          const signInOptions = snap.elements
-            .filter((e) => e.kind === "click" && /(continue|sign ?in|log ?in) with/i.test(e.name))
-            .map((e) => e.name);
+          // "Continue with Google" reads like a submit button to the regex below but hands the user
+          // to another site. It is only ever offered as an alternative, never clicked with a password.
+          const signInOptions = snap.elements.filter((e) => e.kind === "click" && isFederated(e.name)).map((e) => e.name);
+          const submit = snap.elements.find((e) => e.kind === "click" && !isFederated(e.name) && /sign ?in|log ?in|continue|submit|next/i.test(e.name));
           return ask(
             credentialRequest({
               origin: originOf(snap.url),

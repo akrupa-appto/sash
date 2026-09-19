@@ -122,6 +122,12 @@ function durationText({ startedAt, endedAt, stopped, live }) {
   if (elapsed < 1000) return '';
   return stopped ? `You stopped after ${formatDuration(elapsed)}` : `Worked for ${formatDuration(elapsed)}`;
 }
+// The live divider under the running steps, redrawn on its own every second.
+function renderLiveDuration() {
+  const text = durationText({ startedAt: currentState?.startedAt, live: running });
+  $('#live-duration').hidden = !running || !text;
+  $('#live-duration').textContent = text;
+}
 // ---- the pending request card.
 // A turn can raise several blocking states; pickBlocking returns the one the user answers first,
 // so this block renders exactly one card no matter how many are queued behind it.
@@ -266,15 +272,15 @@ function render(state) {
   $('#status-text').title = $('#status-text').textContent;
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);
-  const liveText = durationText({ startedAt: state.startedAt, live: running });
-  $('#live-duration').hidden = !running || !liveText;
-  $('#live-duration').textContent = liveText;
+  renderLiveDuration();
   renderRequest(state);
   controls();
   $('#content').scrollTop = $('#content').scrollHeight;
-  // Re-tick every second while a run is live, so the duration divider can appear once a second has passed.
+  // Re-tick every second while a run is live, so the duration divider can appear once a second has
+  // passed. Only that one line is redrawn: a full render would collapse an open activity list and
+  // throw away the scroll position under the user every second.
   clearInterval(durationTimer);
-  if (running) durationTimer = setInterval(() => render(currentState), 1000);
+  if (running) durationTimer = setInterval(renderLiveDuration, 1000);
 }
 async function load() {
   const response = await request({ type: 'getState' });
