@@ -11,11 +11,11 @@ numbers in brackets are adam's item numbers from the 2026-09-19 list, so a line 
 every one of these is visible in adam's 2026-09-19 screenshots.
 
 - [ ] [17] compare/summarize answers come out as one giant run-on sentence. `planner.ts:34` asks for "one sentence"; allow a few short newline-separated lines (one per item) for compare/summarize, keep one sentence for plain confirmations. the panel already renders pre-wrap.
-- [ ] [18] a multi-line message turns the compose box into a pill blob. `.compose-box` is `border-radius:999px` in `extension/style.css`; make it `22px` and delete the `:has(.selected-tabs)` 20px override.
+- [ ] [18] a multi-line message turns the compose box into a pill blob. keep the pill on one line and step to a large finite radius once the box grows, switched with `:has()` on the textarea being multi-line. the existing `:has(.selected-tabs)` override is the right technique on the wrong trigger. chatgpt does exactly this: pill by default, `--radius-3xl` via `:has(footer[data-composer-rows=stacked])`.
 - [ ] the @ and the send button float in the middle of a tall compose box. `.compose-row` is `align-items:center`; pin both to the last line so they sit next to the caret like every other chat app.
 - [ ] when a run ends the "n actions" toggle is half hidden under the status strip. the transcript scrolls to the bottom before the steps block mounts; scroll again after it renders and leave room above the strip.
 - [ ] after "new" the status strip still reads "finished" from the last run. reset the status to ready when a chat is cleared.
-- [ ] [16] settings page never got the redesign. `cadb09e` scoped the plum tokens to `.panel-page`, so `settings.html` still renders the cream `:root` theme in system fonts. move the tokens to `:root`, put Outfit on the headings, retune `.privacy` and `--acc` for the dark background. it should look like the panel, not like a different product.
+- [ ] [16] settings page never got the redesign. `cadb09e` scoped the plum tokens to `.panel-page`, so `settings.html` still renders the cream `:root` theme in system fonts. move the tokens to `:root` and let each surface pick a variant with a data attribute instead of owning the tokens. that is how chatgpt does it: tokens on `:root,:host` in every chunk, surfaces varied by `data-composer-surface-variant`. it should look like the panel, not like a different product.
 
 ## fix: agent
 
@@ -36,6 +36,36 @@ these are the claims nothing on this machine has actually proven.
 - [ ] openai, gemini and custom-server planner paths have only ever run against mocked fetch. run each once with a real key and fix what breaks.
 - [ ] [9] the google sign-in popup ends browser control with a chrome detach reason nobody has read. capture the real reason and fix the wording in `detachMessage` if it reads badly.
 - [ ] [7] no run has ever exercised forms, settings pages or error paths. do one deliberate run against each and write down what broke.
+- [ ] find out whether a long wait lets chrome suspend the service worker mid-run. `background.js` persists run state and recovers with "the browser restarted, so the task stopped", which is the right floor, but a run that dies at step 20 and asks the user to start over is still a bad outcome. chatgpt keeps `alarms` for exactly this. measure it before building anything.
+
+---
+
+## take from the chatgpt extension
+
+adam handed over the unpacked ChatGPT/Codex extension (build 1.26.901.11451) on 2026-09-19. every line below names the evidence in that build. these are new scope, not bugs.
+
+### the whole in-page feedback layer is missing
+
+checkto ships no content scripts at all. every permission it has is `debugger` and `tabs`, so all feedback lives in the side panel. when the agent works in a tab the user is not looking at, the page itself says nothing.
+
+- [ ] draw an agent cursor on the controlled page. a content script animates a pointer to the element and reports arrival before the click lands, so the user sees what is about to be clicked. chatgpt: `content-scripts/codex.js`, `images/cursor-chat.png`, messages `AGENT_CURSOR_STATE` out and `AGENT_CURSOR_ARRIVED` back carrying `sessionId`, `turnId`, `moveSequence`.
+- [ ] badge the favicon of every tab the run touches, with three states: active (working here), deliverable (finished, something for you), handoff (your turn, it is waiting on you). chatgpt: `TAB_FAVICON_BADGE`. this is the cheapest answer to both "which tabs does it control" [15] and "it never tells me it finished" [12], and it works while the panel is closed.
+- [ ] ping a content script before reinjecting it, rather than assuming the last injection survived. chatgpt: `CONTENT_PING` answered with `{ok: true}`.
+
+### tab ownership
+
+- [ ] give each controlled tab a lease bound to a session and a turn, and route debugger events and cursor state through it. chatgpt tracks tab creation, replacement, movement and grouping so its model of the browser stays correct when the user drags a tab out or chrome swaps it. checkto tracks one tab id and nothing else. this has to land before tab groups [15] mean anything.
+
+### ways in
+
+- [ ] add a keyboard shortcut that opens the panel. chatgpt registers `open-codex-side-panel` and binds `Ctrl+Shift+Period` (`Cmd+Shift+Period` on mac). checkto's only entry point is the toolbar icon.
+- [ ] add a right-click entry that sends the selection or link to checkto. chatgpt registers one context menu, "Ask ChatGPT", across page, frame, selection, link, editable, image, video and audio.
+
+### deliberately not copying
+
+- their manifest takes `<all_urls>` plus history, bookmarks, topSites, downloads, sessions, webNavigation and nativeMessaging. checkto's narrow host permissions and `optional_host_permissions` are better and stay as they are. their own bundled notes argue for cutting back to `sidePanel`, `storage` and `activeTab`. the single permission worth adding is `tabGroups`.
+- they strip other extensions' `chrome-extension://` iframes out of pages they control (`content-scripts/foreign-frame-monitor.js`). real problem, wrong size for us. parked with a reason, not forgotten.
+- checkto already debounces its tab picker on tab events and already honours `prefers-reduced-motion` for both animations. checked, nothing to do.
 
 ---
 
