@@ -149,6 +149,14 @@ function elementKey(e?: { role: string; name: string }): string | undefined {
 // An unclear, off-topic, or hedging reply ("maybe", "what does that do?") is not approval either.
 const AFFIRM = /^\s*[""']?(yes\b|yeah\b|yep\b|yup\b|sure\b|ok(ay)?\b|go ahead\b|go for it\b|do it\b|confirm(ed)?\b|approved?\b|proceed\b)/i;
 
+function normalizeAction(action: string | undefined): string {
+  return (action ?? "")
+    .replace(/["“”'‘’]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
   for (const m of goal.matchAll(/["“”']([^"“”']{1,120})["“”']/g)) out.push(m[1].trim());
@@ -162,7 +170,11 @@ function unsupportedClaims(answer: string, corpus: string): string[] {
   const lower = corpus.toLowerCase();
   const claims = new Set<string>();
   for (const q of quotedStrings(answer)) claims.add(q);
-  for (const m of answer.matchAll(/#\d+|\b\d{2,}(?:\/\d+)?\b/g)) claims.add(m[0]);
+  // A bare 2-3 digit number (a count the run computed itself, e.g. "closed 12 tabs") is too easy to
+  // trip on even when it's correct: the digits rarely appear verbatim anywhere in the corpus. Only
+  // treat bare numbers as claims worth checking when they're a ratio (more likely a copied stat, like
+  // "4/5 tests passing") or long enough to plausibly be a specific identifier (a PR/issue/file number).
+  for (const m of answer.matchAll(/#\d+|\b\d{2,}\/\d+\b|\b\d{4,}\b/g)) claims.add(m[0]);
   return [...claims].filter((c) => c.trim().length > 1 && !lower.includes(c.toLowerCase()));
 }
 
@@ -375,7 +387,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // the run; the user's reply, carried back in `resume`, is what lets it through.
         if (p.risk === "high") {
           // The answer covers the action it was asked about, never a different one the planner proposes next.
-          if (!riskApproved || p.next !== approvedAction)
+          // Compared after normalizing quotes/whitespace/case, since the planner regenerates this text on
+          // resume and can rephrase trivially (different quote marks, extra space) without meaning a
+          // different action; the comparison still fails closed (re-pauses) on anything substantively different.
+          if (!riskApproved || normalizeAction(p.next) !== normalizeAction(approvedAction))
             return pause(`i am about to ${p.next}${p.why ? `, because ${p.why}` : ""}. this is hard to undo. should i go ahead?`, p.next);
           riskApproved = false; // one answer covers one action
         }

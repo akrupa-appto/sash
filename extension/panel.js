@@ -130,7 +130,7 @@ function render(state) {
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);
   controls();
-  scrollToEnd();
+  if (pinnedToBottom) scrollToEnd();
 }
 // A single scrollTop = scrollHeight read right after replaceChildren() is not actually stale —
 // browsers force layout on that read — but content can still grow *after* this point (the
