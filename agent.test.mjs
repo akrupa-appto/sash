@@ -182,6 +182,21 @@ test('the planner sees every step of a long run, older ones shortened', async ()
   } finally { clickDestination = 'file-preview'; }
 });
 
+test('a final answer naming a fact the run never observed is not passed through as done', async () => {
+  plans = [{ status: 'done', answer: 'Merged pull request #4821 and closed "Fix login redirect".' }];
+  const result = await run(true);
+  assert.notEqual(result.status, 'done');
+  assert.equal(result.answer, undefined);
+  assert.match(result.message, /#4821/);
+});
+
+test('a final answer whose claims match the run history is passed through as done', async () => {
+  plans = [{ status: 'done', answer: 'Opened "README.md" as requested.' }];
+  const result = await run(true);
+  assert.equal(result.status, 'done');
+  assert.equal(result.answer, 'Opened "README.md" as requested.');
+});
+
 test('history records what appeared on the page after an action, not only that it changed', async () => {
   clickDestination = 'progress';
   const orig = snapFn;
