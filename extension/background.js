@@ -2,6 +2,55 @@ import { runTask } from '../agent.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { readSettings, validateSettings } from './settings.js';
+import { BadgeState } from './types.js';
+
+// --- in-page feedback: favicon badges and the agent cursor -------------------------------------
+// One entry per tab the run has touched. The badge doubles as an unread marker: a finished run's
+// badge stays until the user actually looks at that tab, so it is cleared by activation and window
+// focus, never by a timer. `observed` is "active tab in a focused window" and only gates painting
+// the cursor; the position keeps being tracked for tabs nobody is watching.
+const feedbackByTab = new Map();
+const CLEARED_ON_VIEW = new Set([BadgeState.DELIVERABLE, BadgeState.HANDOFF]);
+const feedback = tabId => feedbackByTab.get(tabId) || { badge: BadgeState.NONE, cursor: undefined, observed: false };
+const contentState = tabId => { const { badge, cursor, observed } = feedback(tabId); return { badge, cursor, observed }; };
+// Never assume a previous injection survived a navigation: ping first. A script that does not
+// answer is gone, and the copy Chrome injects next pulls this same state for itself.
+async function pushFeedback(tabId) {
+  const pong = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_PING' }).catch(() => undefined);
+  if (!pong?.ok) return false;
+  await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_STATE', state: contentState(tabId) }).catch(() => {});
+  return true;
+}
+async function setFeedback(tabId, patch) {
+  if (!Number.isInteger(tabId)) return undefined;
+  const next = { ...feedback(tabId), ...patch };
+  feedbackByTab.set(tabId, next);
+  await pushFeedback(tabId);
+  return next;
+}
+/** The user looking at a tab is what marks its result read. */
+async function viewed(tabId) {
+  const held = feedbackByTab.get(tabId);
+  if (!held) return;
+  await setFeedback(tabId, { observed: true, badge: CLEARED_ON_VIEW.has(held.badge) ? BadgeState.NONE : held.badge });
+}
+async function unobserveOthers(exceptTabId) {
+  for (const [id, held] of feedbackByTab) if (id !== exceptTabId && held.observed) await setFeedback(id, { observed: false });
+}
+chrome.tabs.onActivated.addListener(({ tabId }) => { void unobserveOthers(tabId).then(() => viewed(tabId)); });
+chrome.windows.onFocusChanged.addListener(windowId => {
+  void (async () => {
+    // -1 is chrome.windows.WINDOW_ID_NONE: every window lost focus, so nothing is being looked at.
+    if (windowId === -1) return unobserveOthers(undefined);
+    const [tab] = await chrome.tabs.query({ active: true, windowId });
+    if (!tab) return;
+    await unobserveOthers(tab.id);
+    await viewed(tab.id);
+  })();
+});
+// A finished navigation means a fresh content script with no badge on it.
+chrome.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'complete' && feedbackByTab.has(tabId)) void pushFeedback(tabId); });
+chrome.tabs.onRemoved.addListener(tabId => { feedbackByTab.delete(tabId); });
 
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready' };
@@ -65,6 +114,7 @@ async function execute(run, message) {
       if (Number.isInteger(tab.windowId)) await chrome.windows.update(tab.windowId, { focused: true });
     }
     state.tabId = id; state.tabTitle = tab.title || tab.url;
+    void setFeedback(id, { badge: BadgeState.WORKING });
     await persist();
     return page;
   };
@@ -78,6 +128,7 @@ async function execute(run, message) {
     const work = page.attach().then(() => {
       controller.signal.throwIfAborted();
       state.tabId = tab.id; state.tabTitle = tab.title || tab.url;
+      void setFeedback(tab.id, { badge: BadgeState.WORKING });
       return persist();
     }).catch(err => {
       if (!controller.signal.aborted) { run.popupError = err; controller.abort(); }
@@ -145,6 +196,10 @@ async function execute(run, message) {
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
+    // The run is over: every tab it touched says what it is now. A green dot holds a result, a
+    // yellow one is waiting on the user, and anything else gets its own favicon back.
+    const finalBadge = outcome?.status === 'done' ? BadgeState.DELIVERABLE : outcome?.status === 'blocked' ? BadgeState.HANDOFF : BadgeState.NONE;
+    for (const tabId of new Set(pages.map(p => p.tabId))) await setFeedback(tabId, { badge: finalBadge, cursor: undefined });
     // Keep the run's actions with the reply they produced so earlier runs still show their steps.
     state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
     state.messages = state.messages.slice(-20);
@@ -163,6 +218,9 @@ async function handle(message) {
     return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning };
   }
   if (message.type === 'stop') { await stop(); return { ok: true }; }
+  if (message.type === 'getBadge') return { badge: feedback(message.tabId).badge };
+  if (message.type === 'setBadge') { await setFeedback(message.tabId, { badge: message.badge }); return { ok: true }; }
+  if (message.type === 'setCursor') { await setFeedback(message.tabId, { cursor: message.cursor }); return { ok: true }; }
   if (message.type === 'clear') {
     if (active) throw new Error('stop the current task before starting a new chat');
     state = { running: false, messages: [], steps: [], status: 'ready' };
@@ -186,6 +244,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || message?.type === 'state') return;
   handle(message).then(reply, err => reply({ error: safeError(err) }));
   return true;
+});
+// Content scripts get their own listener: the one above only trusts extension pages, and a content
+// script's sender is a web page. It answers exactly one question — what should this tab be showing —
+// which is how a freshly injected or bfcache-restored script gets its state without being pushed to.
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (sender.id !== chrome.runtime.id || !sender.tab || message?.type !== 'CONTENT_STATE_REQUEST') return false;
+  reply({ state: contentState(sender.tab.id) });
+  return false;
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.runtime.onInstalled.addListener(({ reason }) => { if (reason === 'install') chrome.runtime.openOptionsPage(); });
