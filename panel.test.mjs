@@ -32,21 +32,17 @@ const finished = {
   messages: [{ role: 'user', text: 'upload the file' }, { role: 'agent', text: 'uploaded it; the file URL opens.', steps }],
 };
 
-async function panel(state, { onMessage } = {}) {
+async function panel(state) {
   const page = await browser.newPage();
-  await page.exposeFunction('__onMessage', onMessage ? message => onMessage(message) : () => undefined);
   await page.addInitScript(() => {
     const ev = () => ({ addListener() {}, removeListener() {} });
     window.chrome = {
       runtime: {
-        sendMessage: async message => {
-          await window.__onMessage?.({ type: message.type });
-          return message.type === 'getState'
-            ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: true, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0 }
-            : message.type === 'clear'
-              ? { ok: true, state: { running: false, messages: [], steps: [], status: 'ready' }, seq: 999 }
-              : { ok: true };
-        },
+        sendMessage: async message => (message.type === 'getState'
+          ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: true, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0 }
+          : message.type === 'clear'
+            ? { ok: true, state: { running: false, messages: [], steps: [], status: 'ready' }, seq: 999 }
+            : { ok: true }),
         onMessage: { addListener: f => { window.onState = f; } }, openOptionsPage() {},
       },
       tabs: { query: async () => [{ id: 1, url: 'https://example.test/', title: 'Example', active: true, windowId: 1, index: 0 }], onCreated: ev(), onRemoved: ev(), onUpdated: ev(), onActivated: ev() },
@@ -120,18 +116,14 @@ test('the transcript keeps riding the real bottom when content settles late, ins
 });
 
 test('clicking new-chat resets the status strip to ready, even if a stale broadcast from the finished run arrives after', { skip }, async () => {
-  const page = await panel(finished, {
-    // Simulate the race: a stray broadcast from the previous ('finished') run, tagged with an
-    // older seq than the clear response, arrives right after the clear request resolves.
-    onMessage: async message => {
-      if (message.type !== 'clear') return;
-      await page.evaluate(s => window.onState({ type: 'state', state: s, seq: 1 }), finished);
-    },
-  });
+  const page = await panel(finished);
   assert.equal(await page.locator('#status-text').innerText(), 'finished');
   await page.click('#new-chat');
+  // The clear response carries the cleared state, so the strip resets without waiting on a broadcast.
   await page.waitForFunction(() => document.querySelector('#status-text').textContent === 'ready when you are');
-  // Give the stray broadcast a chance to land and confirm it did not flash the status back.
+  // Now the race: a stray broadcast from the previous ('finished') run, tagged with an older seq
+  // than the clear response, lands after the reset and must not flash the old status back.
+  await page.evaluate(s => window.onState({ type: 'state', state: s, seq: 1 }), finished);
   await page.waitForTimeout(50);
   assert.equal(await page.locator('#status-text').innerText(), 'ready when you are');
   await page.close();

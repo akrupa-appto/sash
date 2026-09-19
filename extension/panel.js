@@ -159,8 +159,13 @@ async function load() {
   $('#model-link').textContent = response.model ? `${response.model.replace(/^(openai|gemini|custom):/, '')} · ${response.reasoning || 'auto'}` : '';
   $('#model-link').hidden = response.mode !== 'careful' || !response.model;
   configured = response.configured; $('#setup').hidden = configured;
-  if (response.seq !== undefined) lastSeq = response.seq;
-  render(response.state); await refreshTabs();
+  // getState can be in flight while a newer broadcast lands, so its snapshot gets the same
+  // staleness check as a broadcast: never render (or rewind lastSeq to) an older state.
+  if (response.seq === undefined || response.seq >= lastSeq) {
+    if (response.seq !== undefined) lastSeq = response.seq;
+    render(response.state);
+  }
+  await refreshTabs();
 }
 chrome.runtime.onMessage.addListener(message => {
   if (message.type !== 'state') return;
