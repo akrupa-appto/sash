@@ -47,7 +47,14 @@ jobs:
       - run: npm ci
       - run: npm test
       - id: bump
-        run: echo "version=$(node scripts/bump-extension.mjs ${{ inputs.part || 'patch' }})" >> "$GITHUB_OUTPUT"
+        # Keep bumping until the tag is free, so a retried or raced run never collides with an existing tag.
+        run: |
+          git fetch --tags --force
+          version=$(node scripts/bump-extension.mjs ${{ inputs.part || 'patch' }})
+          while git rev-parse -q --verify "refs/tags/extension-v$version" >/dev/null; do
+            version=$(node scripts/bump-extension.mjs patch)
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - run: npm run package:extension
       - name: commit and tag
         run: |
@@ -55,8 +62,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add extension/manifest.json
           git commit -m "chore: extension v${{ steps.bump.outputs.version }}"
-          git tag "extension-v${{ steps.bump.outputs.version }}"
-          git push origin HEAD:main "extension-v${{ steps.bump.outputs.version }}"
+          git tag -a "extension-v${{ steps.bump.outputs.version }}" -m "checkto extension v${{ steps.bump.outputs.version }}"
+          # atomic: main and the tag land together, or neither does
+          git push --atomic origin HEAD:main "refs/tags/extension-v${{ steps.bump.outputs.version }}"
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}
