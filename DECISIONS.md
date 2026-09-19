@@ -37,3 +37,9 @@
 - Regression tests reproduced click timeout and interrupted snapshot failures before changes. Clicks now retain Playwright's navigation waiting with a 30-second budget; only interrupted snapshot reads are retried, never side effects. The repaired fast audit passed all 12 invoices including the failed-save retry.
 - Default budget is 60; explicit smaller limits and repeated-state loop detection remain. Remove the unused completion question and duplicated goal, use native fill without extra scroll/click/inspect, and compact planner JSON. Preserve both modes and all explicit model/reasoning choices. Final assisted comparisons use DeepSeek auto; prior baseline used high, so report that distinction.
 - Staging benchmark workflows are available and direct create/recovery tests passed. Two browser-agent chats lacked browser tools despite configured Browser access. The adjacent appto-ai checkout contains extensive unrelated staged edits; inspect only, do not alter it as part of Checkto changes.
+
+## Playground and recordings (2026-09-19)
+- Branch adam/playground-recordings from origin/main. Live checkout is older; work runs separately on port8795 until explicitly deployed.
+- Add self-contained playground scenarios and copy/use prompts, with local browser state and explicit pass checks.
+- Anchor recording must be enabled on creation; resume on a disabled session falsely returns200. Pause immediately after creation, use native pause/resume. One video per chat; Anchor finalizes after browser closure.
+- Persist only recording metadata in gitignored data/. Gallery scoped to random chat IDs remembered by this browser, not all account recordings.

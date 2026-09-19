@@ -3,11 +3,17 @@ import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 
+const recordings = new Map(); let recordingFailure = false; const recordingCalls = [];
+mock.module('./recordings.ts', { namedExports: {
+  readRecording: id => recordings.get(id) && {...recordings.get(id)},
+  saveRecording: record => recordings.set(record.id, {...record}),
+  anchorRecording: async (id, action) => { recordingCalls.push(action); if(recordingFailure) throw new Error('provider unavailable'); return action ? [] : [{file_link:'https://video.example.test/video.mp4', duration:'5'}]; },
+} });
 let closed = 0, lastInput, taskAborted = false;
 mock.module('./browser.ts', { namedExports: { launch: async () => ({
-  browser: { isConnected: () => true },
+  browser: { isConnected: () => true }, context: {route: async () => {}},
   page: { url: () => 'about:blank', title: async () => '' },
-  liveViewUrl: 'https://live.example.test/session', close: async () => { closed++; },
+  anchorId: 'anchor-private-id', liveViewUrl: 'https://live.example.test/session', close: async () => { closed++; },
 }) } });
 mock.module('./jev.ts', { namedExports: { jevVia: () => 'fixture' } });
 mock.module('./planner.ts', { namedExports: { plannerModel: () => 'default/model' } });
@@ -64,4 +70,24 @@ test('closing the task response aborts work and releases the busy state', async 
   assert.equal(session.busy,false);
   await (await post(`/api/session/${id}/close`)).text();
   assert.equal(closed,2);
+});
+
+ test('recording controls preserve state on provider failure and gallery never exposes Anchor IDs', async () => {
+  const {id}=await (await post('/api/session')).json();
+  let r=await post(`/api/session/${id}/recording-start`);
+  assert.equal(r.status,200); assert.equal((await r.json()).state,'recording');
+  await (await post(`/api/session/${id}/recording-start`)).json();
+  assert.deepEqual(recordingCalls,['resume']);
+  recordingFailure=true;
+  r=await post(`/api/session/${id}/recording-stop`); assert.equal(r.status,502); await r.json();
+  assert.equal(recordings.get(id).state,'recording');
+  recordingFailure=false;
+  await (await post(`/api/session/${id}/recording-stop`)).json();
+  let gallery=await (await fetch(base+'/api/recordings/'+id)).json();
+  assert.equal(gallery.state,'paused'); assert.equal(gallery.anchorId,undefined); assert.deepEqual(gallery.videos,[]);
+  await (await post(`/api/session/${id}/close`)).json();
+  gallery=await (await fetch(base+'/api/recordings/'+id)).json();
+  assert.equal(gallery.state,'ended'); assert.equal(gallery.videos[0].url,'https://video.example.test/video.mp4');
+  assert.equal((await post(`/api/session/${id}/recording-start`)).status,404);
+  assert.equal((await fetch(base+'/api/recordings/0000000000000000')).status,404);
 });

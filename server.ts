@@ -1,3 +1,5 @@
+import { readRecording, saveRecording, anchorRecording } from "./recordings.ts";
+import os from "node:os";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,13 +17,15 @@ const indexHtml = () => fs.readFileSync(path.join(root, "public", "index.html"))
 
 // One chat = one session = one browser. Tasks run one at a time on the same page, so
 // "go to wikipedia" followed by "search for X" works as a conversation.
-type Session = { id: string; browser: Awaited<ReturnType<typeof launch>>; busy: boolean; lastUsed: number; tasks: string[] };
+type Session = { id: string; browser: Awaited<ReturnType<typeof launch>>; busy: boolean; lastUsed: number; tasks: string[]; recordingBusy?: boolean };
 const sessions = new Map<string, Session>();
 
 async function closeSession(id: string) {
   const s = sessions.get(id);
   if (!s) return;
   sessions.delete(id);
+  const record = readRecording(id);
+  if (record) { record.state = 'ended'; saveRecording(record); }
   await s.browser.close().catch((err) => console.warn((err as Error).message));
 }
 
@@ -53,11 +57,44 @@ const URL_RE = /https?:\/\/[^\s"'<>)]+|\b(?:[a-z0-9-]+\.)+(?:com|org|net|ai|io|d
 
 export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
-  const m = url.pathname.match(/^\/api\/session\/([a-f0-9]+)(?:\/(task|close))?$/);
+  const m = url.pathname.match(/^\/api\/session\/([a-f0-9]+)(?:\/(task|close|recording-start|recording-stop))?$/);
 
   if (req.method === "GET" && url.pathname === "/") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     return res.end(indexHtml());
+  }
+  if (req.method === "GET" && ["/playground", "/gallery"].includes(url.pathname)) {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    return res.end(fs.readFileSync(path.join(root, "public", url.pathname.slice(1) + ".html")));
+  }
+  const recordingMatch = url.pathname.match(/^\/api\/recordings\/([a-f0-9]{16})$/);
+  if (req.method === "GET" && recordingMatch) {
+    try {
+      const record = readRecording(recordingMatch[1]);
+      if (!record) return json(res, 404, { error: "recording not found" });
+      const { anchorId, ...publicRecord } = record;
+      // A server restart closes the old browser. Never leave the gallery saying it is recording.
+      if (!sessions.has(record.id)) publicRecord.state = 'ended';
+      const items = publicRecord.state === 'ended' ? await anchorRecording(anchorId) : [];
+      return json(res, 200, { ...publicRecord, videos: items.map((item: any) => ({ url: item.file_link, duration: item.duration })) });
+    } catch (e) { return json(res, 502, { error: (e as Error).message }); }
+  }
+  if (m && req.method === "POST" && m[2]?.startsWith("recording-")) {
+    const s = sessions.get(m[1]);
+    if (!s) return json(res, 404, { error: "session expired; start a new chat" });
+    if (s.recordingBusy) return json(res, 409, { error: "recording is updating; try again" });
+    s.recordingBusy = true;
+    try {
+      const state = m[2] === 'recording-start' ? 'recording' : 'paused';
+      const record = readRecording(s.id) || { id: s.id, anchorId: s.browser.anchorId, createdAt: new Date().toISOString(), title: 'Browser session', state: 'paused' as const };
+      if (record.state !== state) await anchorRecording(s.browser.anchorId, state === 'recording' ? 'resume' : 'pause');
+      record.state = state;
+      record.title = (await s.browser.page.title().catch(() => '')) || record.title;
+      saveRecording(record);
+      s.lastUsed = Date.now();
+      return json(res, 200, { id: s.id, state });
+    } catch (e) { return json(res, 502, { error: (e as Error).message }); }
+    finally { s.recordingBusy = false; }
   }
   if (req.method === "GET" && url.pathname === "/api/health") {
     return json(res, 200, { ok: true, via: jevVia(), browser: "anchor", sessions: sessions.size, busy: [...sessions.values()].filter((s) => s.busy).length });
@@ -71,7 +108,20 @@ export const server = http.createServer(async (req, res) => {
     }
     const id = crypto.randomBytes(8).toString("hex");
     try {
-      sessions.set(id, { id, browser: await launch(), busy: false, lastUsed: Date.now(), tasks: [] });
+      const browser = await launch();
+      try {
+        // exe.dev alternate ports require the user's login. Fulfil only this app's
+        // self-contained practice page inside Anchor, using Playwright's routing.
+        const origins = new Set([
+          `https://${os.hostname()}.exe.xyz:${PORT}`,
+          `http://127.0.0.1:${PORT}`,
+          `http://localhost:${PORT}`,
+          process.env.PUBLIC_ORIGIN || `https://${os.hostname()}.exe.xyz`,
+        ]);
+        await browser.context.route(u => origins.has(u.origin) && u.pathname === '/playground', route =>
+          route.fulfill({ contentType: 'text/html; charset=utf-8', body: fs.readFileSync(path.join(root, 'public', 'playground.html')) }));
+        sessions.set(id, { id, browser, busy: false, lastUsed: Date.now(), tasks: [] });
+      } catch (e) { await browser.close().catch(() => {}); throw e; }
     } catch (e) {
       return json(res, 500, { error: (e as Error).message });
     }
@@ -81,9 +131,10 @@ export const server = http.createServer(async (req, res) => {
     const s = sessions.get(m[1]);
     if (!s) return json(res, 404, { error: "no such session" });
     const page = s.browser.page;
-    return json(res, 200, { id: s.id, busy: s.busy, url: page.url(), title: await page.title().catch(() => ""), liveViewUrl: s.browser.liveViewUrl });
+    return json(res, 200, { id: s.id, busy: s.busy, url: page.url(), title: await page.title().catch(() => ""), liveViewUrl: s.browser.liveViewUrl, recording: readRecording(s.id)?.state ?? "paused" });
   }
   if (m && req.method === "POST" && m[2] === "close") {
+    if (sessions.get(m[1])?.recordingBusy) return json(res, 409, { error: "recording is updating; try ending the chat again" });
     await closeSession(m[1]);
     return json(res, 200, { ok: true });
   }
