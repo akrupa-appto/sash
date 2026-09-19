@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto · browser tasks</title><link rel="stylesheet" href="style.css"></head>
+<body class="panel-page">
+<header class="panel-header"><span class="brand">checkto</span><span class="spacer"></span><button class="secondary" id="new-chat">new chat</button><button class="secondary settings-link">settings</button></header>
+<div class="target"><label for="tab">work in this tab</label><div class="row"><select id="tab" aria-label="tab to control"></select><button class="secondary" id="refresh-tabs" aria-label="refresh tabs">refresh</button></div></div>
+<main class="content" id="content">
+<div id="setup" class="notice" hidden><p>add your API keys to get started. they stay on this device.</p><button class="settings-link">open settings</button></div>
+<div class="intro" id="intro"><h1>what should your browser do?</h1><p>pick a tab and give it a task. watch each step here while checkto works on the page.</p><div class="examples"><button data-task="summarize the main points on this page">summarize this page</button><button data-task="find the pricing page and compare the plans">find and compare the plans</button><button data-task="find the contact form on this website">find the contact form</button></div></div>
+<div id="messages" aria-live="polite"></div>
+<details class="steps" id="steps-wrap" hidden open><summary id="steps-label">steps</summary><div id="steps"></div></details>
+</main>
+<form class="composer" id="task-form">
+<div class="run-status" id="run-status"><span class="dot"></span><span id="status-text">ready</span><span class="cost" id="cost"></span></div>
+<div class="mode" aria-label="agent mode"><button type="button" data-mode="fast" aria-pressed="false">fast · Jev only</button><button type="button" data-mode="careful" aria-pressed="true">careful · planner + Jev</button></div>
+<label class="muted" for="goal">your task</label><textarea id="goal" placeholder="e.g. search for “quiet keyboard” and open the first result" required maxlength="10000"></textarea>
+<div class="row"><button id="send" type="submit">run on this tab</button><button id="stop" class="danger" type="button" hidden>stop</button></div>
+<div class="status error" id="error" role="alert"></div><p class="footnote">uses your signed-in browser. Chrome shows a control banner while a task runs.</p>
+</form><script type="module" src="panel.js"></script></body></html>

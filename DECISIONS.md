@@ -43,3 +43,10 @@
 - Add self-contained playground scenarios and copy/use prompts, with local browser state and explicit pass checks.
 - Anchor recording must be enabled on creation; resume on a disabled session falsely returns200. Pause immediately after creation, use native pause/resume. One video per chat; Anchor finalizes after browser closure.
 - Persist only recording metadata in gitignored data/. Gallery scoped to random chat IDs remembered by this browser, not all account recordings.
+
+## Local Chrome extension (2026-09-19)
+- User wants Checkto inside their Chrome browser, with API-key setup on a separate page and local-only storage.
+- Stack `adam/chrome-extension` on `adam/fix-session-and-agent-limits` (PR #4) using official `gh stack`; do not merge or deploy without a request.
+- Manifest V3 side panel, native chrome.debugger transport, one selected tab/run at a time. Keys live only in chrome.storage.local with trusted-context access; provider requests go directly from the extension worker.
+- Reuse the existing Jev/planner/agent loop and DOM reader through an extension browser adapter. No Anchor, server, or remote code required by the extension.
+- Done: installable ZIP, settings save/clear/reload, tab click/type/select/navigation, cancellation/detach, repeatable tests, browser QA, reviewed PR.

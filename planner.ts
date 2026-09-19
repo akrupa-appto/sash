@@ -1,3 +1,4 @@
+import { env, debugLog } from "./env.ts";
 // The supervisor: a small chat LLM that watches the run and turns the user's task into one concrete
 // action at a time. Jev then grounds that action to a page element. The supervisor also decides when
 // the task is done or cannot be finished, and writes the one-line reply the user sees.
@@ -63,7 +64,7 @@ function extractJson(s: string): any {
 }
 
 export function plannerModel() {
-  return process.env.PLANNER_MODEL ?? "anthropic/claude-sonnet-5";
+  return env.PLANNER_MODEL ?? "anthropic/claude-sonnet-5";
 }
 
 // Some models (e.g. Sonnet 5) reject assistant prefill; remembered per process after the first 400.
@@ -74,7 +75,7 @@ const mandatoryReasoning = new Set<string>(["z-ai/glm-5.3-flash"]);
 export type ReasoningLevel = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plannerModel(), reasoning: ReasoningLevel = "auto"): Promise<Plan & { ms: number; cost_usd: number }> {
-  const key = process.env.OPENROUTER_API_KEY;
+  const key = env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY needed for the supervisor");
   const user = JSON.stringify(
     {
@@ -86,7 +87,7 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
       page: ctx.page,
     },
   );
-  if (process.env.PLANNER_DEBUG) (await import("node:fs")).appendFileSync(process.env.PLANNER_DEBUG, `\n=== step ${ctx.step}\n${user}\n`);
+  debugLog( `\n=== step ${ctx.step}\n${user}\n`);
   const t0 = performance.now();
   const prefill = model.startsWith("anthropic/") && !noPrefill.has(model);
   const effort = reasoning === "auto" ? (mandatoryReasoning.has(model) ? "low" : "none") : reasoning;
@@ -125,7 +126,7 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   const json = await res.json();
   let content = String(json.choices?.[0]?.message?.content ?? "");
   if (prefill && !content.trimStart().startsWith("{")) content = "{" + content;
-  if (process.env.PLANNER_DEBUG) (await import("node:fs")).appendFileSync(process.env.PLANNER_DEBUG, `--- reply\n${content}\n`);
+  debugLog( `--- reply\n${content}\n`);
   const p = extractJson(content) as Plan;
   if (!["continue", "done", "blocked"].includes(p.status)) p.status = "continue";
   return { ...p, ms, cost_usd: Number(json.usage?.cost ?? 0) };

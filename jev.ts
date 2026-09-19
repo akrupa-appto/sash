@@ -1,3 +1,4 @@
+import { env } from "./env.ts";
 // Thin client for Jev (TypeSafe System One). Works against TypeSafe directly or via OpenRouter.
 
 export type Question =
@@ -23,19 +24,19 @@ export type JevResponse = {
 const PRICE_PER_INPUT_TOKEN = 0.042 / 1_000_000;
 
 function endpoint() {
-  if (process.env.TYPESAFE_API_KEY) {
+  if (env.TYPESAFE_API_KEY) {
     return {
       url: "https://api.typesafe.ai/v1/systemone",
-      key: process.env.TYPESAFE_API_KEY,
-      model: process.env.JEV_MODEL ?? "jev-latest",
+      key: env.TYPESAFE_API_KEY,
+      model: env.JEV_MODEL ?? "jev-latest",
       via: "typesafe",
     };
   }
-  if (process.env.OPENROUTER_API_KEY) {
+  if (env.OPENROUTER_API_KEY) {
     return {
       url: "https://openrouter.ai/api/alpha/decisions",
-      key: process.env.OPENROUTER_API_KEY,
-      model: process.env.JEV_MODEL ?? "typesafe/jev-1.13",
+      key: env.OPENROUTER_API_KEY,
+      model: env.JEV_MODEL ?? "typesafe/jev-1.13",
       via: "openrouter",
     };
   }
@@ -81,9 +82,9 @@ export async function decide(
 
 // Jev cannot write text. When a step needs typed text that isn't in the goal, a small LLM writes it.
 export async function writeText(prompt: string, signal?: AbortSignal): Promise<string> {
-  const key = process.env.OPENROUTER_API_KEY;
+  const key = env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY needed for text generation");
-  const model = process.env.TEXT_MODEL ?? "anthropic/claude-haiku-4.5";
+  const model = env.TEXT_MODEL ?? "anthropic/claude-haiku-4.5";
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     signal,

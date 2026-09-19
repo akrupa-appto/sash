@@ -4,9 +4,14 @@
   "type": "module",
   "scripts": {
     "test": "node --experimental-test-module-mocks --test *.test.mjs tests/*.test.ts",
-    "start": "node --env-file-if-exists=.env server.ts"
+    "start": "node --env-file-if-exists=.env server.ts",
+    "build:extension": "node scripts/build-extension.mjs",
+    "package:extension": "node scripts/package-extension.mjs"
   },
   "dependencies": {
     "playwright": "^1.63.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

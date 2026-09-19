@@ -1,0 +1,10 @@
+import { execFileSync } from 'node:child_process';
+import { copyFile, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+await import('./build-extension.mjs');
+await copyFile(path.join(root, 'extension/README.md'), path.join(root, 'dist/checkto-extension/README.md'));
+await rm(path.join(root, 'dist/checkto-extension.zip'), { force: true });
+execFileSync('zip', ['-qr', 'checkto-extension.zip', 'checkto-extension'], { cwd: path.join(root, 'dist') });
+console.log(path.join(root, 'dist/checkto-extension.zip'));
