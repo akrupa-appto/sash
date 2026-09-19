@@ -8,9 +8,11 @@ let handler: any;
 let activeSignal: AbortSignal | undefined;
 let closedWhileUnaborted = false;
 let delayClose = false;
+let metadataFailure = false;
+let browsersClosed = 0;
 const closing: (() => void)[] = [];
 mock.method(http, 'createServer', (fn: any) => { handler = fn; return { listen() {} } as any; });
-mock.module('../recordings.ts', { namedExports: { readRecording: () => undefined, saveRecording: () => {}, anchorRecording: async () => [] } });
+mock.module('../recordings.ts', { namedExports: { readRecording: () => { if (metadataFailure) throw new Error('invalid recording metadata'); return undefined; }, saveRecording: () => {}, anchorRecording: async () => [] } });
 mock.module('../browser.ts', { namedExports: { launch: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) } });
 mock.module('../jev.ts', { namedExports: { jevVia: () => 'test' } });
 mock.module('../planner.ts', { namedExports: { plannerModel: () => 'test' } });
@@ -22,7 +24,7 @@ mock.module('../agent.ts', { namedExports: { runTask: async (_: any, __: any, em
 process.env.MAX_SESSIONS = '6';
 await import('../server.ts');
 function browser() {
-  return { context: { route: async () => {} }, page: { url: () => 'https://example.org' }, close: async () => { if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; if (delayClose) await new Promise<void>(resolve => closing.push(resolve)); }, browser: { isConnected: () => true } };
+  return { context: { route: async () => {} }, page: { url: () => 'https://example.org' }, close: async () => { browsersClosed++; if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; if (delayClose) await new Promise<void>(resolve => closing.push(resolve)); }, browser: { isConnected: () => true } };
 }
 function request(url: string, body?: any) {
   const req: any = new EventEmitter(); req.method = 'POST'; req.url = url;
@@ -72,4 +74,19 @@ test('concurrent evictions wait for browser shutdown before launching replacemen
   assert.equal(requests.filter(r => r.res.code === 200).length, 6);
   assert.equal(requests.filter(r => r.res.code === 429).length, 4);
   delayClose = false;
+});
+
+
+test('recording metadata failures still close browsers and release capacity', async () => {
+  metadataFailure = true;
+  const before = pending.length;
+  const closed = browsersClosed;
+  const replacement = request('/api/session');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(browsersClosed, closed + 1);
+  assert.equal(pending.length, before + 1);
+  pending.at(-1).resolve(browser());
+  await replacement.done;
+  assert.equal(replacement.res.code, 200);
+  metadataFailure = false;
 });

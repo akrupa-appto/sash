@@ -27,8 +27,13 @@ async function closeSession(id: string) {
   if (!s) return;
   sessions.delete(id);
   s.abort?.abort();
-  const record = readRecording(id);
-  if (record) { record.state = 'ended'; saveRecording(record); }
+  try {
+    const record = readRecording(id);
+    if (record) { record.state = 'ended'; saveRecording(record); }
+  } catch (err) {
+    // Recording metadata must not prevent browser cleanup or strand capacity.
+    console.warn((err as Error).message);
+  }
   await s.browser.close().catch((err) => console.warn((err as Error).message));
   occupiedSlots--;
 }
