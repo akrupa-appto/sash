@@ -1,5 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { plan } from './planner.ts';
 
 const ctx = {
@@ -101,6 +102,31 @@ test('prefill retry preserves an explicitly selected custom model', async () => 
     else process.env.OPENROUTER_API_KEY = oldKey;
   }
 });
+test('system prompt allows a multi-line answer for compare/summarize tasks', () => {
+  const source = readFileSync(new URL('./planner.ts', import.meta.url), 'utf8');
+  assert.match(source, /one short line per item, newline-separated/);
+  assert.match(source, /one sentence for a plain confirmation/);
+});
+
+test('planner accepts a multi-line answer from a comparison-shaped reply', async () => {
+  const oldKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  const multiLine = 'Tab 1: price $10\nTab 2: price $12\nTab 3: price $9';
+  const fetchMock = mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify({ status: 'done', answer: multiLine }) } }],
+    usage: { cost: 0 },
+  })));
+  try {
+    const result = await plan(ctx, undefined, 'provider/compare-model');
+    assert.equal(result.answer, multiLine);
+    assert.equal(result.answer.split('\n').length, 3);
+  } finally {
+    fetchMock.mock.restore();
+    if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = oldKey;
+  }
+});
+
  test('explicit off is not silently changed on a mandatory reasoning error', async () => {
   const oldKey = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = 'test-key';
