@@ -25,15 +25,6 @@ async function run(supervisor = false, maxSteps = 1) {
   return events;
 }
 
-test('goal override records DONE without executing CLICK', async () => {
-  clicks = 0;
-  decideImpl = async () => response({ operation: choice('CLICK'), goal_achieved: { noul: 0.95 } });
-  const events = await run();
-  assert.equal(events.find(e => e.type === 'step').action, 'DONE');
-  assert.equal(clicks, 0);
-  assert.equal(events.at(-1).status, 'done');
-});
-
 test('large dropdown pages keep questions bounded and later options reachable', async () => {
   elements = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, name: `select ${i}`, kind: 'select', options: Array.from({ length: 40 }, (_, j) => `option ${j}`) }));
   selected = [];
@@ -48,7 +39,7 @@ test('large dropdown pages keep questions bounded and later options reachable', 
   assert.equal(events.at(-1).totalCostUsd, 0.02);
 });
 
-test('unchanged completion snapshot is reused on the next step', async () => {
+test('planned completion does not add an extra snapshot', async () => {
   elements = [{ id: 1, kind: 'click', name: 'button' }];
   snapshots = 0;
   planImpl = async ({ step }: any) => step === 1

@@ -10,6 +10,7 @@ let closedWhileUnaborted = false;
 let delayClose = false;
 const closing: (() => void)[] = [];
 mock.method(http, 'createServer', (fn: any) => { handler = fn; return { listen() {} } as any; });
+mock.module('../recordings.ts', { namedExports: { readRecording: () => undefined, saveRecording: () => {}, anchorRecording: async () => [] } });
 mock.module('../browser.ts', { namedExports: { launch: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) } });
 mock.module('../jev.ts', { namedExports: { jevVia: () => 'test' } });
 mock.module('../planner.ts', { namedExports: { plannerModel: () => 'test' } });
@@ -21,7 +22,7 @@ mock.module('../agent.ts', { namedExports: { runTask: async (_: any, __: any, em
 process.env.MAX_SESSIONS = '6';
 await import('../server.ts');
 function browser() {
-  return { page: { url: () => 'https://example.org' }, browser: { close: async () => { if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; if (delayClose) await new Promise<void>(resolve => closing.push(resolve)); }, isConnected: () => true } };
+  return { context: { route: async () => {} }, page: { url: () => 'https://example.org' }, close: async () => { if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; if (delayClose) await new Promise<void>(resolve => closing.push(resolve)); }, browser: { isConnected: () => true } };
 }
 function request(url: string, body?: any) {
   const req: any = new EventEmitter(); req.method = 'POST'; req.url = url;
