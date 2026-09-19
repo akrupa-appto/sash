@@ -159,3 +159,32 @@ test('the live action list only shows while the run is in flight', { skip }, asy
   assert.equal(await page.locator('.message.agent').count(), 0);
   await page.close();
 });
+
+const readyState = { running: false, status: 'ready', messages: [], steps: [] };
+
+test('the compose box is a full pill for a single-line message and steps down once the textarea wraps to multiple lines', { skip }, async () => {
+  const page = await panel(readyState);
+  const box = page.locator('.compose-box');
+  const goal = page.locator('#goal');
+  const radius = async () => box.evaluate(el => getComputedStyle(el).borderRadius);
+  assert.equal(await radius(), '999px');
+  await goal.fill('one\ntwo\nthree');
+  assert.equal(await radius(), '20px');
+  await goal.fill('back to one line');
+  assert.equal(await radius(), '999px');
+  await page.close();
+});
+
+test('the @ and send buttons sit at the bottom of a tall compose box, next to the caret, not centered', { skip }, async () => {
+  const page = await panel(readyState);
+  const goal = page.locator('#goal');
+  await goal.fill(Array.from({ length: 6 }, (_, i) => `line ${i}`).join('\n'));
+  const [goalBox, mentionBox, sendBox] = await Promise.all([
+    goal.boundingBox(), page.locator('#mention-tabs').boundingBox(), page.locator('#send').boundingBox(),
+  ]);
+  assert.ok(goalBox.height > 60, 'the textarea should have grown across several lines');
+  for (const button of [mentionBox, sendBox]) {
+    assert.ok(Math.abs((button.y + button.height) - (goalBox.y + goalBox.height)) <= 4, 'button bottom should align with the textarea bottom, not float in the middle');
+  }
+  await page.close();
+});

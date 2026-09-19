@@ -52,7 +52,9 @@ export const collectSnapshot = (maxEls) => {
     if (!name && tag === 'a') name = el.getAttribute('href') || '';
     name = clean(name);
     let value;
-    if (kind === 'type') value = clean(el.value !== undefined ? el.value : el.innerText);
+    // never read secret field contents: the snapshot is sent to a third-party model
+    const secret = role === 'password' || (tag === 'input' && type === 'password');
+    if (kind === 'type' && !secret) value = clean(el.value !== undefined ? el.value : el.innerText);
     if (kind === 'select') value = clean(el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : '');
     if (role === 'checkbox' || role === 'radio' || role === 'switch') value = (el.checked || el.getAttribute('aria-checked') === 'true') ? 'checked' : 'unchecked';
     const inViewport = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;

@@ -180,8 +180,13 @@ let refreshTimer;
 const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => void refreshTabs().catch(showError), 150); };
 chrome.tabs.onCreated.addListener(scheduleRefresh); chrome.tabs.onRemoved.addListener(scheduleRefresh); chrome.tabs.onUpdated.addListener(scheduleRefresh); chrome.tabs.onActivated.addListener(scheduleRefresh);
 function showError(err) { $('#error').textContent = err.message || String(err); }
+const singleLineHeight = $('#goal').scrollHeight; // measured while the textarea starts out empty, i.e. one line
+function updateMultiline() {
+  const goal = $('#goal');
+  goal.toggleAttribute('data-multiline', goal.scrollHeight > singleLineHeight + 1);
+}
 document.querySelectorAll('.settings-link').forEach(b => b.addEventListener('click', () => chrome.runtime.openOptionsPage()));
-document.querySelectorAll('[data-task]').forEach(b => b.addEventListener('click', event => { event.stopPropagation(); $('#goal').value = b.dataset.task; $('#goal').focus(); controls(); if (b.dataset.task.includes('tabs')) $('#mention-tabs').click(); }));
+document.querySelectorAll('[data-task]').forEach(b => b.addEventListener('click', event => { event.stopPropagation(); $('#goal').value = b.dataset.task; $('#goal').focus(); updateMultiline(); controls(); if (b.dataset.task.includes('tabs')) $('#mention-tabs').click(); }));
 $('#mention-tabs').addEventListener('click', () => {
   const input = $('#goal'); input.focus();
   const prefix = input.selectionStart && !/\s$/.test(input.value.slice(0, input.selectionStart)) ? ' @' : '@';
@@ -213,11 +218,11 @@ $('#task-form').addEventListener('submit', async event => {
     const target = selected[0] || (isWebsite(active || {}) ? active : tabs.find(isWebsite));
     if (!target) throw new Error('open a website tab first');
     await request({ type: 'run', tabId: target.id, tabIds: selected.map(t => t.id), goal, mode: $('#mode').value });
-    $('#goal').value = ''; closePicker();
+    $('#goal').value = ''; updateMultiline(); closePicker();
   } catch (err) { showError(err); }
   finally { submitting = false; controls(); }
 });
-$('#goal').addEventListener('input', () => { updateMention(); controls(); });
+$('#goal').addEventListener('input', () => { updateMention(); updateMultiline(); controls(); });
 $('#goal').addEventListener('click', updateMention);
 $('#goal').addEventListener('keydown', event => {
   if (mention) {
