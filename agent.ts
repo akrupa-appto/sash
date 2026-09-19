@@ -67,6 +67,12 @@ const OPS: Record<string, string> = {
   CANNOT: "The instruction in `goal` cannot be carried out on this page: no listed element matches it, or it asks to scroll further than the page goes",
 };
 
+// A repeated (page state, action) pair is reported to the models at REPEAT_WARN_AT and ends the run at REPEAT_STOP_AT.
+const REPEAT_WARN_AT = 2;
+const REPEAT_STOP_AT = 4;
+// After this many waits in a row the next step must inspect the page instead of waiting again.
+const WAIT_CAP = 3;
+
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
   for (const m of goal.matchAll(/["“”']([^"“”']{1,120})["“”']/g)) out.push(m[1].trim());
@@ -82,6 +88,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   let totalCost = 0;
   let step = 0;
   const actionCounts = new Map<string, number>();
+  let consecutiveWaits = 0;
   let lastFingerprint = "";
   let lastUrl = "";
   const seenPages = new Set(page.context().pages());
@@ -142,6 +149,17 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               : `${Math.round((snap.scroll.y / snap.scroll.max) * 100)}% down the page, more below`;
       const elementLines = snap.elements.map((e) => b.describe(e) + (e.inViewport ? "" : e.pos === "above" ? " (above the viewport, scroll up)" : " (below the viewport, scroll down)"));
 
+      // Warn both models before giving up: an action already repeated from this exact page state is
+      // forbidden, and after several waits in a row the next step must inspect the page instead.
+      const repeated = [...actionCounts.entries()]
+        .filter(([sig, n]) => n >= REPEAT_WARN_AT && sig.startsWith(`${snap.fingerprint}|`))
+        .map(([sig, n]) => `${sig.slice(snap.fingerprint.length + 1)} (done ${n} times from this exact page state without finishing the task; do not do it again, choose a different action or report what is missing)`);
+      const waitCapped = consecutiveWaits >= WAIT_CAP;
+      const warnings = [
+        ...repeated,
+        ...(waitCapped ? [`you have waited ${consecutiveWaits} times in a row. do not wait again now: read the page for the result of the pending operation and act on it (open the result, check the status, or continue the task). only wait again after a non-wait step.`] : []),
+      ];
+
       // ---- 1. supervisor thinks: one concrete action, or done/blocked
       let stepGoal = input.goal;
       let planText: string | undefined;
@@ -154,13 +172,14 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           {
             task: input.goal,
             earlierTasks: (input.previousTasks ?? []).slice(-6),
-            history: history.slice(-12),
+            history: history.slice(-20),
             lastResult: history.length ? history[history.length - 1].split(" → ").slice(1).join(" → ") || undefined : undefined,
             page: { url: snap.url, title: snap.title, scroll: scrollPos, text: snap.text, elements: elementLines },
             step,
             maxSteps,
             tabs,
             currentTabId,
+            warnings: warnings.length ? warnings : undefined,
           },
           signal,
           input.model,
@@ -199,6 +218,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         if (k === "GO_BACK" && step === 1) continue;
         if (k === "SCROLL_DOWN" && snap.scroll.y >= snap.scroll.max - 4) continue; // already at the bottom
         if (k === "SCROLL_UP" && snap.scroll.y <= 4) continue;
+        if (k === "WAIT" && waitCapped) continue; // check the page instead of waiting a fourth time
         if (useSupervisor && (k === "DONE" || k === "BLOCKED")) continue; // the supervisor owns termination
         if (!useSupervisor && k === "CANNOT") continue;
         opCriteria[k] = v;
@@ -254,6 +274,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         page: { url: snap.url, title: snap.title, scroll_position: scrollPos, text: snap.text },
         elements: elementLines,
         history: history.slice(-10),
+        ...(warnings.length ? { warnings } : {}),
         ...(tabs ? { open_tabs: tabs, current_tab_id: currentTabId } : {}),
       };
 
@@ -357,7 +378,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             await page.goBack({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
             break;
           case "WAIT":
-            await page.waitForTimeout(1500);
+            // Each consecutive wait is longer, so a slow operation gets real time instead of a burst of short polls.
+            await page.waitForTimeout(Math.min(1500 * 2 ** consecutiveWaits, 12000));
             break;
           case "CANNOT":
             note = "jev found no way to do this on the page";
@@ -369,6 +391,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       signal.throwIfAborted();
       await b.settle(page);
       const execMs = performance.now() - t0;
+      consecutiveWaits = chosen === "WAIT" ? consecutiveWaits + 1 : 0;
 
       history.push(`step ${step}: ${planText ? `supervisor said "${planText}"${planCompletes ? " (expected to complete the task)" : ""}; ` : ""}did ${action}${note ? ` (${note})` : ""}`);
       emit({
@@ -394,13 +417,13 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       // Let the next planner pass inspect the destination before reporting completion.
       if (chosen === "BLOCKED") return end("blocked", "i could not find a way to do this on this page");
 
-      // Repeating an action from the same state can also be a navigation cycle.
-      // Stop the loop without claiming the website is unresponsive.
+      // Repeating an action from the same state can also be a navigation cycle. The models were warned
+      // once the repeat started; if they still repeat it, stop and name the action rather than blaming the site.
       const sig = `${snap.fingerprint}|${action}`;
       actionCounts.set(sig, (actionCounts.get(sig) ?? 0) + 1);
-      if ((actionCounts.get(sig) ?? 0) >= 3) return end("blocked", useSupervisor
-        ? "i kept repeating the same action without finishing your task, so i stopped."
-        : "i kept repeating the same action without finishing your task. try careful mode to plan the steps.");
+      if ((actionCounts.get(sig) ?? 0) >= REPEAT_STOP_AT) return end("blocked", useSupervisor
+        ? `i kept repeating "${action}" without finishing your task, even after being told not to, so i stopped.`
+        : `i kept repeating "${action}" without finishing your task. try careful mode to plan the steps.`);
     }
     return end("max_steps", `i stopped after ${maxSteps} steps without finishing. send a more specific task, or say "go on".`);
   } catch (err) {

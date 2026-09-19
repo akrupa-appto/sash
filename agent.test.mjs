@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-let state, decisions, plans, executed, lastQuestions, clickDestination = 'file-preview';
+let state, decisions, plans, executed, lastQuestions, planCalls = [], clickDestination = 'file-preview';
 const snap = () => ({
   url: `https://example.test/${state}`, title: state, text: state,
   fingerprint: state, scroll: { y: 0, max: 0 },
@@ -19,7 +19,7 @@ mock.module('./jev.ts', { namedExports: {
 }});
 mock.module('./planner.ts', { namedExports: {
   plannerModel: () => 'fixture',
-  plan: async () => ({ ...plans.shift(), ms: 1, cost_usd: 0 }),
+  plan: async (ctx) => { planCalls.push(ctx); return { ...plans.shift(), ms: 1, cost_usd: 0 }; },
 }});
 const { runTask } = await import('./agent.ts');
 const choice = (operation, achieved = 0) => ({
@@ -27,8 +27,8 @@ const choice = (operation, achieved = 0) => ({
   click_target: { choice: 'el_1' },
 });
 async function run(supervisor, maxSteps = 3) {
-  state = 'repository'; executed = 0;
-  const page = { url: () => snap().url, title: async () => state, context: () => ({ pages: () => [page] }) };
+  state = 'repository'; executed = 0; planCalls = [];
+  const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
   const events = [];
   await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}) }, e => events.push(e), new AbortController().signal);
   return events.at(-1);
@@ -80,10 +80,54 @@ test('fast mode does not replace a requested action with an independent completi
 
 test('a repeated agent action reports a loop rather than blaming the website', async () => {
   clickDestination = 'repository';
-  decisions = [choice('CLICK'), choice('CLICK'), choice('CLICK')];
-  const result = await run(false);
+  decisions = Array.from({ length: 4 }, () => choice('CLICK'));
+  const result = await run(false, 6);
   assert.equal(result.status, 'blocked');
-  assert.match(result.message, /repeating the same action/);
+  assert.match(result.message, /repeating "CLICK/);
   assert.doesNotMatch(result.message, /page stopped responding/);
+  clickDestination = 'file-preview';
+});
+
+test('a repeated action is reported to the planner and jev before the run stops, and the stop names it', async () => {
+  clickDestination = 'repository';
+  plans = Array.from({ length: 4 }, () => ({ status: 'continue', next: 'open README.md' }));
+  decisions = Array.from({ length: 4 }, () => choice('CLICK'));
+  const result = await run(true, 10);
+  assert.equal(planCalls[0].warnings, undefined);
+  assert.equal(planCalls[1].warnings, undefined);
+  assert.match(planCalls[2].warnings[0], /CLICK \[1\] link "README.md" \(done 2 times/);
+  assert.match(planCalls[3].warnings[0], /done 3 times/);
+  assert.equal(executed, 4);
+  assert.equal(result.status, 'blocked');
+  assert.match(result.message, /repeating "CLICK \[1\] link "README.md""/);
+  clickDestination = 'file-preview';
+});
+
+test('an action the models switch away from after the warning does not end the run', async () => {
+  clickDestination = 'repository';
+  plans = [
+    ...Array.from({ length: 2 }, () => ({ status: 'continue', next: 'open README.md' })),
+    { status: 'continue', next: 'scroll down' },
+    { status: 'done', answer: 'finished' },
+  ];
+  decisions = [choice('CLICK'), choice('CLICK'), choice('SCROLL_DOWN')];
+  const result = await run(true, 10);
+  assert.equal(result.status, 'done');
+  clickDestination = 'file-preview';
+});
+
+test('after three waits in a row the next step must inspect the page instead of waiting', async () => {
+  clickDestination = 'progress';
+  plans = [
+    ...Array.from({ length: 3 }, () => ({ status: 'continue', next: 'wait for the run to finish' })),
+    { status: 'continue', next: 'open the finished run' },
+    { status: 'done', answer: 'run result read' },
+  ];
+  decisions = [choice('WAIT'), choice('WAIT'), choice('WAIT'), choice('CLICK')];
+  const result = await run(true, 10);
+  assert.ok(!planCalls[2].warnings?.some(w => /waited .* in a row/.test(w)));
+  assert.ok(planCalls[3].warnings.some(w => /waited 3 times in a row/.test(w)));
+  assert.equal(lastQuestions.operation.criteria.WAIT, undefined, 'jev must not be offered WAIT on the capped step');
+  assert.equal(result.status, 'done');
   clickDestination = 'file-preview';
 });
