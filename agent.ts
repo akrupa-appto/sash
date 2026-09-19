@@ -133,6 +133,14 @@ function staleElementTimeout(message: string): boolean {
   return /timeout|not attached|element is not|no element|detached|destroyed|not visible|no node found/i.test(message);
 }
 
+// A control's own identity, stable across re-tagged snapshots where the numeric id is not.
+function elementKey(e?: { role: string; name: string }): string | undefined {
+  return e ? `${e.role}\u0000${e.name}` : undefined;
+}
+
+// A reply that opens with a refusal is not consent to an action that cannot be undone.
+const REFUSAL = /^\s*[""']?(no\b|nope\b|nah\b|don'?t\b|do not\b|stop\b|cancel\b|abort\b|never\b|wait\b)/i;
+
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
   for (const m of goal.matchAll(/["“”']([^"“”']{1,120})["“”']/g)) out.push(m[1].trim());
@@ -160,8 +168,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   const baseCandidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(goal), ...(input.resume ? quotedStrings(input.goal) : [])].map((s) => s.trim()).filter(Boolean)));
   let totalCost = 0;
   let step = input.resume?.step ?? 0;
-  // The user was just asked about this exact action, so their reply, not another pause, decides it.
-  let riskApproved = Boolean(input.resume?.action);
+  // The user was just asked about this exact action, so their reply, not another pause, decides it — but
+  // only for that action, and only when the reply is not a refusal. A "no" still reaches the planner in
+  // history, where it can pick something else; it just may never be read as a yes.
+  const approvedAction = input.resume?.action && !REFUSAL.test(input.goal) ? input.resume.action : undefined;
+  let riskApproved = Boolean(approvedAction);
   if (input.resume) history.push(`step ${step}: asked the user "${input.resume.question}" → they replied "${input.goal}"`);
   const actionCounts = new Map<string, number>();
   let consecutiveWaits = 0;
@@ -177,7 +188,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   const seenPages = new Set(page.context().pages());
   // An action that threw (covered control, detached node, timeout) did not happen. Until something
   // confirms the change it was meant to make, no "done" may be reported from history text alone.
-  let pendingFailure: { step: number; action: string; note: string; elementId?: number } | undefined;
+  let pendingFailure: { step: number; action: string; note: string; elementKey?: string; op?: string } | undefined;
   let failureRecheckAsked = false;
 
   const end = (status: EndEvent["status"], message: string, answer?: string) =>
@@ -346,7 +357,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // The supervisor judged this action hard to undo. Ask before doing it, the same way a question stops
         // the run; the user's reply, carried back in `resume`, is what lets it through.
         if (p.risk === "high") {
-          if (!riskApproved) return pause(`i am about to ${p.next}${p.why ? `, because ${p.why}` : ""}. this is hard to undo. should i go ahead?`, p.next);
+          // The answer covers the action it was asked about, never a different one the planner proposes next.
+          if (!riskApproved || p.next !== approvedAction)
+            return pause(`i am about to ${p.next}${p.why ? `, because ${p.why}` : ""}. this is hard to undo. should i go ahead?`, p.next);
           riskApproved = false; // one answer covers one action
         }
         stepGoal = p.next;
@@ -444,7 +457,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       // element ids belong to that stale snapshot, so the retry re-tags the page and finds the same
       // control by role + name instead.
       let retry: { el: { role: string; name: string }; run: (id: number) => Promise<void> } | undefined;
-      let actionElementId: number | undefined;
+      // Element ids are handed out per snapshot, so the same number can be a different control one step
+      // later. What the failure is tracked by is the control's own identity: its role and name.
+      let actionElementKey: string | undefined;
       let actionFailed = false;
 
       // ---- 3. execute
@@ -490,7 +505,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
             const e = snap.elements.find((x) => x.id === id);
             action = `CLICK ${e ? b.describe(e) : `[${id}]`}`;
-            actionElementId = id;
+            actionElementKey = elementKey(e);
             if (e) retry = { el: e, run: (rid) => b.click(page, rid) };
             await b.click(page, id);
             break;
@@ -498,8 +513,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           case "TYPE_TEXT":
           case "TYPE_AND_ENTER": {
             const id = elId(pick("type_target"));
-            actionElementId = id;
             const e = snap.elements.find((x) => x.id === id);
+            actionElementKey = elementKey(e);
             let text: string;
             const tv = pick("type_value");
             if (tv && tv !== "write_new_text") {
@@ -538,7 +553,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             }
             if (!e || !Number.isInteger(idx) || idx < 0 || idx >= e.options!.length) throw new Error("No matching dropdown option selected");
             action = `SELECT "${e?.options?.[idx]}" in ${e ? b.describe(e) : `[${id}]`}`;
-            actionElementId = id;
+            actionElementKey = elementKey(e);
             await b.selectOption(page, id, idx);
             break;
           }
@@ -568,7 +583,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         if (retry && staleElementTimeout(first)) {
           try {
             const fresh = await b.snapshot(page);
-            const match = fresh.elements.find((x) => x.role === retry!.el.role && x.name === retry!.el.name);
+            // Only an unambiguous match is safe to act on: two controls with the same role and name mean
+            // the retry could hit the wrong one, so report the stale action and let the planner look again.
+            const matches = fresh.elements.filter((x) => x.role === retry!.el.role && x.name === retry!.el.name);
+            const match = matches.length === 1 ? matches[0] : undefined;
             if (match) {
               await retry.run(match.id);
               recovered = true;
@@ -583,10 +601,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         }
       }
       if (actionFailed) {
-        pendingFailure = { step, action, note: note!, elementId: actionElementId };
+        pendingFailure = { step, action, note: note!, elementKey: actionElementKey, op: chosen };
         failureRecheckAsked = false;
-      } else if (pendingFailure && actionElementId !== undefined && actionElementId === pendingFailure.elementId) {
-        // The same control was acted on again and this time it worked: the earlier failure is settled.
+      } else if (pendingFailure && actionElementKey !== undefined && actionElementKey === pendingFailure.elementKey && chosen === pendingFailure.op) {
+        // The same operation on the same control worked this time: the earlier failure is settled. Matching
+        // on role and name, not on the snapshot's element id, which another control can inherit.
         pendingFailure = undefined;
         failureRecheckAsked = false;
       }

@@ -395,6 +395,28 @@ test('a high-risk action waits for the user before it runs, a low-risk one does 
   assert.equal(executed, 1);
 });
 
+test('a refusal is not an approval, and an approval covers only the action it was asked about', async () => {
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high', why: 'it removes the account for good' }];
+  decisions = [choice('CLICK')];
+  const paused = await run(true);
+  assert.equal(paused.pending.action, 'click the "Delete account" button');
+
+  // "no" resumes the run, but the action it refused must still not run.
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high' }];
+  decisions = [choice('CLICK')];
+  const refused = await run(true, 3, { goal: 'no, leave it alone', resume: paused.pending });
+  assert.equal(executed, 0, 'a refused action must not be carried out');
+  assert.equal(refused.status, 'question', 'the run asks again rather than treating "no" as a yes');
+
+  // A yes to one irreversible action is not a yes to a different one.
+  plans = [{ status: 'continue', next: 'click the "Transfer funds" button', risk: 'high' }];
+  decisions = [choice('CLICK')];
+  const swapped = await run(true, 3, { goal: 'yes, go ahead', resume: paused.pending });
+  assert.equal(executed, 0, 'approval must not carry over to another high-risk action');
+  assert.equal(swapped.status, 'question');
+  assert.match(swapped.question, /Transfer funds/);
+});
+
 // A run that ends blocked or errored explains its reason but never names its outcome in plain terms, so a
 // one-word tag goes on the message itself: the panel shows the agent's own text verbatim.
 test('a run that finishes surfaces "done" on its own message', async () => {
