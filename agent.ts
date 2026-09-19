@@ -96,6 +96,22 @@ const REPEAT_STOP_AT = 4;
 // After this many waits in a row the next step must inspect the page instead of waiting again.
 const WAIT_CAP = 3;
 
+// "test the app", "try it out", "explore it": open-ended tasks whose whole point is coverage. A run that
+// navigates once and calls it tested is a failed run, so these tasks carry a floor: real actions taken and
+// distinct page states seen before "done" is accepted. Every other task keeps its one-step path.
+const EXPLORE_MIN_ACTIONS = 5;
+const EXPLORE_MIN_PAGES = 3;
+// A "done" refused this many times in a row without any new action in between ends the run honestly
+// instead of burning the whole budget on a model that insists it is finished.
+const EXPLORE_REFUSALS_BEFORE_STOP = 3;
+const EXPLORE_VERB = /\b(test|tests|testing|qa|explore|exploring|exercise|try|trying|play|poke|tour)\b/i;
+const EXPLORE_TARGET = /\b(app|apps|application|site|website|webapp|dashboard|product|ui|feature|features|demo|everything|it out|around)\b/i;
+function isExploratoryTask(goal: string): boolean {
+  return EXPLORE_VERB.test(goal) && EXPLORE_TARGET.test(goal);
+}
+// Actions that count as really using the app. A wait, a refusal, or a failed action is not coverage.
+const REAL_ACTIONS = new Set(["CLICK", "TYPE_TEXT", "TYPE_AND_ENTER", "SELECT", "SCROLL_DOWN", "SCROLL_UP", "GO_BACK", "SWITCH_TAB"]);
+
 // The planner sees the whole run: recent steps in full, older ones shortened. A skipped step early in
 // a long task must still be visible when the final answer is written.
 function compactHistory(history: string[], full = 12, older = 220): string[] {
@@ -149,6 +165,12 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   if (input.resume) history.push(`step ${step}: asked the user "${input.resume.question}" → they replied "${input.goal}"`);
   const actionCounts = new Map<string, number>();
   let consecutiveWaits = 0;
+  // `goal` is the task even on a resume, where input.goal is only the user's reply to a question.
+  const exploratory = isExploratoryTask(goal);
+  const pagesSeen = new Set<string>();
+  let realActions = 0;
+  let coverageWarning: string | undefined;
+  let coverageRefusals = 0;
   let lastFingerprint = "";
   let lastUrl = "";
   let lastText = "";
@@ -164,6 +186,21 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   // `question` stays the bare question so the panel can prompt with it; only the message carries the tag.
   const pause = (question: string, action?: string) =>
     emit({ type: "end", status: "question", message: `${outcomeWord("question")}: ${question}`, question, pending: { goal, history: [...history], step, question, action }, totalCostUsd: totalCost, steps: step });
+
+  // On an open-ended "test the app" task, refuse a "done" that has barely touched the app. Returns the
+  // reason to send back to the models, or undefined when the run may finish. The floor never outlives the
+  // step budget: if there are not enough steps left to reach it, the run is allowed to report what it saw.
+  const tooShallow = (): string | undefined => {
+    if (!exploratory) return undefined;
+    const missingActions = Math.max(EXPLORE_MIN_ACTIONS - realActions, 0);
+    const missingPages = Math.max(EXPLORE_MIN_PAGES - pagesSeen.size, 0);
+    const shortfall = Math.max(missingActions, missingPages);
+    if (!shortfall || step + shortfall > maxSteps) return undefined;
+    return `this task asks you to test the app, but so far this run took ${realActions} real action${realActions === 1 ? "" : "s"} across ${pagesSeen.size} page${pagesSeen.size === 1 ? "" : "s"}. that is not testing it. do not say done yet: keep going (at least ${EXPLORE_MIN_ACTIONS} actions across ${EXPLORE_MIN_PAGES} different pages) — visit another section, fill and submit a form, open settings, or try an invalid input, and report what you actually saw.`;
+  };
+
+  const shallowStopMessage = () =>
+    `you asked me to test the app, but i only managed ${realActions} action${realActions === 1 ? "" : "s"} on ${pagesSeen.size} page${pagesSeen.size === 1 ? "" : "s"} and then kept concluding i was finished. i am not reporting that as tested. send a more specific task, or say "go on".`;
 
   try {
     if (input.url) {
@@ -208,6 +245,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       lastFingerprint = snap.fingerprint;
       lastUrl = snap.url;
       lastText = snap.text;
+      pagesSeen.add(snap.fingerprint);
+      if (!tooShallow()) coverageWarning = undefined;
 
       const scrollPos =
         snap.scroll.max === 0
@@ -227,6 +266,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       const waitCapped = consecutiveWaits >= WAIT_CAP;
       const warnings = [
         ...repeated,
+        ...(coverageWarning ? [coverageWarning] : []),
         ...(waitCapped ? [`you have waited ${consecutiveWaits} times in a row. do not wait again now: read the page for the result of the pending operation and act on it (open the result, check the status, or continue the task). only wait again after a non-wait step.`] : []),
         ...(pendingFailure ? [`step ${pendingFailure.step} did not happen: ${pendingFailure.note} (${pendingFailure.action}). that change is unconfirmed, so do not report the task done from the history. re-check the exact field or control that action touched on the page now; retry it if it is reachable, and if the page still does not show the intended change, answer with status "blocked" and say what did not apply.`] : []),
       ];
@@ -266,6 +306,16 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
             failureRecheckAsked = true;
             history.push(`step ${step}: claimed the task was done, but step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing confirmed that change; re-reading the page before reporting success`);
+            continue;
+          }
+          // The guards that send the run back to work come before the ones that end it: a run told to keep
+          // testing may still write a clean summary on a later pass.
+          const shallow = tooShallow();
+          if (shallow) {
+            coverageWarning = shallow;
+            if (++coverageRefusals >= EXPLORE_REFUSALS_BEFORE_STOP) return end("blocked", shallowStopMessage());
+            history.push(`step ${step}: supervisor said done ("${p.answer ?? p.why ?? ""}") after only ${realActions} action(s) on ${pagesSeen.size} page(s); not accepted, the app still has to be tested`);
+            emit({ type: "step", step, url: snap.url, title: snap.title, screenshot: "", elementCount: snap.elements.length, answers: {}, action: "held back: the app has barely been tested yet", plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd, note: shallow });
             continue;
           }
           if (p.answer) {
@@ -544,6 +594,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       await b.settle(page);
       const execMs = performance.now() - t0;
       consecutiveWaits = chosen === "WAIT" ? consecutiveWaits + 1 : 0;
+      if (REAL_ACTIONS.has(chosen) && !note?.startsWith("action failed")) { realActions++; coverageRefusals = 0; }
 
       history.push(`step ${step}: ${planText ? `supervisor said "${planText}"${planCompletes ? " (expected to complete the task)" : ""}; ` : ""}did ${action}${note ? ` (${note})` : ""}`);
       emit({
@@ -565,6 +616,15 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       });
 
       if (chosen === "DONE") {
+        // Send the run back to work before refusing it outright: a shallow "test the app" run can still
+        // earn its coverage, while an unconfirmed failed step has nothing left to prove.
+        const shallow = tooShallow();
+        if (shallow) {
+          coverageWarning = shallow;
+          if (++coverageRefusals >= EXPLORE_REFUSALS_BEFORE_STOP) return end("blocked", shallowStopMessage());
+          history[history.length - 1] += " (not accepted: the app has barely been tested yet)";
+          continue;
+        }
         if (pendingFailure)
           return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
         return end("done", `done, now on "${(await page.title().catch(() => "")) || page.url()}"`);

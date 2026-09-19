@@ -29,11 +29,13 @@ const choice = (operation, achieved = 0) => ({
   operation: { choice: operation }, goal_achieved: { noul: achieved },
   click_target: { choice: 'el_1' },
 });
+// `extra` is either the task as a bare string, or extra RunInput fields (goal, resume, …).
 async function run(supervisor, maxSteps = 3, extra = {}) {
+  const over = typeof extra === 'string' ? { goal: extra } : extra;
   state = 'repository'; executed = 0; planCalls = [];
   const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
   const events = [];
-  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}), ...extra }, e => events.push(e), new AbortController().signal);
+  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}), ...over }, e => events.push(e), new AbortController().signal);
   return events.at(-1);
 }
 
@@ -274,6 +276,39 @@ test('a final answer whose claims match the run history is passed through as don
   const result = await run(true);
   assert.equal(result.status, 'done');
   assert.equal(result.answer, 'Opened "README.md" as requested.');
+});
+
+test('a "test the app" run cannot report done after a single navigation', async () => {
+  clickDestination = 'progress';
+  plans = [{ status: 'continue', next: 'open the app' }, ...Array.from({ length: 12 }, () => ({ status: 'done', answer: 'tested the app, all good' }))];
+  decisions = [choice('CLICK')];
+  try {
+    const result = await run(true, 12, 'test the app and try out everything');
+    assert.equal(executed, 1);
+    assert.equal(result.status, 'blocked', 'a one-click run must not be allowed to report done');
+    assert.notEqual(result.answer, 'tested the app, all good');
+    assert.match(result.message, /not reporting that as tested/);
+    assert.ok(planCalls.at(-1).warnings.some(w => /took 1 real action/.test(w)), 'the planner must be told the run is too shallow');
+  } finally { clickDestination = 'file-preview'; }
+});
+
+test('the coverage floor lifts once the app has really been exercised', async () => {
+  clickDestination = 'progress';
+  plans = [...Array.from({ length: 5 }, () => ({ status: 'continue', next: 'use the app' })), { status: 'done', answer: 'covered five sections' }];
+  decisions = Array.from({ length: 5 }, () => choice('CLICK'));
+  try {
+    const result = await run(true, 12, 'test the app and try out everything');
+    assert.equal(executed, 5);
+    assert.equal(result.status, 'done');
+    assert.equal(result.answer, 'covered five sections');
+  } finally { clickDestination = 'file-preview'; }
+});
+
+test('the coverage floor does not delay a one-step task that is not about testing an app', async () => {
+  plans = [{ status: 'done', answer: 'opened raw readme' }];
+  const result = await run(true, 3);
+  assert.equal(result.status, 'done');
+  assert.equal(result.answer, 'opened raw readme');
 });
 
 test('history records what appeared on the page after an action, not only that it changed', async () => {
