@@ -77,3 +77,21 @@
 - Picker modal public/model-picker.js is shared by the web app (served at /model-picker.js, fed by /api/providers and /api/models) and the extension settings page (fetching lists directly with the typed keys). Server preset validation was replaced by "provider connected" validation; model-specific levels are the picker's and the provider's job.
 - No OpenAI or Gemini keys on this machine: those paths have mocked-fetch tests only. Live OpenRouter list and the onboarding lab passed through the refactored path. Test server for this branch on port 8798 (runs/test-server-8798.pid); main checkto.service untouched.
 - coderabbit has never commented on this repo (PRs 5, 7, 8, 9 show no bot activity), so codex review is the reviewer for #9 and #10.
+
+## Handoff (2026-09-19, end of the provider/CI/panel session)
+State of the repo when this session ended. Read this first; the rest of this file is history.
+
+- main is `2dc5675 chore: extension v0.4.2`; release `extension-v0.4.2` is published with `checkto-extension.zip` attached. Everything opened this session is merged: #9 onboarding fixes, #13 CI, #14 providers + picker (replaces the auto-closed #10), #11 control-ended message, #12 custom provider, #15/#16 release pipeline fixes, #17 answer-under-steps.
+- Release pipeline is proven on both paths: manual dispatch (v0.4.1) and the automatic main-push trigger (v0.4.2). It bumps the patch in extension/manifest.json, loops until the tag is free, pushes an annotated tag and main atomically. Workflow-file-only changes do not trigger it (paths filter); dispatch by hand with `gh workflow run "release extension" --ref main -f part=patch`.
+- Tests: 68 pass with `npm test`. panel.test.mjs drives the built side panel in real Chromium; CI installs chromium for it and the test skips itself where no browser is installed.
+- Reviewer: the CodeRabbit GitHub app is not installed on this repo. Use the CLI from a detached worktree: `git worktree add --detach /tmp/checkto-prN <branch>` then `coderabbit review --committed --base main --agent`. Never run two at once; it rate-limits. `gh` must be on the `akrupa-appto` account for this repo (`gh auth switch --user akrupa-appto`); the pc-style account gets "repository not found".
+- Zip for Adam is also served from runs/share on https://pcstyle.exe.xyz:8799/ (python http.server, pid in runs/share-8799.pid). Refresh it with `gh release download extension-vX.Y.Z --pattern checkto-extension.zip --dir runs/share --clobber`.
+
+Open, in the order Adam raised them (todo.md has the detail):
+1. Compare/summarize answers come out as one enormous sentence because planner.ts:34 asks for "one sentence". Allow a few short newline-separated lines for compare/summarize; the panel already renders pre-wrap. Not started.
+2. `.compose-box` is `border-radius:999px`, so a multi-line message becomes a capsule blob. Change to `22px` (pill at one line, rounded rectangle when taller) and drop the `:has(.selected-tabs)` 20px override. Not started. Adam wanted 1 and 2 as one small PR.
+3. Settings page never got the redesign: `cadb09e` scoped the plum tokens to `.panel-page`, so settings.html still renders the old cream `:root` theme with system fonts. Move the tokens to `:root` (or a shared body class), add Outfit to headings, hand-tune `.privacy` (#edf0e9) and `--acc`. Not started; Adam noticed but did not ask for it yet.
+4. todo.md items: outcome word on blocked/errored replies, questions/approval pauses, chrome tab groups, stale-element retry, reasoning metadata for custom OpenRouter ids.
+5. Verification debt: OpenAI, Gemini, and custom-server planner paths have never been called with a real key on this machine; mocked-fetch tests only. The Google sign-in detach reason has not been confirmed against Chrome.
+
+Rules learned this session that are not yet in AGENTS.md: retarget stacked PRs to main before merging their parent (GitHub closes a PR whose base branch is deleted and will not reopen it); `git push --follow-tags` skips lightweight tags.
