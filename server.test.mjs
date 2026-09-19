@@ -11,7 +11,7 @@ mock.module('./recordings.ts', { namedExports: {
 } });
 let closed = 0, lastInput, taskAborted = false;
 mock.module('./browser.ts', { namedExports: { launch: async () => ({
-  browser: { isConnected: () => true },
+  browser: { isConnected: () => true }, context: {route: async () => {}},
   page: { url: () => 'about:blank', title: async () => '' },
   anchorId: 'anchor-private-id', liveViewUrl: 'https://live.example.test/session', close: async () => { closed++; },
 }) } });

@@ -1,4 +1,5 @@
 import { readRecording, saveRecording, anchorRecording } from "./recordings.ts";
+import os from "node:os";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -107,7 +108,20 @@ export const server = http.createServer(async (req, res) => {
     }
     const id = crypto.randomBytes(8).toString("hex");
     try {
-      sessions.set(id, { id, browser: await launch(), busy: false, lastUsed: Date.now(), tasks: [] });
+      const browser = await launch();
+      try {
+        // exe.dev alternate ports require the user's login. Fulfil only this app's
+        // self-contained practice page inside Anchor, using Playwright's routing.
+        const origins = new Set([
+          `https://${os.hostname()}.exe.xyz:${PORT}`,
+          `http://127.0.0.1:${PORT}`,
+          `http://localhost:${PORT}`,
+          `${req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`,
+        ]);
+        await browser.context.route(u => origins.has(u.origin) && u.pathname === '/playground', route =>
+          route.fulfill({ contentType: 'text/html; charset=utf-8', body: fs.readFileSync(path.join(root, 'public', 'playground.html')) }));
+        sessions.set(id, { id, browser, busy: false, lastUsed: Date.now(), tasks: [] });
+      } catch (e) { await browser.close().catch(() => {}); throw e; }
     } catch (e) {
       return json(res, 500, { error: (e as Error).message });
     }
