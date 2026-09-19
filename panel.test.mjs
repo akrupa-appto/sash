@@ -217,7 +217,8 @@ test('the handoff form is typed, starts empty, and keeps nothing once it is sent
   await page.locator('.request-field input').nth(1).fill('hunter2');
   await page.locator('.request-fields button[type=submit]').click();
   const sent = await page.evaluate(() => window.sent);
-  assert.deepEqual(sent, [{ type: 'answer', id: request.id, outcome: 'submitted', values: { Email: 'me@pcstyle.dev', Password: 'hunter2' } }]);
+  // Keyed by elementId, not label, so two fields sharing a label (e.g. password + confirm) don't collide.
+  assert.deepEqual(sent, [{ type: 'answer', id: request.id, outcome: 'submitted', values: { 1: 'me@pcstyle.dev', 2: 'hunter2' } }]);
   // The panel holds no copy of what was typed once it has gone to the worker.
   assert.deepEqual(await page.locator('.request-field input').evaluateAll(els => els.map(e => e.value)), ['', '']);
   await page.close();

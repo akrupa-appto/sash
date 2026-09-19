@@ -172,7 +172,7 @@ function confirmScope(card, pending, scope) {
   const yes = el('button', undefined, scope.confirm.accept); yes.type = 'button';
   yes.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, scope: scope.id }));
   const no = el('button', 'secondary', scope.confirm.cancel); no.type = 'button';
-  no.addEventListener('click', () => renderRequest(currentState));
+  no.addEventListener('click', () => renderRequest(currentState, pending));
   actions.append(yes, no);
   card.append(actions);
 }
@@ -215,7 +215,7 @@ function requestCard(pending) {
       input.type = field.secret ? 'password' : (['email', 'tel', 'url', 'number'].includes(field.inputType) ? field.inputType : 'text');
       if (field.autocomplete) input.autocomplete = field.autocomplete;
       input.required = !!field.required;
-      label.append(input); form.append(label); inputs.set(field.label, input);
+      label.append(input); form.append(label); inputs.set(field.elementId, input);
     }
     if (pending.signInOptions?.length) form.append(el('p', 'muted', `or use the page's own buttons: ${pending.signInOptions.join(', ')}`));
     const submit = el('button', undefined, pending.submit?.label || 'sign in'); submit.type = 'submit';
@@ -225,7 +225,8 @@ function requestCard(pending) {
     cancel.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.DECLINED }));
     form.addEventListener('submit', event => {
       event.preventDefault();
-      const values = Object.fromEntries([...inputs].map(([label, input]) => [label, input.value]));
+      // Keyed by elementId, not label: two fields can share a label (e.g. password + confirm password).
+      const values = Object.fromEntries([...inputs].map(([elementId, input]) => [elementId, input.value]));
       for (const input of inputs.values()) input.value = '';
       void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, values });
     });

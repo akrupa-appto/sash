@@ -193,14 +193,16 @@ async function submitCredentials(request, values) {
   await page.attach();
   try {
     const snap = await snapshot(page);
-    const fields = request.fields.filter(f => values[f.label] !== undefined && values[f.label] !== '');
+    // Keyed by elementId, not label: two fields can share a label (e.g. password + confirm password),
+    // and keying by label would collide, losing one field's value or misapplying it to the other.
+    const fields = request.fields.filter(f => values[f.elementId] !== undefined && values[f.elementId] !== '');
     if (!fields.length) return RequestOutcome.CANCELLED;
     for (const field of fields) {
       const element = snap.elements.find(e => e.id === field.elementId);
       // The page was retagged since the form was handed over: the ids no longer mean anything.
       if (!element || element.role !== field.inputType || element.name !== field.label) return RequestOutcome.LOCATOR_INVALID;
     }
-    for (const field of fields) await typeText(page, field.elementId, values[field.label], false);
+    for (const field of fields) await typeText(page, field.elementId, values[field.elementId], false);
     if (request.submit?.elementId) await click(page, request.submit.elementId);
     return RequestOutcome.SUBMITTED;
   } catch {
