@@ -7,6 +7,8 @@ const events = () => {
 };
 const data = { settings: { openrouterKey: 'private-test-key', model: 'fixture/model' } };
 const messages = [];
+const sentToTabs = [];
+let liveContentScript = true;
 const pages = [];
 let activeSignal;
 let taskStarted = 0;
@@ -22,7 +24,13 @@ globalThis.chrome = {
     onMessage: events(), onInstalled: events(), openOptionsPage: async () => {},
     sendMessage: async message => { messages.push(structuredClone(message)); },
   },
-  tabs: { get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }), onCreated: events(), onUpdated: events() },
+  tabs: {
+    get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }),
+    query: async ({ windowId }) => [{ id: windowId === 7 ? 12 : 99, windowId, active: true }],
+    sendMessage: async (tabId, message) => { sentToTabs.push({ tabId, message }); return message.type === 'CONTENT_PING' ? { ok: liveContentScript } : { ok: true }; },
+    onCreated: events(), onUpdated: events(), onActivated: events(), onRemoved: events(),
+  },
+  windows: { onFocusChanged: events() },
   debugger: { onDetach: events() }, sidePanel: { setPanelBehavior: async () => {} },
 };
 mock.module('./extension/browser.js', { namedExports: {
@@ -136,4 +144,64 @@ test('a finished run keeps its actions on the reply it produced', async () => {
   assert.equal(reply.role, 'agent');
   assert.equal(reply.text, 'finished');
   assert.deepEqual(reply.steps.map(s => s.action), ['CLICK [5] button "upload"']);
+});
+
+// --- the favicon badge as an unread marker -----------------------------------------------------
+const untilBadge = async (tabId, badge) => {
+  for (let i = 0; i < 100; i++) {
+    if ((await send({ type: 'getBadge', tabId })).badge === badge) return;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.fail(`tab ${tabId} never reached badge "${badge}"`);
+};
+
+test('a finished run leaves a badge that stays until the user looks at that tab', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  await send({ type: 'run', tabId: 12, goal: 'upload the file', mode: 'fast' });
+  await until(() => taskStarted === before + 1);
+  assert.equal((await send({ type: 'getBadge', tabId: 12 })).badge, 'working');
+  finishTask();
+  await until(() => data.runState?.running === false);
+  assert.equal((await send({ type: 'getBadge', tabId: 12 })).badge, 'deliverable');
+  // Someone looking at a different tab has not read this result.
+  chrome.tabs.onActivated.fire({ tabId: 5 });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal((await send({ type: 'getBadge', tabId: 12 })).badge, 'deliverable');
+  // Looking at the tab itself is what marks it read.
+  chrome.tabs.onActivated.fire({ tabId: 12 });
+  await untilBadge(12, 'none');
+});
+
+test('focusing a window clears the badge on the tab it reveals', async () => {
+  await send({ type: 'setBadge', tabId: 12, badge: 'handoff' });
+  assert.equal((await send({ type: 'getBadge', tabId: 12 })).badge, 'handoff');
+  chrome.windows.onFocusChanged.fire(-1); // every window lost focus: nothing has been read
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal((await send({ type: 'getBadge', tabId: 12 })).badge, 'handoff');
+  chrome.windows.onFocusChanged.fire(7); // window 7's active tab is 12
+  await untilBadge(12, 'none');
+});
+
+test('the worker pings a tab before pushing, and pushes nothing to a script that does not answer', async () => {
+  sentToTabs.length = 0;
+  liveContentScript = false;
+  await send({ type: 'setBadge', tabId: 21, badge: 'working' });
+  assert.deepEqual(sentToTabs.map(s => s.message.type), ['CONTENT_PING']);
+  liveContentScript = true;
+  sentToTabs.length = 0;
+  await send({ type: 'setBadge', tabId: 21, badge: 'deliverable' });
+  assert.deepEqual(sentToTabs.map(s => s.message.type), ['CONTENT_PING', 'CONTENT_STATE']);
+  assert.equal(sentToTabs.at(-1).message.state.badge, 'deliverable');
+  assert.deepEqual(sentToTabs.map(s => s.tabId), [21, 21]);
+});
+
+test('a content script asks the worker for its own tab state instead of being assumed live', async () => {
+  const ask = sender => new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'CONTENT_STATE_REQUEST' }, sender, resolve));
+  assert.deepEqual(await ask({ id: chrome.runtime.id, url: 'https://example.test/page', tab: { id: 21 } }),
+    { state: { badge: 'deliverable', cursor: undefined, observed: false } });
+  // A message with no tab behind it is not a content script and gets no answer.
+  let answered = false;
+  chrome.runtime.onMessage.fire({ type: 'CONTENT_STATE_REQUEST' }, { id: chrome.runtime.id, url: 'https://example.test/page' }, () => { answered = true; });
+  assert.equal(answered, false);
 });
