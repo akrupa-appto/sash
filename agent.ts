@@ -53,6 +53,16 @@ export type Event =
   | StepEvent
   | EndEvent;
 
+// A run's terminal status, boiled down to one word the panel can put on the agent's own message so a
+// blocked or errored run reads as failed instead of looking like ordinary chat text. "needs you" covers a
+// pause-for-user status (e.g. a question) if/when the planner grows one; everything else that isn't "done"
+// reads as "could not finish".
+function outcomeWord(status: string): "done" | "could not finish" | "needs you" {
+  if (status === "done") return "done";
+  if (status === "question" || status === "waiting" || status === "paused") return "needs you";
+  return "could not finish";
+}
+
 const OPS: Record<string, string> = {
   CLICK: "Click a link, button, checkbox, tab, or other control (`click_target` says which)",
   TYPE_TEXT: "Type text into a text field (`type_target` says which field, `type_value` which text)",
@@ -110,7 +120,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   const seenPages = new Set(page.context().pages());
 
   const end = (status: EndEvent["status"], message: string, answer?: string) =>
-    emit({ type: "end", status, message, answer, totalCostUsd: totalCost, steps: step });
+    emit({ type: "end", status, message: `${outcomeWord(status)}: ${message}`, answer, totalCostUsd: totalCost, steps: step });
 
   try {
     if (input.url) {

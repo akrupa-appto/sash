@@ -193,3 +193,21 @@ test('history records what appeared on the page after an action, not only that i
     assert.match(planCalls[1].history[0], /showing: "Run finished: 7\/8 tests passed on "#42 feat: browser settings""/);
   } finally { snapFn = orig; clickDestination = 'file-preview'; }
 });
+
+// A run that ends blocked or errored explains its reason but never names its outcome in plain terms, so a
+// one-word tag goes on the message itself: the panel shows the agent's own text verbatim.
+test('a run that finishes surfaces "done" on its own message', async () => {
+  plans = [{ status: 'done', answer: 'read the file' }];
+  decisions = [choice('DONE')];
+  const result = await run(true);
+  assert.equal(result.status, 'done');
+  assert.match(result.message, /^done: /);
+});
+
+test('a run that ends blocked surfaces "could not finish" on its own message', async () => {
+  plans = [{ status: 'blocked', why: 'this is a preview, not the raw file' }];
+  decisions = [choice('CLICK')];
+  const result = await run(true);
+  assert.equal(result.status, 'blocked');
+  assert.match(result.message, /^could not finish: /);
+});
