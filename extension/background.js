@@ -3,7 +3,8 @@ import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { readSettings, validateSettings } from './settings.js';
 import { BadgeState } from './types.js';
-import { claim, release, get as getLease, setMuted } from './lease.js';
+import * as lease from './lease.js';
+import { Disposition, endRun, groupTab, markTab, releaseAll, resumeHandoffIfPresent, setFaviconRestorer } from './tabs.js';
 
 // --- in-page feedback: favicon badges and the agent cursor -------------------------------------
 // One entry per tab the run has touched. The badge doubles as an unread marker: a finished run's
@@ -52,6 +53,9 @@ chrome.windows.onFocusChanged.addListener(windowId => {
 // A finished navigation means a fresh content script with no badge on it.
 chrome.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'complete' && feedbackByTab.has(tabId)) void pushFeedback(tabId); });
 chrome.tabs.onRemoved.addListener(tabId => { feedbackByTab.delete(tabId); });
+// The tab contract closes a tab it opened; the page's own favicon has to come back before it does,
+// which is exactly what clearing this tab's feedback tells the content script to do.
+setFaviconRestorer(tabId => setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }));
 
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready' };
@@ -94,11 +98,11 @@ export function detachMessage({ reason, title, url }) {
 // agrees it was muted by an extension. Either check failing means someone else — the
 // user, or another extension — is responsible for it, so we leave it alone.
 async function unmuteIfOurs(tabId) {
-  const lease = getLease(tabId);
-  if (!lease?.mutedByUs) return;
+  const held = lease.get(tabId);
+  if (!held?.mutedByUs) return;
   const tab = await chrome.tabs.get(tabId).catch(() => undefined);
   if (tab?.mutedInfo?.reason === 'extension') await chrome.tabs.update(tabId, { muted: false }).catch(() => {});
-  setMuted(tabId, false);
+  lease.setMuted(tabId, false);
 }
 // Mute every attached agent tab the user isn't currently watching, and unmute the one
 // that is. Tabs already muted — by the user or another extension — are left untouched.
@@ -109,7 +113,7 @@ async function syncTabMute(pages, activeId) {
     const tab = await chrome.tabs.get(page.tabId).catch(() => undefined);
     if (!tab || tab.mutedInfo?.muted) continue;
     await chrome.tabs.update(page.tabId, { muted: true }).catch(() => {});
-    setMuted(page.tabId, true);
+    lease.setMuted(page.tabId, true);
   }
 }
 async function stop() {
@@ -129,8 +133,10 @@ async function execute(run, message) {
     controller.signal.throwIfAborted();
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
+    // The user handed this tab over, so it is never grouped and never closed when the run ends.
+    lease.claim(id, { sessionId: run.sessionId, turnId: run.turnId, openedByUs: false });
     let page = pages.find(p => p.tabId === id);
-    if (!page) { page = new ChromePage(tab, controller.signal, pages); pages.push(page); claim(id, { sessionId: run.id, openedByUs: false }); }
+    if (!page) { page = new ChromePage(tab, controller.signal, pages); pages.push(page); }
     if (!page.attached) await page.attach();
     else {
       await chrome.tabs.update(id, { active: true });
@@ -147,9 +153,10 @@ async function execute(run, message) {
   const attachPopup = (tab) => {
     if (!candidates.has(tab.id) || !supportedUrl(tab.url) || pages.some(p => p.tabId === tab.id) || run.attaching.has(tab.id)) return;
     run.attaching.add(tab.id);
+    void groupTab(tab.id); // tabs the run opened live together in the "checkto" group, out of the user's way
+
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
-    claim(tab.id, { sessionId: run.id, openedByUs: true });
     const work = page.attach().then(async () => {
       controller.signal.throwIfAborted();
       state.tabId = tab.id; state.tabTitle = tab.title || tab.url;
@@ -164,7 +171,11 @@ async function execute(run, message) {
     work.finally(() => { attachments.delete(work); pendingTabs.delete(tab.id); });
   };
   const created = tab => {
-    if (pages.some(p => p.tabId === tab.openerTabId)) { candidates.set(tab.id, true); attachPopup(tab); }
+    if (!pages.some(p => p.tabId === tab.openerTabId)) return;
+    candidates.set(tab.id, true);
+    // Opened by a page the run drives, so the run owns it: it gets grouped, and closed at the end unless marked.
+    try { lease.claim(tab.id, { sessionId: run.sessionId, turnId: run.turnId, openedByUs: true }); } catch {}
+    attachPopup(tab);
   };
   const updated = (_id, _change, tab) => attachPopup(tab);
   const detached = (source, reason) => {
@@ -185,6 +196,8 @@ async function execute(run, message) {
     const mode = message.mode === 'fast' ? 'fast' : 'careful';
     validateSettings(settings, mode);
     configure(settings);
+    // Pick the tabs the last turn handed back up where they stand, rather than starting cold.
+    await resumeHandoffIfPresent(run.sessionId, run.turnId);
     const page = await selectTab(message.tabId);
     state.status = 'working';
     await persist();
@@ -199,6 +212,8 @@ async function execute(run, message) {
         select: selectTab, currentId: page => page.tabId,
       },
     }, event => {
+      // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
+      if (event.type === 'mark') { markTab(event.tabId, event.disposition); return; }
       if (event.type === 'step') {
         state.steps.push({ step: event.step, action: event.action, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
         state.cost = (state.cost || 0) + event.costUsd;
@@ -217,17 +232,22 @@ async function execute(run, message) {
     // Any attach that was already in flight must finish before the final detach.
     await Promise.allSettled([...attachments]);
     await Promise.allSettled(pages.map(p => p.detach()));
+    // Unmuting reads the lease, so it has to happen before the contract below releases them.
     await Promise.allSettled(pages.map(p => unmuteIfOurs(p.tabId)));
-    for (const p of pages) release(p.tabId);
     if (run.popupError) outcome = { ...outcome, status: 'error', answer: undefined, message: safeError(run.popupError, settings) };
     // The agent reports an aborted run as "stopped" whether the user or Chrome ended it; only the user's stop is a plain stop.
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
+    // A blocked run is waiting on the user on that very tab, so it is handed over, never closed under them.
+    if (outcome?.status === 'blocked' && Number.isInteger(state.tabId)) markTab(state.tabId, Disposition.HANDOFF);
+    const ending = await endRun(run.sessionId).catch(() => undefined);
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
-    // The run is over: every tab it touched says what it is now. A green dot holds a result, a
-    // yellow one is waiting on the user, and anything else gets its own favicon back.
+    // The run is over: every tab it left standing says what it is now. A green dot holds a result,
+    // a yellow one is waiting on the user, and anything else gets its own favicon back. Tabs the
+    // contract just closed are skipped — it restored their favicons on the way out.
+    const closed = new Set(ending?.closed || []);
     const finalBadge = outcome?.status === 'done' ? BadgeState.DELIVERABLE : outcome?.status === 'blocked' ? BadgeState.HANDOFF : BadgeState.NONE;
-    for (const tabId of new Set(pages.map(p => p.tabId))) await setFeedback(tabId, { badge: finalBadge, cursor: undefined });
+    for (const tabId of new Set(pages.map(p => p.tabId))) if (!closed.has(tabId)) await setFeedback(tabId, { badge: finalBadge, cursor: undefined });
     // Keep the run's actions with the reply they produced so earlier runs still show their steps.
     state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
     state.messages = state.messages.slice(-20);
@@ -251,16 +271,19 @@ async function handle(message) {
   if (message.type === 'setCursor') { await setFeedback(message.tabId, { cursor: message.cursor }); return { ok: true }; }
   if (message.type === 'clear') {
     if (active) throw new Error('stop the current task before starting a new chat');
+    if (state.sessionId) await releaseAll(state.sessionId);
     state = { running: false, messages: [], steps: [], status: 'ready' };
     await persist(); return { ok: true };
   }
-    if (message.type === 'run') {
+  if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
     if (!Number.isInteger(message.tabId) || typeof message.goal !== 'string' || !message.goal.trim() || message.goal.length > 10000) throw new Error('choose a tab and enter a task');
     if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
-    const run = { id: crypto.randomUUID(), controller: new AbortController(), pages: [], attaching: new Set() };
+    // The session outlives one turn: it is what holds a handed-off tab until the next turn resumes it.
+    const sessionId = state.sessionId || crypto.randomUUID();
+    const run = { controller: new AbortController(), pages: [], attaching: new Set(), sessionId, turnId: crypto.randomUUID() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
+    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
     void execute(run, { ...message, goal: message.goal.trim() });
