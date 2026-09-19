@@ -58,8 +58,10 @@
   .row input { width:64px; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 7px; font:inherit }
   .model-picker { display:flex; flex-direction:column; gap:6px; color:var(--dim); font-size:12px }
   .model-picker label { display:flex; align-items:center; gap:10px }
-  .model-picker select, .model-picker input { min-width:0; width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:7px; font:inherit }
-  .model-picker[hidden], #custom-model[hidden] { display:none }
+  .model-button { display:flex; justify-content:space-between; align-items:center; gap:10px; width:100%; padding:7px 10px; font-weight:500; font-size:12px; text-align:left }
+  .model-button #model-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .model-button .chev { color:var(--dim) }
+  .model-picker[hidden] { display:none }
   .typing { color:var(--dim); font-size:12px }
   .typing::after { content:'…'; animation: dots 1.2s steps(4,end) infinite }
   @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
@@ -86,28 +88,8 @@
     <form id="f">
       <textarea id="msg" placeholder="what should the browser do? include a website to start." title="enter to send, shift+enter for a new line" required></textarea>
       <div id="model-picker" class="model-picker">
-        <label for="model">model
-          <select id="model">
-            <option value="deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash</option>
-            <option value="z-ai/glm-5.3-flash">GLM 5.3 Flash</option>
-            <option value="moonshotai/kimi-k3">Kimi K3</option>
-            <option value="custom">custom model ID</option>
-          </select>
-        </label>
-        <label for="reasoning">reasoning
-          <select id="reasoning" aria-describedby="reasoning-help">
-            <option value="auto">auto · fastest supported</option>
-            <option value="none">off</option>
-            <option value="minimal">minimal</option>
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-            <option value="xhigh">extra high</option>
-            <option value="max">maximum</option>
-          </select>
-        </label>
+        <button type="button" id="model-button" class="secondary model-button" aria-haspopup="dialog" title="choose the planner model and how much it reasons"><span id="model-label">choose a model</span><span class="chev" aria-hidden="true">▾</span></button>
         <span id="reasoning-help">more reasoning can take longer and cost more.</span>
-        <input id="custom-model" aria-label="custom model ID" placeholder="provider/model-id" maxlength="200" pattern="[a-zA-Z0-9~][a-zA-Z0-9._:/@~\\-]*" hidden disabled>
       </div>
       <div class="row">
         <div class="mode" id="mode">
@@ -149,29 +131,30 @@ if (incomingPrompt) { msg.value = incomingPrompt; history.replaceState(null,'','
 
 
 const supervisorOn = () => !!$('#mode button.on')?.dataset.sup.startsWith('1');
-const savedModel = localStorage.getItem('checkto-model');
-if ([...$('#model').options].some(o => o.value === savedModel)) $('#model').value = savedModel;
-$('#custom-model').value = localStorage.getItem('checkto-custom-model') || '';
-let savedReasoning = localStorage.getItem('checkto-reasoning') || 'auto';
+// Planner model and reasoning, remembered in this browser. Provider prefixes (openai:, gemini:) pick the official APIs.
+let choice = { model: localStorage.getItem('checkto-model') || '', reasoning: localStorage.getItem('checkto-reasoning') || 'auto' };
+if (choice.model === 'custom') choice.model = localStorage.getItem('checkto-custom-model') || '';
+let picker = null;
+const providersReady = fetch('/api/providers').then(r => r.json()).then(async data => {
+  if (!choice.model || (data.providers.length && !data.providers.some(p => p.prefix ? choice.model.startsWith(p.prefix) : !/^(openai|gemini):/.test(choice.model)))) choice.model = data.default;
+  const { createModelPicker } = await import('/model-picker.js');
+  picker = createModelPicker({
+    providers: data.providers,
+    fetchModels: async id => { const r = await fetch('/api/models?provider=' + id); const body = await r.json(); if (!r.ok) throw new Error(body.error || 'could not load models'); return body.models; },
+    value: choice,
+    onChange: next => { choice = next; localStorage.setItem('checkto-model', next.model); localStorage.setItem('checkto-reasoning', next.reasoning); updateModelPicker(); },
+  });
+  // Warm the label with the current provider's names.
+  picker.lookup(data.providers.find(p => p.prefix && choice.model.startsWith(p.prefix))?.id || 'openrouter').then(() => updateModelPicker()).catch(() => {});
+  updateModelPicker();
+}).catch(() => { $('#model-label').textContent = choice.model || 'choose a model'; });
 function updateModelPicker() {
-  const careful = supervisorOn(), custom = $('#model').value === 'custom';
+  const careful = supervisorOn();
   $('#model-picker').hidden = !careful;
-  $('#model').disabled = !careful || $('#send').disabled;
-  const selectedModel = custom ? $('#custom-model').value.trim() : $('#model').value;
-  const preset = ['deepseek/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash', 'moonshotai/kimi-k3'].includes(selectedModel);
-  for (const option of $('#reasoning').options) {
-    option.hidden = option.disabled = (preset && ['minimal','medium','xhigh'].includes(option.value)) || (selectedModel === 'z-ai/glm-5.3-flash' && option.value === 'none');
-  }
-  $('#reasoning').value = [...$('#reasoning').options].some(o => o.value === savedReasoning && !o.disabled) ? savedReasoning : 'auto';
-  $('#reasoning').disabled = !careful || $('#send').disabled;
-
-  $('#custom-model').hidden = !custom;
-  $('#custom-model').disabled = !careful || !custom || $('#send').disabled;
-  $('#custom-model').required = careful && custom;
+  $('#model-button').disabled = !careful || $('#send').disabled || !picker;
+  $('#model-label').textContent = picker ? picker.label(choice) : (choice.model || 'loading models…');
 }
-$('#reasoning').onchange = () => { savedReasoning = $('#reasoning').value; localStorage.setItem('checkto-reasoning', savedReasoning); };
-$('#model').onchange = () => { localStorage.setItem('checkto-model', $('#model').value); updateModelPicker(); };
-$('#custom-model').oninput = () => { $('#custom-model').setCustomValidity(''); localStorage.setItem('checkto-custom-model', $('#custom-model').value); updateModelPicker(); };
+$('#model-button').onclick = () => picker?.open(choice);
 document.querySelectorAll('#mode button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x === b));
   updateModelPicker();
@@ -232,9 +215,9 @@ $('#f').onsubmit = async ev => {
   ev.preventDefault();
   const text = msg.value.trim(); if (!text) return;
   const supervisor = supervisorOn();
-  const reasoning = $('#reasoning').value;
-  const model = $('#model').value === 'custom' ? $('#custom-model').value.trim() : $('#model').value;
-  if (supervisor && !model) { $('#custom-model').setCustomValidity('enter a model ID'); $('#custom-model').reportValidity(); return; }
+  await providersReady;
+  const { model, reasoning } = choice;
+  if (supervisor && !model) { picker?.open(choice); return; }
   msg.value = '';
   el('msg user', esc(text));
   const typing = el('typing', 'starting browser');

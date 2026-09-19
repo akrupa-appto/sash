@@ -7,7 +7,7 @@ A local Chrome extension with the same fast (Jev) and careful (planner + Jev) mo
 1. Unzip `checkto-extension.zip`.
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked** and choose the `checkto-extension` folder containing `manifest.json`.
-4. In the settings tab, save your OpenRouter key. Optionally choose a direct TypeSafe connection for Jev.
+4. In the settings tab, save your OpenRouter key. Optionally add an OpenAI or Gemini key to plan with those APIs directly, and choose a direct TypeSafe connection for Jev. The planner model picker lists the models your keys unlock and the reasoning levels each model accepts.
 5. Pin Checkto in Chrome's extensions menu. Open a website, click Checkto, and enter a task. Type `@` to search tabs across all windows and add the ones you mean.
 
 Requires Chrome 118 or later. Chrome shows its debugger control banner during a task. **Stop**, closing the controlled tab, or cancelling Chrome's banner ends control. The agent can switch to existing website tabs and follow pages opened by the task. It attaches to tabs as needed and detaches when the task ends. Browser settings, the Chrome Web Store, extension pages, and controls inside embedded frames are not supported.
@@ -16,7 +16,7 @@ Requires Chrome 118 or later. Chrome shows its debugger control banner during a 
 
 Keys, settings, and a short chat history stay in `chrome.storage.local` in this Chrome profile. They are not synced, and there is no Checkto backend in this flow. During a task, instructions, open website tab titles and URLs, and visible content from visited tabs are sent directly to the selected model providers using your keys. Local extension storage is not an encrypted vault. The settings page can remove keys, and **new chat** clears the stored conversation. Uninstalling removes the extension's local data.
 
-OpenRouter supplies the planner and text generation. With direct TypeSafe and no OpenRouter key, fast mode can still click, select, and type text quoted in your task; generating new text needs an OpenRouter key. Model access and billing depend on your provider account.
+The planner runs on the provider its model names: OpenRouter by default, or the official OpenAI or Gemini API for models chosen from those tabs. Text generation uses OpenRouter when that key is present, otherwise the planner's provider. With direct TypeSafe and no other key, fast mode can still click, select, and type text quoted in your task. OpenAI and Gemini do not report per-request cost, so the cost counter stays at zero for those planners. Model access and billing depend on your provider account.
 
 ## Build
 

@@ -24,7 +24,7 @@ function persist() {
 }
 function safeError(error, settings = {}) {
   let text = String(error?.message || error || 'something went wrong');
-  for (const key of [settings.openrouterKey, settings.typesafeKey]) if (key) text = text.split(key).join('[redacted]');
+  for (const key of [settings.openrouterKey, settings.typesafeKey, settings.openaiKey, settings.geminiKey]) if (key) text = text.split(key).join('[redacted]');
   return text.slice(0, 12000);
 }
 async function stop() {
@@ -140,7 +140,7 @@ async function handle(message) {
     const settings = await readSettings();
     let configured = true;
     try { validateSettings(settings); } catch { configured = false; }
-    return { state, configured, mode: settings.mode };
+    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning };
   }
   if (message.type === 'stop') { await stop(); return { ok: true }; }
   if (message.type === 'clear') {

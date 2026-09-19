@@ -1,4 +1,5 @@
 import { env } from "./env.ts";
+import { chat, parseModel, providerKey } from "./providers.ts";
 // Thin client for Jev (TypeSafe System One). Works against TypeSafe directly or via OpenRouter.
 
 export type Question =
@@ -81,28 +82,23 @@ export async function decide(
 }
 
 // Jev cannot write text. When a step needs typed text that isn't in the goal, a small LLM writes it.
+// TEXT_MODEL picks the model (with the same provider prefixes as the planner). Without it, a cheap
+// OpenRouter model is used, or the planner's own provider when there is no OpenRouter key.
+export function textModel(): string {
+  const candidates = [env.TEXT_MODEL, "anthropic/claude-haiku-4.5", env.PLANNER_MODEL].filter((m): m is string => !!m);
+  const usable = candidates.find((m) => providerKey(parseModel(m).provider));
+  if (!usable) throw new Error("OPENROUTER_API_KEY needed for text generation");
+  return usable;
+}
+
 export async function writeText(prompt: string, signal?: AbortSignal): Promise<string> {
-  const key = env.OPENROUTER_API_KEY;
-  if (!key) throw new Error("OPENROUTER_API_KEY needed for text generation");
-  const model = env.TEXT_MODEL ?? "anthropic/claude-haiku-4.5";
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
+  const reply = await chat({
+    spec: textModel(),
+    system: "You fill one form field for a browser agent. Reply with ONLY the exact text to type. No quotes, no explanation.",
+    user: prompt,
+    effort: "auto",
+    maxTokens: 80,
     signal,
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      max_tokens: 80,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You fill one form field for a browser agent. Reply with ONLY the exact text to type. No quotes, no explanation.",
-        },
-        { role: "user", content: prompt },
-      ],
-    }),
   });
-  if (!res.ok) throw new Error(`text model ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const json = await res.json();
-  return String(json.choices?.[0]?.message?.content ?? "").trim().replace(/^["']|["']$/g, "");
+  return reply.content.trim().replace(/^["']|["']$/g, "");
 }
