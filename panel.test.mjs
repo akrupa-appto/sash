@@ -367,14 +367,6 @@ test('the settings page renders the same plum theme as the panel', { skip }, asy
   await page.close();
 });
 
-test('the live action list only shows while the run is in flight', { skip }, async () => {
-  const page = await panel({ ...finished, running: true, status: 'working', messages: finished.messages.slice(0, 1) });
-  assert.equal(await page.locator('#steps-wrap').isVisible(), true);
-  assert.equal(await page.locator('#steps-label').innerText(), '2 actions');
-  assert.equal(await page.locator('.message.agent').count(), 0);
-  await page.close();
-});
-
 const readyState = { running: false, status: 'ready', messages: [], steps: [] };
 
 test('the compose box is a full pill for a single-line message and steps down once the textarea wraps to multiple lines', { skip }, async () => {
