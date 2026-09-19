@@ -59,3 +59,25 @@ test('unchanged completion snapshot is reused on the next step', async () => {
   assert.equal(events.at(-1).status, 'done');
   assert.equal(snapshots, 2);
 });
+
+
+test('small dropdowns still select in a single request', async () => {
+  elements = [{ id: 1, kind: 'select', name: 'small', options: ['a', 'b'] }];
+  let requests = 0;
+  decideImpl = async () => { requests++; return response({ operation: choice('SELECT'), select_target: choice('el_1_opt_1') }); };
+  await run();
+  assert.deepEqual(selected, [1, 1]);
+  assert.equal(requests, 1);
+});
+
+test('aborting an in-flight model request ends stopped', async () => {
+  const controller = new AbortController();
+  const events: any[] = [];
+  decideImpl = async (_: any, __: any, signal: AbortSignal) => {
+    controller.abort();
+    signal.throwIfAborted();
+  };
+  await runTask(page, { goal: 'test', supervisor: false }, e => events.push(e), controller.signal);
+  assert.equal(events.at(-1).status, 'stopped');
+  assert.equal(events.filter(e => e.type === 'step').length, 0);
+});

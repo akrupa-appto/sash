@@ -7,6 +7,8 @@ const pending: any[] = [];
 let handler: any;
 let activeSignal: AbortSignal | undefined;
 let closedWhileUnaborted = false;
+let delayClose = false;
+const closing: (() => void)[] = [];
 mock.method(http, 'createServer', (fn: any) => { handler = fn; return { listen() {} } as any; });
 mock.module('../browser.ts', { namedExports: { launch: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) } });
 mock.module('../jev.ts', { namedExports: { jevVia: () => 'test' } });
@@ -19,7 +21,7 @@ mock.module('../agent.ts', { namedExports: { runTask: async (_: any, __: any, em
 process.env.MAX_SESSIONS = '6';
 await import('../server.ts');
 function browser() {
-  return { page: { url: () => 'https://example.org' }, browser: { close: async () => { if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; }, isConnected: () => true } };
+  return { page: { url: () => 'https://example.org' }, browser: { close: async () => { if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; if (delayClose) await new Promise<void>(resolve => closing.push(resolve)); }, isConnected: () => true } };
 }
 function request(url: string, body?: any) {
   const req: any = new EventEmitter(); req.method = 'POST'; req.url = url;
@@ -49,4 +51,24 @@ test('session reservations bound concurrent launches, release failures, and clos
   await task.done;
   assert.equal(closedWhileUnaborted, false);
   assert.match(task.res.body, /"status":"stopped"/);
+});
+
+
+test('concurrent evictions wait for browser shutdown before launching replacements', async () => {
+  const fill = request('/api/session');
+  pending.at(-1).resolve(browser());
+  await fill.done;
+  const before = pending.length;
+  delayClose = true;
+  const requests = Array.from({ length: 10 }, () => request('/api/session'));
+  assert.equal(closing.length, 6);
+  assert.equal(pending.length, before, 'no replacement launches before shutdown');
+  closing.forEach(resolve => resolve());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pending.length - before, 6);
+  pending.slice(before).forEach(p => p.resolve(browser()));
+  await Promise.all(requests.map(r => r.done));
+  assert.equal(requests.filter(r => r.res.code === 200).length, 6);
+  assert.equal(requests.filter(r => r.res.code === 429).length, 4);
+  delayClose = false;
 });
