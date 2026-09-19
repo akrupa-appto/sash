@@ -30,7 +30,12 @@ globalThis.chrome = {
     onMessage: events(), onInstalled: events(), openOptionsPage: async () => {},
     sendMessage: async message => {
       messages.push(structuredClone(message));
-      if (message.type === 'permission') { accessPrompts.push(message.prompt); return { allow: allowAccess }; }
+      // Standing in for the panel: its Allow click is what asks Chrome, so a yes is also a grant.
+      if (message.type === 'permission') {
+        accessPrompts.push(message.prompt);
+        if (allowAccess) grantedOrigins.push(...message.prompt.origins);
+        return { allow: allowAccess };
+      }
     },
   },
   tabs: {
@@ -46,7 +51,8 @@ globalThis.chrome = {
   windows: { onFocusChanged: events() },
   permissions: {
     contains: async ({ origins }) => origins.every(o => grantedOrigins.includes(o)),
-    request: async ({ origins }) => { grantedOrigins.push(...origins); return true; },
+    // Chrome refuses this outside a user gesture, and a service worker never has one.
+    request: async () => { throw new Error('the service worker must not call permissions.request'); },
   },
   debugger: { onDetach: events() },
   sidePanel: { setPanelBehavior: async () => {}, open: async opts => { sidePanelOpens.push(opts); } },

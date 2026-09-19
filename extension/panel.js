@@ -137,10 +137,28 @@ async function load() {
   configured = response.configured; $('#setup').hidden = configured;
   render(response.state); await refreshTabs();
 }
+// Host access is asked for at the moment the agent needs the site; the wording is the guard.
+// Chrome only grants an optional permission from a user gesture, so the Allow button below is
+// what calls chrome.permissions.request — the worker cannot, and does not try.
+function askForAccess(prompt) {
+  const allow = $('#permission-allow');
+  const deny = $('#permission-deny');
+  $('#permission-title').textContent = prompt.title;
+  $('#permission-detail').textContent = prompt.detail;
+  allow.textContent = prompt.allow;
+  deny.textContent = prompt.deny;
+  $('#permission').hidden = false;
+  return new Promise(resolve => {
+    const done = answer => { $('#permission').hidden = true; allow.onclick = null; deny.onclick = null; resolve(answer); };
+    // Nothing may be awaited before request(): the gesture ends the moment this handler yields.
+    allow.onclick = () => chrome.permissions.request({ origins: prompt.origins }, ok => { void chrome.runtime.lastError; done(ok === true); });
+    deny.onclick = () => done(false);
+    allow.focus();
+  });
+}
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   if (message.type === 'state') { render(message.state); return; }
-  // Host access is asked for at the moment the agent needs the site; the wording is the guard.
-  if (message.type === 'permission') { reply({ allow: confirm(`${message.prompt.title}\n\n${message.prompt.detail}`) }); return true; }
+  if (message.type === 'permission') { void askForAccess(message.prompt).then(allow => reply({ allow })); return true; }
 });
 chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.settings) void load().catch(showError); });
 let refreshTimer;

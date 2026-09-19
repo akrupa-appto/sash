@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+// Chrome only grants an optional permission from inside a user gesture, so the panel's Allow
+// click is what calls chrome.permissions.request. Here `grant` stands in for that click.
 const requested = [];
 let held = [];
 globalThis.chrome = {
@@ -12,22 +14,25 @@ globalThis.chrome = {
 const { ensureOriginAccess, ensureAllSitesAccess, originPrompt, allSitesPrompt } = await import('./extension/permissions.js');
 
 const reset = () => { requested.length = 0; held = []; };
+// What the panel does with a prompt: ask Chrome from the click, then answer the worker.
+const grant = asked => prompt => { asked.push(prompt); return chrome.permissions.request({ origins: prompt.origins }); };
 
 test('a single site is asked for with "allow checkto to access {origin}?"', async () => {
   reset();
   const asked = [];
-  const ok = await ensureOriginAccess('https://example.test/page?x=1', prompt => { asked.push(prompt); return true; });
+  const ok = await ensureOriginAccess('https://example.test/page?x=1', grant(asked));
   assert.equal(ok, true);
   assert.equal(asked.length, 1);
   assert.equal(asked[0].title, 'allow checkto to access https://example.test?');
   assert.equal(asked[0].scope, 'origin');
+  assert.deepEqual(asked[0].origins, ['https://example.test/*']);
   assert.deepEqual(requested, [['https://example.test/*']]);
 });
 
 test('all-sites access is asked for with distinctly scarier wording than one site', async () => {
   reset();
   const asked = [];
-  await ensureAllSitesAccess(prompt => { asked.push(prompt); return true; });
+  await ensureAllSitesAccess(grant(asked));
   const all = asked[0];
   const one = originPrompt('https://example.test');
   assert.equal(all.scope, 'all-sites');
@@ -46,6 +51,14 @@ test('neither request silently succeeds without a prompt', async () => {
   await assert.rejects(ensureAllSitesAccess(), /does not have access to every site/);
   await assert.rejects(ensureAllSitesAccess(() => false), /does not have access to every site/);
   assert.deepEqual(requested, [], 'chrome.permissions.request must never run without a yes');
+});
+
+// A yes on its own is not access: the user can still dismiss Chrome's own prompt.
+test('a yes that chrome did not actually grant is still a failure', async () => {
+  reset();
+  await assert.rejects(ensureOriginAccess('https://example.test/', () => true), /chrome did not grant access to https:\/\/example\.test/);
+  await assert.rejects(ensureAllSitesAccess(() => true), /try again and accept chrome's prompt/);
+  assert.deepEqual(requested, [], 'the caller asking is what runs request, never permissions.js');
 });
 
 test('an origin already granted is not asked for again', async () => {
