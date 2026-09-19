@@ -9,7 +9,8 @@ const EFFORT_LABELS = { none: 'off', minimal: 'minimal', low: 'low', medium: 'me
 // setting the model accepts (off where allowed, the lowest level otherwise).
 export function reasoningChoices(meta) {
   if (!meta) return [{ value: 'auto', label: 'auto', hint: 'this model has no reasoning control' }];
-  let efforts = meta.supported_efforts === null || meta.supported_efforts === undefined ? EFFORTS.filter(e => e !== 'none') : [...meta.supported_efforts];
+  // null = every effort is accepted; undefined = the model reasons but exposes no effort selection (on/off only).
+  let efforts = meta.supported_efforts === null ? EFFORTS.filter(e => e !== 'none') : meta.supported_efforts === undefined ? [] : [...meta.supported_efforts];
   if (!meta.mandatory && !efforts.includes('none')) efforts.push('none');
   if (meta.mandatory) efforts = efforts.filter(e => e !== 'none');
   efforts.sort((a, b) => EFFORTS.indexOf(a) - EFFORTS.indexOf(b));
@@ -91,6 +92,7 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
   const cache = new Map();
   const state = { provider: providers[0]?.id, model: value?.model || '', reasoning: value?.reasoning || 'auto', info: undefined, custom: false };
   let models = [];
+  let loadSeq = 0; // a slower earlier provider load must not overwrite the tab the user switched to
 
   const providerOf = spec => providers.find(p => p.prefix && spec.startsWith(p.prefix))?.id || (providers.some(p => p.id === 'openrouter') ? 'openrouter' : providers[0]?.id);
 
@@ -113,14 +115,15 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
     const sel = $('.mp-row[aria-selected=true]'); if (sel) sel.scrollIntoView({ block: 'nearest' });
   }
   async function loadProvider(id) {
+    const seq = ++loadSeq;
     state.provider = id; renderTabs();
     $('.mp-list').innerHTML = '<p class="mp-empty">loading models…</p>';
     $('.mp-custom').hidden = !allowCustom || id !== 'openrouter';
     try {
-      if (!cache.has(id)) cache.set(id, await fetchModels(id));
+      if (!cache.has(id)) { const list = await fetchModels(id); if (seq !== loadSeq) return; cache.set(id, list); }
       models = cache.get(id);
       if (state.model && !state.info) state.info = models.find(m => m.id === state.model);
-    } catch (err) { models = []; $('.mp-list').innerHTML = `<p class="mp-empty mp-error">${esc(err.message)}</p>`; renderReasoning(); return; }
+    } catch (err) { if (seq !== loadSeq) return; models = []; $('.mp-list').innerHTML = `<p class="mp-empty mp-error">${esc(err.message)}</p>`; renderReasoning(); return; }
     renderList(); renderReasoning();
   }
   function select(id, info) { state.model = id; state.info = info; state.custom = !info; renderList(); renderReasoning(); }
@@ -128,7 +131,7 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
   dlg.querySelectorAll('[role=tab]').forEach(b => b.addEventListener('click', () => loadProvider(b.dataset.provider)));
   $('.mp-search').addEventListener('input', renderList);
   $('.mp-list').addEventListener('click', e => { const row = e.target.closest('.mp-row'); if (row) { $('.mp-custom input').value = ''; select(row.dataset.id, models.find(m => m.id === row.dataset.id)); } });
-  $('.mp-custom input').addEventListener('input', e => { const v = e.target.value.trim(); if (v) select(v, undefined); });
+  $('.mp-custom input').addEventListener('input', e => { const v = e.target.value.trim(); if (v) select(v, undefined); else if (state.custom) { state.model = ''; state.info = undefined; state.custom = false; renderList(); renderReasoning(); } });
   $('.mp-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.reasoning = b.dataset.value; renderReasoning(); } });
   $('.mp-close').addEventListener('click', () => dlg.close());
   $('.mp-cancel').addEventListener('click', () => dlg.close());
