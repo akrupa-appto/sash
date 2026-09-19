@@ -313,3 +313,31 @@ test('a high-risk action waits for the user before it runs, a low-risk one does 
   assert.equal(low.status, 'done');
   assert.equal(executed, 1);
 });
+
+// A run that ends blocked or errored explains its reason but never names its outcome in plain terms, so a
+// one-word tag goes on the message itself: the panel shows the agent's own text verbatim.
+test('a run that finishes surfaces "done" on its own message', async () => {
+  plans = [{ status: 'done', answer: 'read the file' }];
+  decisions = [choice('DONE')];
+  const result = await run(true);
+  assert.equal(result.status, 'done');
+  assert.match(result.message, /^done: /);
+});
+
+test('a run that ends blocked surfaces "could not finish" on its own message', async () => {
+  plans = [{ status: 'blocked', why: 'this is a preview, not the raw file' }];
+  decisions = [choice('CLICK')];
+  const result = await run(true);
+  assert.equal(result.status, 'blocked');
+  assert.match(result.message, /^could not finish: /);
+});
+
+test('a run that pauses for the user surfaces "needs you" on its own message', async () => {
+  plans = [{ status: 'question', question: 'which README do you mean?', why: 'two files match' }];
+  decisions = [];
+  const result = await run(true);
+  assert.equal(result.status, 'question');
+  assert.match(result.message, /^needs you: /);
+  // The question itself stays clean for the prompt the panel shows.
+  assert.equal(result.question, 'which README do you mean?');
+});
