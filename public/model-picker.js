@@ -46,9 +46,10 @@ dialog.mp::backdrop{background:rgba(0,0,0,.55);backdrop-filter:blur(2px)}
 .mp-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;width:100%;text-align:left;background:transparent;border:0;border-radius:8px;padding:8px 10px;color:var(--fg,#e6e6e6);font:inherit;cursor:pointer}
 .mp-row:hover{background:var(--mp-active,rgba(255,255,255,.06))}
 .mp-row[aria-selected=true]{background:var(--mp-active,rgba(255,255,255,.1));outline:1px solid var(--acc,#7cf5b1)}
-.mp-row b{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mp-row small{color:var(--dim,#8b909a);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mp-row .mp-meta{grid-row:1/3;align-self:center;text-align:right;color:var(--dim,#8b909a);font-size:11px;white-space:nowrap}
+.mp-row b{grid-column:1;font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-row small{grid-column:1;color:var(--dim,#8b909a);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-row .mp-meta{grid-column:2;grid-row:1/3;align-self:center;text-align:right;color:var(--dim,#8b909a);font-size:11px;white-space:nowrap}
+@media (max-width:480px){.mp-row{grid-template-columns:minmax(0,1fr)}.mp-row .mp-meta{grid-column:1;grid-row:3;text-align:left}}
 .mp-empty{padding:24px;text-align:center;color:var(--dim,#8b909a);font-size:12px}
 .mp-foot{border-top:1px solid var(--line,#26292f);padding:12px 16px;display:flex;flex-direction:column;gap:10px}
 .mp-custom{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--dim,#8b909a)}
@@ -60,7 +61,7 @@ dialog.mp::backdrop{background:rgba(0,0,0,.55);backdrop-filter:blur(2px)}
 .mp-hint{flex-basis:100%;font-size:11px;color:var(--dim,#8b909a);min-height:1.2em}
 .mp-actions{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .mp-actions .mp-selected{font-size:12px;color:var(--dim,#8b909a);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.mp-actions button{background:var(--acc,#7cf5b1);color:#000;border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+.mp-actions button{background:var(--acc,#7cf5b1);color:#000;border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer;white-space:nowrap}
 .mp-actions button:disabled{opacity:.4;cursor:default}
 .mp-actions button.mp-cancel{background:transparent;color:var(--dim,#8b909a);border:1px solid var(--line,#26292f);font-weight:400}
 .mp-error{color:var(--bad,#f57c7c);font-size:12px}
@@ -150,6 +151,7 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
       const info = [...cache.values()].flat().find(x => x.id === m);
       return m ? `${info?.name || m.replace(/^(openai|gemini):/, '')} · reasoning ${EFFORT_LABELS[current.reasoning] || current.reasoning || 'auto'}` : 'choose a model';
     },
-    lookup: fetchModels,
+    // Load a provider's list ahead of time so labels can show model names before the dialog opens.
+    async warm(spec) { const id = providerOf(spec || ''); if (!cache.has(id)) cache.set(id, await fetchModels(id)); },
   };
 }

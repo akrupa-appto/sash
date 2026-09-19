@@ -144,9 +144,9 @@ const providersReady = fetch('/api/providers').then(r => r.json()).then(async da
     value: choice,
     onChange: next => { choice = next; localStorage.setItem('checkto-model', next.model); localStorage.setItem('checkto-reasoning', next.reasoning); updateModelPicker(); },
   });
-  // Warm the label with the current provider's names.
-  picker.lookup(data.providers.find(p => p.prefix && choice.model.startsWith(p.prefix))?.id || 'openrouter').then(() => updateModelPicker()).catch(() => {});
   updateModelPicker();
+  picker.warm(choice.model).then(updateModelPicker).catch(() => {}); // model names for the label
+
 }).catch(() => { $('#model-label').textContent = choice.model || 'choose a model'; });
 function updateModelPicker() {
   const careful = supervisorOn();
