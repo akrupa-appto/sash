@@ -60,7 +60,12 @@ async function panel(state) {
   });
   await page.goto(`${base}/panel.html`);
   await page.waitForFunction(() => window.onState);
-  await page.evaluate(s => window.onState({ type: 'state', state: s }), state);
+  // A live run's age is measured against the page's own clock at the moment it renders, so a test
+  // that cares about it says how old the run is rather than when it started.
+  await page.evaluate(s => {
+    if (s.startedAgoMs !== undefined) s.startedAt = Date.now() - s.startedAgoMs;
+    window.onState({ type: 'state', state: s });
+  }, state);
   return page;
 }
 
@@ -100,7 +105,7 @@ test('a run shorter than one second shows no duration divider at all', { skip },
 });
 
 test('the live action list only shows while the run is in flight, and ticks a "Working" duration once a second has passed', { skip }, async () => {
-  const page = await panel({ ...finished, running: true, status: 'working', startedAt: Date.now() - 2000, messages: finished.messages.slice(0, 1) });
+  const page = await panel({ ...finished, running: true, status: 'working', startedAgoMs: 2000, messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);
   assert.equal(await page.locator('#steps-label').innerText(), 'Opened tab: ~/upload, clicked the "upload" button');
   assert.equal(await page.locator('.message.agent').count(), 0);
@@ -109,7 +114,7 @@ test('the live action list only shows while the run is in flight, and ticks a "W
 });
 
 test('a live run younger than one second shows no duration yet', { skip }, async () => {
-  const page = await panel({ ...finished, running: true, status: 'working', startedAt: Date.now(), messages: finished.messages.slice(0, 1) });
+  const page = await panel({ ...finished, running: true, status: 'working', startedAgoMs: 0, messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#live-duration').isHidden(), true);
   await page.close();
 });
@@ -161,6 +166,30 @@ test('a mid-run question offers the choices and a free-text answer beside them',
   assert.equal(await page.locator('.request-text').count(), 1);
   await captureSent(page);
   await page.locator('.request-options button').first().click();
+  assert.deepEqual(await page.evaluate(() => window.sent), [{ type: 'answer', id: 'pick-1', outcome: 'submitted', choice: 'first' }]);
+  await page.close();
+});
+
+test('a picker that allows no answer of its own shows the choices and nothing to type into', { skip }, async () => {
+  const page = await panel(waiting([{ id: 'pick-2', type: 'option_picker', question: 'which one?', options: ['first', 'second'] }]));
+  assert.deepEqual(await page.locator('.request-options button').allInnerTexts(), ['first', 'second']);
+  assert.equal(await page.locator('.request-text').count(), 0);
+  // Declining is still on offer: a card with no way out of it is the thing this protocol avoids.
+  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['skip']);
+  await page.close();
+});
+
+test('an answer already on its way is sent once, however often the button is pressed', { skip }, async () => {
+  const page = await panel(waiting([{ id: 'pick-1', type: 'option_picker', question: 'which tab did you mean?', options: ['first', 'second'], allowFreeText: true }]));
+  // Hold the answer in flight, the way a busy worker would.
+  await page.evaluate(() => {
+    window.sent = [];
+    chrome.runtime.sendMessage = async message => { window.sent.push(message); return new Promise(() => {}); };
+  });
+  const first = page.locator('.request-options button').first();
+  await first.click();
+  assert.equal(await first.isDisabled(), true);
+  await page.locator('.request-options button').nth(1).click({ force: true });
   assert.deepEqual(await page.evaluate(() => window.sent), [{ type: 'answer', id: 'pick-1', outcome: 'submitted', choice: 'first' }]);
   await page.close();
 });

@@ -137,9 +137,21 @@ const el = (tag, className, text) => {
   if (text !== undefined) node.textContent = text;
   return node;
 };
+// One answer per card. A second click while the first is still travelling would reach a worker that
+// has already cleared the request, and the user would be shown "no longer waiting" for an answer that
+// actually went through. The id is held until the card is replaced, or released if the send failed.
+let answering;
 const answerRequest = async (pending, body) => {
+  if (answering) return;
+  answering = pending.id;
+  const controls = [...$('#request').querySelectorAll('button, input')];
+  for (const control of controls) control.disabled = true;
   try { await request({ type: 'answer', id: pending.id, ...body }); }
-  catch (err) { showError(err); }
+  catch (err) {
+    answering = undefined;
+    for (const control of controls) control.disabled = false;
+    showError(err);
+  }
 };
 function confirmScope(card, pending, scope) {
   card.replaceChildren();
@@ -221,15 +233,20 @@ function requestCard(pending) {
     }
     form.append(options);
   }
-  const free = document.createElement('input');
-  free.type = 'text'; free.className = 'request-text';
-  free.placeholder = pending.options?.length ? 'or answer in your own words' : 'your answer';
-  form.append(free);
-  const send = el('button', undefined, 'send'); send.type = 'submit';
+  // A picker says whether an answer of the user's own is allowed beside the choices. A question with
+  // no options is always answered in words, so there the box is the only way to answer at all.
+  const free = !pending.options?.length || pending.allowFreeText ? document.createElement('input') : undefined;
+  if (free) {
+    free.type = 'text'; free.className = 'request-text';
+    free.placeholder = pending.options?.length ? 'or answer in your own words' : 'your answer';
+    form.append(free);
+    const send = el('button', undefined, 'send'); send.type = 'submit';
+    form.addEventListener('submit', event => { event.preventDefault(); void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, text: free.value }); });
+    actions.append(send);
+  }
   const skip = el('button', 'secondary', 'skip'); skip.type = 'button';
   skip.addEventListener('click', () => void answerRequest(pending, { outcome: RequestOutcome.DECLINED }));
-  form.addEventListener('submit', event => { event.preventDefault(); void answerRequest(pending, { outcome: RequestOutcome.SUBMITTED, text: free.value }); });
-  actions.append(send, skip);
+  actions.append(skip);
   form.append(actions);
   card.append(form);
   return card;
@@ -239,6 +256,10 @@ function renderRequest(state) {
   $('#blocked').textContent = reason || '';
   $('#blocked').hidden = running || !reason;
   const pending = running ? undefined : pickBlocking(state.requests || []);
+  // An answer already on its way keeps its card exactly as it is: redrawing it would re-enable the
+  // buttons the user just used and throw away what they typed into it.
+  if (pending && answering === pending.id) return;
+  answering = undefined;
   $('#request').hidden = !pending;
   $('#request').replaceChildren(...(pending ? [requestCard(pending)] : []));
 }
