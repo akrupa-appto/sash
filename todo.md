@@ -50,8 +50,8 @@ adam's rule: fixed means a test fails if it comes back. one line per fixed item,
 | 2 | clicked "skip for now (demo mode)" instead of the task | `agent.test.mjs` — jev cannot swap the control the planner named for a skip button |
 | 3 | claimed success it had not achieved | `agent.test.mjs` — navigation alone does not prove a planned final action completed the task |
 | 5, 6 | waited four steps in a row instead of looking | `agent.test.mjs` — after three waits in a row the next step must inspect the page instead of waiting |
-| 9 | stopped at a login page saying nothing | `extension-background.test.mjs` — chrome cancelling browser control aborts the current task and explains what ended it |
-| 10 | `chrome-extension://` attach error with no explanation | `extension.test.mjs` — chrome adapter rejects internal tabs before attaching; `extension-background.test.mjs` — a failed popup attachment produces one terminal error message |
+| 9 | stopped at a login page saying nothing | `extension-background.test.mjs` — Chrome cancelling browser control aborts the current task and explains what ended it |
+| 10 | `chrome-extension://` attach error with no explanation | `extension.test.mjs` — Chrome adapter rejects internal tabs before attaching; `extension-background.test.mjs` — a failed popup attachment produces one terminal error message |
 | 11 | previous run's steps vanished on the next message | `extension-background.test.mjs` — a finished run keeps its actions on the reply it produced |
 | 12 | never said it had completed the task | `agent.test.mjs` — completion uses the operation decision without buying an unused second answer |
 | 13 | answer rendered off-screen above the steps | `panel.test.mjs` — a finished run shows its answer after its own actions, not before them |
