@@ -102,8 +102,10 @@ function stepElement(s) {
 function render(state) {
   currentState = state; running = state.running;
   $('#intro').hidden = !!state.messages.length;
-  $('#messages').replaceChildren(...state.messages.map(m => {
-    const el = document.createElement('div'); el.className = `message ${m.role}`;
+  // The run stopped on a question: the last reply is what the user has to answer, not a finished result.
+  const waiting = !running && state.status === 'question';
+  $('#messages').replaceChildren(...state.messages.map((m, i) => {
+    const el = document.createElement('div'); el.className = `message ${m.role}${waiting && m.role === 'agent' && i === state.messages.length - 1 ? ' asking' : ''}`;
     const label = document.createElement('span'); label.className = 'message-label'; label.textContent = m.role === 'user' ? 'you' : 'checkto';
     const body = document.createElement('div'); body.textContent = m.text;
     el.append(label);
@@ -122,7 +124,7 @@ function render(state) {
   $('#steps-label').textContent = actionLabel(state.steps.length);
   $('#steps').replaceChildren(...state.steps.map(stepElement));
   const latest = state.steps.at(-1);
-  $('#status-text').textContent = running ? (latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', max_steps: 'step limit reached' }[state.status] || state.status);
+  $('#status-text').textContent = running ? (latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', question: 'waiting for an answer', max_steps: 'step limit reached' }[state.status] || state.status);
   $('#status-text').title = $('#status-text').textContent;
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);

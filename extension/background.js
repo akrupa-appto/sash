@@ -115,7 +115,7 @@ async function execute(run, message) {
     const mentioned = await Promise.all((message.tabIds || []).map(id => chrome.tabs.get(id)));
     const references = mentioned.map(t => `tab ${t.id}: ${t.title || ''} (${t.url})`).join('\n');
     await runTask(page, {
-      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), supervisor: mode === 'careful', model: settings.model,
+      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), resume: message.resume, supervisor: mode === 'careful', model: settings.model,
       reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true,
       browserTabs: {
         list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
@@ -145,6 +145,8 @@ async function execute(run, message) {
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
+    // A run that stopped to ask something waits here: the user's next message continues it with its own context.
+    state.pending = outcome?.status === 'question' ? outcome.pending : undefined;
     // Keep the run's actions with the reply they produced so earlier runs still show their steps.
     state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
     state.messages = state.messages.slice(-20);
@@ -174,10 +176,12 @@ async function handle(message) {
     if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
     const run = { controller: new AbortController(), pages: [], attaching: new Set() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
+    // This message answers the question the last run stopped on, so it continues that run instead of starting one.
+    const resume = state.pending;
+    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, pending: undefined };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
-    void execute(run, { ...message, goal: message.goal.trim() });
+    void execute(run, { ...message, goal: message.goal.trim(), resume });
     return { ok: true };
   }
   throw new Error('unknown request');
