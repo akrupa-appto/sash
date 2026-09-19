@@ -3,9 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.ts"
+    "test": "node --experimental-test-module-mocks --test *.test.mjs tests/*.test.ts",
+    "start": "node --env-file-if-exists=.env server.ts",
+    "build:extension": "node scripts/build-extension.mjs",
+    "package:extension": "node scripts/package-extension.mjs",
+    "pretest": "npm run build:extension",
+    "test:extension": "node scripts/verify-extension-installed.mjs"
   },
   "dependencies": {
     "playwright": "^1.63.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

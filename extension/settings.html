@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto · settings</title><link rel="stylesheet" href="style.css"></head>
+<body><main class="settings-page">
+<header><div class="eyebrow">checkto</div><h1>your browser. your keys.</h1><p>connect your models once, then open checkto from the Chrome toolbar.</p></header>
+<form id="settings">
+<section><h2>connections</h2>
+<div class="field"><label for="openrouterKey">OpenRouter API key</label><div class="key-row"><input id="openrouterKey" name="openrouterKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…"><button type="button" class="secondary" data-reveal="openrouterKey" aria-label="show OpenRouter key">show</button></div><small>powers careful mode, text generation, and Jev through OpenRouter. <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noreferrer">get a key</a></small></div>
+<div class="field"><label for="provider">Jev connection</label><select id="provider" name="provider"><option value="openrouter">OpenRouter · use the key above</option><option value="typesafe">TypeSafe · connect directly</option></select></div>
+<div class="field" id="typesafe-field" hidden><label for="typesafeKey">TypeSafe API key</label><div class="key-row"><input id="typesafeKey" name="typesafeKey" type="password" autocomplete="off" spellcheck="false"><button type="button" class="secondary" data-reveal="typesafeKey" aria-label="show TypeSafe key">show</button></div><small>optional direct connection for Jev. OpenRouter is still needed for careful mode and writing new text.</small></div>
+<p class="privacy muted">keys stay in this Chrome profile, in local extension storage. they are never synced or sent to a Checkto server. during a task, page text and your instructions go directly to your selected model providers.</p>
+</section>
+<section><h2>agent preferences</h2>
+<div class="two"><div class="field"><label for="mode">default mode</label><select id="mode" name="mode"><option value="careful">careful · planner + Jev</option><option value="fast">fast · Jev only</option></select></div><div class="field"><label for="maxSteps">step limit</label><input id="maxSteps" name="maxSteps" type="number" min="1" max="60" required></div></div>
+<div class="field"><label for="model">planner model</label><input id="model" name="model" list="models" placeholder="provider/model-id" spellcheck="false"><datalist id="models"><option value="deepseek/deepseek-v4.1-flash"><option value="z-ai/glm-5.3-flash"><option value="moonshotai/kimi-k3"></datalist><small>an OpenRouter model ID. used only in careful mode.</small></div>
+<div class="field"><label for="reasoning">reasoning</label><select id="reasoning" name="reasoning"><option value="auto">auto</option><option value="none">off</option><option value="low">low</option><option value="high">high</option><option value="max">maximum</option></select><small>support depends on your selected model. GLM requires reasoning.</small></div>
+<details><summary>advanced model settings</summary><div class="field"><label for="jevModel">Jev model</label><input id="jevModel" name="jevModel" placeholder="leave blank for the provider default" spellcheck="false"></div><div class="field"><label for="textModel">text model</label><input id="textModel" name="textModel" spellcheck="false"><small>used when the task needs text that Jev cannot copy from your instructions.</small></div></details>
+</section>
+<div class="save-row"><div class="row"><button type="submit">save settings</button><button id="clear-keys" class="secondary" type="button">remove saved keys</button></div><div id="status" class="status" role="status" aria-live="polite"></div></div>
+</form></main><script type="module" src="options.js"></script></body></html>

@@ -3,3 +3,5 @@ node_modules
 wis-199-proof/
 runs/
 data/
+
+dist/

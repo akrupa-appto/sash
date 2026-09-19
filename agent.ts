@@ -212,7 +212,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             write_new_text: "None of the provided texts fit; a language model should write the text",
           },
         };
-      if (selects.length) {
+      const splitSelect = selects.reduce((n, e) => n + e.options!.length, 0) > 240;
+      if (selects.length && splitSelect) {
+        questions.select_target = { type: "choice", instructions: "If the operation is SELECT, which dropdown should be changed?", criteria: Object.fromEntries(selects.map(e => [`el_${e.id}`, b.describe(e)])) };
+      } else if (selects.length) {
         const crit: Record<string, string> = {};
         for (const e of selects) e.options!.forEach((o, i) => (crit[`el_${e.id}_opt_${i}`] = `${b.describe(e)} → option "${o}"`));
         questions.select_target = { type: "choice", instructions: "If the operation is SELECT, which dropdown option should be selected?", criteria: crit };
@@ -238,6 +241,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       let note: string | undefined;
       const t0 = performance.now();
       const chosen = op.choice;
+      let jevMs = res.ms;
+      let stepCost = res.cost_usd;
 
       // ---- 3. execute
       try {
@@ -274,9 +279,21 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           case "SELECT": {
             const key = pick("select_target") ?? "";
             const m = key.match(/^el_(\d+)_opt_(\d+)$/);
-            const id = Number(m?.[1]);
-            const idx = Number(m?.[2]);
-            const e = snap.elements.find((x) => x.id === id);
+            const id = splitSelect ? elId(key) : Number(m?.[1]);
+            let idx = Number(m?.[2]);
+            const e = selects.find((x) => x.id === id);
+            if (splitSelect) {
+              if (!e) throw new Error("No matching dropdown selected");
+              const option = await decide(state, {
+                select_option: { type: "choice", instructions: `Which option in ${b.describe(e)} carries out goal?`, criteria: Object.fromEntries(e.options!.map((o, i) => [`opt_${i}`, o])) },
+              }, signal);
+              totalCost += option.cost_usd;
+              stepCost += option.cost_usd;
+              jevMs += option.ms;
+              res.answers.select_option = option.answers.select_option;
+              idx = Number((option.answers.select_option as ChoiceAnswer)?.choice.match(/^opt_(\d+)$/)?.[1]);
+            }
+            if (!e || !Number.isInteger(idx) || idx < 0 || idx >= e.options!.length) throw new Error("No matching dropdown option selected");
             action = `SELECT "${e?.options?.[idx]}" in ${e ? b.describe(e) : `[${id}]`}`;
             await b.selectOption(page, id, idx);
             break;
@@ -300,6 +317,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       } catch (err) {
         note = `action failed: ${(err as Error).message.split("\n")[0].slice(0, 200)}`;
       }
+      signal.throwIfAborted();
       await b.settle(page);
       const execMs = performance.now() - t0;
 
@@ -315,10 +333,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         plan: planText,
         why: planWhy,
         action,
-        jevMs: Math.round(res.ms),
+        jevMs: Math.round(jevMs),
         planMs,
         execMs: Math.round(execMs),
-        costUsd: res.cost_usd,
+        costUsd: stepCost,
         note,
       });
 

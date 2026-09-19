@@ -17,16 +17,25 @@ const indexHtml = () => fs.readFileSync(path.join(root, "public", "index.html"))
 
 // One chat = one session = one browser. Tasks run one at a time on the same page, so
 // "go to wikipedia" followed by "search for X" works as a conversation.
-type Session = { id: string; browser: Awaited<ReturnType<typeof launch>>; busy: boolean; lastUsed: number; tasks: string[]; recordingBusy?: boolean };
+type Session = { id: string; browser: Awaited<ReturnType<typeof launch>>; busy: boolean; abort?: AbortController; lastUsed: number; tasks: string[]; recordingBusy?: boolean };
 const sessions = new Map<string, Session>();
+// Includes launches and browsers still closing, not just published sessions.
+let occupiedSlots = 0;
 
 async function closeSession(id: string) {
   const s = sessions.get(id);
   if (!s) return;
   sessions.delete(id);
-  const record = readRecording(id);
-  if (record) { record.state = 'ended'; saveRecording(record); }
+  s.abort?.abort();
+  try {
+    const record = readRecording(id);
+    if (record) { record.state = 'ended'; saveRecording(record); }
+  } catch (err) {
+    // Recording metadata must not prevent browser cleanup or strand capacity.
+    console.warn((err as Error).message);
+  }
   await s.browser.close().catch((err) => console.warn((err as Error).message));
+  occupiedSlots--;
 }
 
 setInterval(() => {
@@ -100,14 +109,17 @@ export const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true, via: jevVia(), browser: "anchor", sessions: sessions.size, busy: [...sessions.values()].filter((s) => s.busy).length });
   }
   if (req.method === "POST" && url.pathname === "/api/session") {
-    if (sessions.size >= MAX_SESSIONS) {
+    let evict: Session | undefined;
+    if (occupiedSlots >= MAX_SESSIONS) {
       // evict the oldest idle session
-      const idle = [...sessions.values()].filter((s) => !s.busy).sort((a, b) => a.lastUsed - b.lastUsed)[0];
-      if (!idle) return json(res, 429, { error: "all browser sessions are busy, try again shortly" });
-      await closeSession(idle.id);
+      evict = [...sessions.values()].filter((s) => !s.busy).sort((a, b) => a.lastUsed - b.lastUsed)[0];
+      if (!evict) return json(res, 429, { error: "all browser sessions are busy, try again shortly" });
     }
+    // Reserve synchronously; an eviction must finish before its replacement launches.
+    occupiedSlots++;
     const id = crypto.randomBytes(8).toString("hex");
     try {
+      if (evict) await closeSession(evict.id);
       const browser = await launch();
       try {
         // exe.dev alternate ports require the user's login. Fulfil only this app's
@@ -123,6 +135,7 @@ export const server = http.createServer(async (req, res) => {
         sessions.set(id, { id, browser, busy: false, lastUsed: Date.now(), tasks: [] });
       } catch (e) { await browser.close().catch(() => {}); throw e; }
     } catch (e) {
+      occupiedSlots--;
       return json(res, 500, { error: (e as Error).message });
     }
     return json(res, 200, { id, liveViewUrl: sessions.get(id)!.browser.liveViewUrl });
@@ -148,6 +161,9 @@ export const server = http.createServer(async (req, res) => {
     } catch {
       return json(res, 400, { error: "bad json" });
     }
+    // Reading the body yields: another request may have closed or claimed this session.
+    if (sessions.get(s.id) !== s) return json(res, 404, { error: "session expired, start a new chat" });
+    if (s.busy) return json(res, 409, { error: "a task is already running in this chat" });
     const message = String(body.message ?? "").trim();
     if (!message) return json(res, 400, { error: "message required" });
     let model = plannerModel();
@@ -179,6 +195,7 @@ export const server = http.createServer(async (req, res) => {
       if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + "\n");
     };
     const ac = new AbortController();
+    s.abort = ac;
     res.on("close", () => { if (!res.writableEnded) ac.abort(); });
     const previousTasks = [...s.tasks];
     try {
@@ -194,6 +211,7 @@ export const server = http.createServer(async (req, res) => {
     } finally {
       s.tasks.push(`user: ${message}` + (outcome ? ` → ${outcome}` : ""));
       if (s.tasks.length > 20) s.tasks.splice(0, s.tasks.length - 20);
+      s.abort = undefined;
       s.busy = false;
       s.lastUsed = Date.now();
       // a crashed browser should not poison the chat
