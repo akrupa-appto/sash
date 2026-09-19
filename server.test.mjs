@@ -25,6 +25,7 @@ mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, 
 } } });
 const oldPort = process.env.PORT;
 process.env.PORT = '0';
+process.env.OPENROUTER_API_KEY ??= 'test-key'; // careful-mode tasks need a connected planner provider
 const { server } = await import('./server.ts');
 if (!server.listening) await once(server, 'listening');
 if (oldPort === undefined) delete process.env.PORT; else process.env.PORT = oldPort;
@@ -47,10 +48,13 @@ test('session exposes the live view and preserves each task model', async () => 
   const bad = await post(`/api/session/${id}/task`,{message:'open https://example.test',model:'bad model id'});
   assert.equal(bad.status,400);
   await bad.text();
-  for (const reasoning of ['bogus', {}, 'none', 'medium']) {
+  for (const reasoning of ['bogus', {}]) {
     const invalid = await post(`/api/session/${id}/task`,{message:'open https://example.test',model:'z-ai/glm-5.3-flash',reasoning});
     assert.equal(invalid.status,400); await invalid.text();
   }
+  // Model-specific levels are the picker's and the provider's job; a model whose provider is not connected is rejected here.
+  const unconnected = await post(`/api/session/${id}/task`,{message:'open https://example.test',model:'gemini:gemini-2.5-flash'});
+  assert.equal(unconnected.status,400); assert.match((await unconnected.json()).error, /Gemini is not connected/);
   const fast = await post(`/api/session/${id}/task`,{message:'open https://example.test',supervisor:false,reasoning:'ignored'});
   const events = (await fast.text()).trim().split('\n').map(JSON.parse);
   assert.equal(events[0].supervisor,undefined);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "checkto — browser tasks",
-  "version": "0.3.1",
+  "name": "checkto \u2014 browser tasks",
+  "version": "0.4.0",
   "description": "Run Checkto agents on your own tabs. Bring your API keys, stored only on this device.",
   "minimum_chrome_version": "118",
   "permissions": [
@@ -13,7 +13,9 @@
   ],
   "host_permissions": [
     "https://openrouter.ai/*",
-    "https://api.typesafe.ai/*"
+    "https://api.typesafe.ai/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -30,6 +32,6 @@
     "open_in_tab": true
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://openrouter.ai https://api.typesafe.ai"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://openrouter.ai https://api.typesafe.ai https://api.openai.com https://generativelanguage.googleapis.com"
   }
 }

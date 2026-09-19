@@ -1,4 +1,5 @@
 import { env, debugLog } from "./env.ts";
+import { chat, type Effort } from "./providers.ts";
 // The supervisor: a small chat LLM that watches the run and turns the user's task into one concrete
 // action at a time. Jev then grounds that action to a page element. The supervisor also decides when
 // the task is done or cannot be finished, and writes the one-line reply the user sees.
@@ -75,17 +76,12 @@ export function plannerModel() {
   return env.PLANNER_MODEL ?? "anthropic/claude-sonnet-5";
 }
 
-// Some models (e.g. Sonnet 5) reject assistant prefill; remembered per process after the first 400.
-const noPrefill = new Set<string>();
-const noJsonMode = new Set<string>();
-// GLM requires reasoning. Other custom models can report that requirement too.
-const mandatoryReasoning = new Set<string>(["z-ai/glm-5.3-flash"]);
+export type ReasoningLevel = "auto" | Effort;
 
-export type ReasoningLevel = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+// Output budget per effort level; reasoning tokens share it on most providers.
+const BUDGET: Record<Effort, number> = { none: 1200, minimal: 4096, low: 4096, medium: 8192, high: 16384, xhigh: 32768, max: 32768 };
 
 export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plannerModel(), reasoning: ReasoningLevel = "auto", recovery = 0): Promise<Plan & { ms: number; cost_usd: number }> {
-  const key = env.OPENROUTER_API_KEY;
-  if (!key) throw new Error("OPENROUTER_API_KEY needed for the supervisor");
   const user = JSON.stringify(
     {
       task: ctx.task,
@@ -100,56 +96,25 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   );
   debugLog( `\n=== step ${ctx.step}\n${user}\n`);
   const t0 = performance.now();
-  const prefill = model.startsWith("anthropic/") && !noPrefill.has(model);
-  const effort = reasoning === "auto" ? (mandatoryReasoning.has(model) ? "low" : "none") : reasoning;
-  const needsReasoning = effort !== "none";
-  if (!needsReasoning && mandatoryReasoning.has(model)) throw new Error("this model requires reasoning; choose auto, low, high, or maximum");
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
+  const reply = await chat({
+    spec: model,
+    system: SYSTEM + (ctx.tabs ? '\nYou can also switch to an existing browser tab. open_tabs lists every available website tab across windows. To switch, return {"status":"continue","tabId":<numeric id>,"why":"reason"}; this uses one step and performs no page action. Read each relevant tab before comparing or summarizing multiple tabs. Tab references in the task identify exact IDs. Remember observed facts in your history when switching tabs. Never claim you read an unvisited tab.' : ''),
+    user,
+    effort: reasoning,
+    maxTokens: (effort) => Math.min(32768, BUDGET[effort] * (recovery ? 2 : 1)),
+    json: true,
+    prefill: true, // forces a JSON reply, no prose, where the provider allows it
+    temperature: 0,
     signal,
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://checkto.local", "X-Title": "checkto" },
-    body: JSON.stringify({
-      model,
-      max_tokens: Math.min(32768, { none: 1200, minimal: 4096, low: 4096, medium: 8192, high: 16384, xhigh: 32768, max: 32768 }[effort] * (recovery ? 2 : 1)),
-      ...(!noJsonMode.has(model) ? { response_format: { type: "json_object" } } : {}),
-      reasoning: needsReasoning ? { effort } : { enabled: false },
-      temperature: 0,
-      usage: { include: true },
-      messages: [
-        { role: "system", content: SYSTEM + (ctx.tabs ? '\nYou can also switch to an existing browser tab. open_tabs lists every available website tab across windows. To switch, return {"status":"continue","tabId":<numeric id>,"why":"reason"}; this uses one step and performs no page action. Read each relevant tab before comparing or summarizing multiple tabs. Tab references in the task identify exact IDs. Remember observed facts in your history when switching tabs. Never claim you read an unvisited tab.' : '') },
-        { role: "user", content: user },
-        ...(prefill ? [{ role: "assistant", content: "{" }] : []), // prefill: forces a JSON reply, no prose
-      ],
-    }),
   });
   const ms = performance.now() - t0;
-  if (!res.ok) {
-    const body = await res.text();
-    if (reasoning === "auto" && !needsReasoning && res.status === 400 && /reasoning.*(?:mandatory|required|cannot be disabled)/i.test(body)) {
-      mandatoryReasoning.add(model);
-      return plan(ctx, signal, model, reasoning, recovery);
-    }
-    if (prefill && res.status === 400 && /prefill/i.test(body)) {
-      noPrefill.add(model);
-      return plan(ctx, signal, model, reasoning, recovery);
-    }
-    if (!noJsonMode.has(model) && [400, 404, 422].includes(res.status) && /response_format|json[_ ](?:object|mode)/i.test(body)) {
-      noJsonMode.add(model);
-      return plan(ctx, signal, model, reasoning, recovery);
-    }
-    throw new Error(`supervisor ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const json = await res.json();
-  if (json.error) throw new Error(`planner request failed: ${String(json.error.message || json.error.code || 'provider error').slice(0, 300)}`);
-  const choice = json.choices?.[0];
-  if (choice?.message?.refusal || choice?.finish_reason === 'content_filter') throw new Error('the planner declined this request. edit the task and try again.');
-  const rawContent = choice?.message?.content;
-  let content = typeof rawContent === 'string' ? rawContent : Array.isArray(rawContent) ? rawContent.map(part => part.text || '').join('') : '';
-  if (prefill && !content.trimStart().startsWith("{")) content = "{" + content;
+  if (reply.refusal || reply.finish === 'content_filter') throw new Error('the planner declined this request. edit the task and try again.');
+  let content = reply.content;
+  if (reply.prefilled && !content.trimStart().startsWith("{")) content = "{" + content;
   debugLog( `--- reply\n${content}\n`);
   let p: Plan;
   try {
-    if (choice?.finish_reason === 'length') throw new Error('output limit reached');
+    if (reply.finish === 'length') throw new Error('output limit reached');
     p = extractJson(content) as Plan;
     if (!p || !["continue", "done", "blocked"].includes(p.status)) throw new Error('invalid plan status');
     if (p.tabId == null) delete p.tabId;
@@ -160,9 +125,9 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   } catch {
     if (!recovery) {
       const retry = await plan(ctx, signal, model, reasoning, 1);
-      return { ...retry, ms: retry.ms + ms, cost_usd: retry.cost_usd + Number(json.usage?.cost ?? 0) };
+      return { ...retry, ms: retry.ms + ms, cost_usd: retry.cost_usd + reply.cost_usd };
     }
-    throw new Error(`the planner (${model}) returned ${choice?.finish_reason === 'length' ? 'an incomplete reply after reaching its output limit' : content.trim() ? 'an invalid reply' : 'an empty reply'} twice. no further action was taken. try again or choose another planner model in settings.`);
+    throw new Error(`the planner (${model}) returned ${reply.finish === 'length' ? 'an incomplete reply after reaching its output limit' : content.trim() ? 'an invalid reply' : 'an empty reply'} twice. no further action was taken. try again or choose another planner model in settings.`);
   }
-  return { ...p, ms, cost_usd: Number(json.usage?.cost ?? 0) };
+  return { ...p, ms, cost_usd: reply.cost_usd };
 }

@@ -22,6 +22,7 @@ mock.module('../agent.ts', { namedExports: { runTask: async (_: any, __: any, em
   emit({ type: 'end', status: 'stopped' });
 } } });
 process.env.MAX_SESSIONS = '6';
+process.env.OPENROUTER_API_KEY ??= 'test-key'; // careful-mode tasks need a connected planner provider
 await import('../server.ts');
 function browser() {
   return { context: { route: async () => {} }, page: { url: () => 'https://example.org' }, close: async () => { browsersClosed++; if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; if (delayClose) await new Promise<void>(resolve => closing.push(resolve)); }, browser: { isConnected: () => true } };
