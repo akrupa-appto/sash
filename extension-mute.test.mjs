@@ -42,6 +42,8 @@ globalThis.chrome = {
     onCreated: events(), onUpdated: events(), onActivated: events(), onRemoved: events(),
   },
   windows: { onFocusChanged: events(), update: async () => {} },
+  // Host access is not what this file is about: the origin is already granted.
+  permissions: { contains: async () => true, request: async () => true },
   debugger: { onDetach: events() }, sidePanel: { setPanelBehavior: async () => {} },
 };
 mock.module('./extension/browser.js', { namedExports: {

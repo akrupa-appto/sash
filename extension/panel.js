@@ -137,7 +137,11 @@ async function load() {
   configured = response.configured; $('#setup').hidden = configured;
   render(response.state); await refreshTabs();
 }
-chrome.runtime.onMessage.addListener(message => { if (message.type === 'state') render(message.state); });
+chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+  if (message.type === 'state') { render(message.state); return; }
+  // Host access is asked for at the moment the agent needs the site; the wording is the guard.
+  if (message.type === 'permission') { reply({ allow: confirm(`${message.prompt.title}\n\n${message.prompt.detail}`) }); return true; }
+});
 chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.settings) void load().catch(showError); });
 let refreshTimer;
 const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => void refreshTabs().catch(showError), 150); };
