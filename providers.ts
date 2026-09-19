@@ -68,7 +68,8 @@ const noPrefill = new Set<string>();
 const noJsonMode = new Set<string>();
 const mandatoryReasoning = new Set<string>(["z-ai/glm-5.3-flash"]);
 const noEffortOff = new Set<string>(); // OpenAI/Gemini models that reject turning reasoning off
-export const _memo = { noPrefill, noJsonMode, mandatoryReasoning, noEffortOff };
+const noReasoningField = new Set<string>(); // OpenRouter models that reject the reasoning parameter itself
+export const _memo = { noPrefill, noJsonMode, mandatoryReasoning, noEffortOff, noReasoningField };
 
 const fetchJson = async (provider: ProviderId, url: string, init: RequestInit) => {
   const res = await fetch(url, init);
@@ -79,6 +80,8 @@ const fetchJson = async (provider: ProviderId, url: string, init: RequestInit) =
 const budget = (req: ChatRequest, effort: Effort | undefined) => (typeof req.maxTokens === "function" ? req.maxTokens(effort ?? "medium") : req.maxTokens);
 
 export async function chat(req: ChatRequest): Promise<ChatResult> {
+  // JSON mode on OpenAI-style endpoints requires the word "json" somewhere in the messages.
+  if (req.json && !/json/i.test(req.system)) req = { ...req, system: `${req.system}\nReply with a single JSON object.` };
   const { provider, model } = parseModel(req.spec);
   const key = providerKey(provider);
   if (!key) throw new Error(`${PROVIDERS[provider].keyEnv} needed for ${PROVIDERS[provider].label} models`);
@@ -95,7 +98,7 @@ async function openrouterChat(req: ChatRequest, model: string, key: string, retr
     model,
     max_tokens: budget(req, effort),
     ...(req.json && !noJsonMode.has(model) ? { response_format: { type: "json_object" } } : {}),
-    reasoning: effort !== "none" ? { effort } : { enabled: false },
+    ...(noReasoningField.has(model) && effort === "none" ? {} : { reasoning: effort !== "none" ? { effort } : { enabled: false } }),
     temperature: req.temperature ?? 0,
     usage: { include: true },
     messages: [{ role: "system", content: req.system }, { role: "user", content: req.user }, ...(prefill ? [{ role: "assistant", content: "{" }] : [])],
@@ -112,6 +115,9 @@ async function openrouterChat(req: ChatRequest, model: string, key: string, retr
     if (err instanceof ProviderError && retry < 3) {
       // Learn what this model rejects once, then retry the same request with that feature off.
       if (req.effort === "auto" && effort === "none" && err.status === 400 && /reasoning.*(?:mandatory|required|cannot be disabled)/i.test(err.body)) { mandatoryReasoning.add(model); return openrouterChat(req, model, key, retry + 1); }
+      // Some endpoints reject the reasoning field outright. On auto, where off carries nothing, drop the field and retry.
+      // An explicit "off" is never retried without it: the server default could be reasoning on.
+      if (req.effort === "auto" && effort === "none" && !noReasoningField.has(model) && err.status === 400 && /reasoning/i.test(err.body)) { noReasoningField.add(model); return openrouterChat(req, model, key, retry + 1); }
       if (prefill && err.status === 400 && /prefill/i.test(err.body)) { noPrefill.add(model); return openrouterChat(req, model, key, retry + 1); }
       if (req.json && !noJsonMode.has(model) && [400, 404, 422].includes(err.status) && /response_format|json[_ ](?:object|mode)/i.test(err.body)) { noJsonMode.add(model); return openrouterChat(req, model, key, retry + 1); }
     }
@@ -197,7 +203,7 @@ async function geminiChat(req: ChatRequest, model: string, key: string, retry = 
     generationConfig: {
       // Auto with thinking off is the small budget; once a model is known to always think, keep room for it.
       maxOutputTokens: budget(req, req.effort === "auto" ? (thinking?.thinkingBudget === 0 ? "none" : thinking ? "low" : "medium") : req.effort),
-      temperature: req.temperature ?? 0,
+      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}), // Gemini 3 wants its own default otherwise
       ...(req.json ? { responseMimeType: "application/json" } : {}),
       ...(thinking ? { thinkingConfig: thinking } : {}),
     },

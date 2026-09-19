@@ -55,7 +55,7 @@ test('Gemini models use generateContent with an API key header, JSON mime type, 
     assert.equal(calls[0].headers['x-goog-api-key'], 'g-key');
     assert.equal(calls[0].body.generationConfig.responseMimeType, 'application/json');
     assert.deepEqual(calls[0].body.generationConfig.thinkingConfig, { thinkingLevel: 'high' });
-    assert.equal(calls[0].body.systemInstruction.parts[0].text, 'sys');
+    assert.match(calls[0].body.systemInstruction.parts[0].text, /^sys\n/);
     await withKeys({ GEMINI_API_KEY: 'g-key' }, () => chat({ ...req, spec: 'gemini:gemini-2.5-flash' }));
     assert.deepEqual(calls[1].body.generationConfig.thinkingConfig, { thinkingBudget: 0 }, 'auto turns 2.5 Flash thinking off');
     // A model that refuses to turn thinking off keeps a budget large enough for its hidden thinking on later auto calls.
@@ -63,6 +63,34 @@ test('Gemini models use generateContent with an API key header, JSON mime type, 
     await withKeys({ GEMINI_API_KEY: 'g-key' }, () => chat({ ...req, spec: 'gemini:gemini-2.5-pro', maxTokens: e => ({ none: 1200, low: 4096, medium: 8192 })[e] ?? 16384 }));
     assert.equal(calls[2].body.generationConfig.thinkingConfig, undefined);
     assert.equal(calls[2].body.generationConfig.maxOutputTokens, 8192);
+  } finally { fetchMock.mock.restore(); }
+});
+
+test('OpenRouter drops the reasoning field for a model that rejects it, and JSON mode always names JSON in the prompt', async () => {
+  const calls = [];
+  const fetchMock = mock.method(globalThis, 'fetch', async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    if (calls.length === 1) return new Response('Unrecognized request argument supplied: reasoning', { status: 400 });
+    return ok({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }], usage: { cost: 0 } });
+  });
+  try {
+    await withKeys({ OPENROUTER_API_KEY: 'or' }, () => chat({ ...req, spec: 'vendor/plain-model', system: 'fill the field' }));
+    assert.deepEqual(calls[0].reasoning, { enabled: false });
+    assert.equal(calls[1].reasoning, undefined, 'retried without the reasoning field');
+    assert.match(calls[1].messages[0].content, /JSON object/, 'json mode named JSON in the system prompt');
+    await withKeys({ OPENROUTER_API_KEY: 'or' }, () => chat({ ...req, spec: 'vendor/plain-model', effort: 'high' }));
+    assert.deepEqual(calls[2].reasoning, { effort: 'high' }, 'an explicit level is still sent');
+  } finally { fetchMock.mock.restore(); }
+});
+
+test('Gemini gets a temperature only when one was supplied', async () => {
+  const calls = [];
+  const fetchMock = mock.method(globalThis, 'fetch', async (_url, init) => { calls.push(JSON.parse(init.body)); return ok({ candidates: [{ content: { parts: [{ text: '{}' }] }, finishReason: 'STOP' }] }); });
+  try {
+    await withKeys({ GEMINI_API_KEY: 'g' }, () => chat({ ...req, spec: 'gemini:gemini-3-flash-preview' }));
+    assert.equal(calls[0].generationConfig.temperature, undefined);
+    await withKeys({ GEMINI_API_KEY: 'g' }, () => chat({ ...req, spec: 'gemini:gemini-3-flash-preview', temperature: 0 }));
+    assert.equal(calls[1].generationConfig.temperature, 0);
   } finally { fetchMock.mock.restore(); }
 });
 
