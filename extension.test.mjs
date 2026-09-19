@@ -100,7 +100,8 @@ test('extension build is self-contained and only permits direct provider connect
   const manifest = JSON.parse(await readFile('extension/manifest.json', 'utf8'));
   assert.deepEqual(manifest.host_permissions, ['https://openrouter.ai/*', 'https://api.typesafe.ai/*', 'https://api.openai.com/*', 'https://generativelanguage.googleapis.com/*']);
   // A custom OpenAI-compatible server is opt-in per origin at save time, never granted up front.
-  assert.deepEqual(manifest.optional_host_permissions, ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*']);
+  // http://*/* already covers localhost/127.0.0.1, so "all sites" (both schemes) is the only entry needed.
+  assert.deepEqual(manifest.optional_host_permissions, ['https://*/*', 'http://*/*']);
   assert.equal(manifest.options_ui.open_in_tab, true);
   // One content script, and only the feedback layer: it draws the favicon badge and the agent
   // cursor and answers the worker's ping. Nothing else may be injected into every page.

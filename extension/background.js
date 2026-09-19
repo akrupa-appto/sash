@@ -489,9 +489,12 @@ export async function openSidePanel(windowId) {
   }
   if (windowId != null) await chrome.sidePanel.open({ windowId });
 }
-chrome.commands?.onCommand.addListener(command => {
+chrome.commands?.onCommand.addListener((command, tab) => {
   if (command !== 'open-panel') return;
-  void openSidePanel();
+  // The command listener gets the window's active tab directly; prefer that over the extra
+  // chrome.tabs.query round trip in openSidePanel, which can resolve to a window that's no
+  // longer focused by the time it settles. Falls back to that query when no tab is given.
+  void openSidePanel(tab?.windowId);
 });
 
 // Right-click entry: send the selection or link into a chat run on the clicked tab.

@@ -41,7 +41,8 @@ test('all-sites access is asked for with distinctly scarier wording than one sit
   assert.match(all.detail, /risk/i);
   assert.match(all.allow, /i understand the risk/);
   assert.ok(all.detail.length > one.detail.length, 'the all-sites warning must say more than the single-site one');
-  assert.deepEqual(requested, [['https://*/*']]);
+  // checkto acts on both http and https tabs, so "all sites" has to request both schemes.
+  assert.deepEqual(requested, [['https://*/*', 'http://*/*']]);
 });
 
 test('neither request silently succeeds without a prompt', async () => {

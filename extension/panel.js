@@ -359,21 +359,29 @@ async function load() {
 // Host access is asked for at the moment the agent needs the site; the wording is the guard.
 // Chrome only grants an optional permission from a user gesture, so the Allow button below is
 // what calls chrome.permissions.request — the worker cannot, and does not try.
+// The dialog is one shared element, so two prompts arriving close together (e.g. two tabs each
+// needing origin access mid-run) must not race: the second call used to overwrite the first's
+// onclick handlers and title/detail before it resolved, leaving the first caller's promise (and
+// whatever in the background was awaiting it) hung forever. Queue instead of overwriting.
+let permissionQueue = Promise.resolve();
 function askForAccess(prompt) {
-  const allow = $('#permission-allow');
-  const deny = $('#permission-deny');
-  $('#permission-title').textContent = prompt.title;
-  $('#permission-detail').textContent = prompt.detail;
-  allow.textContent = prompt.allow;
-  deny.textContent = prompt.deny;
-  $('#permission').hidden = false;
-  return new Promise(resolve => {
+  const run = () => new Promise(resolve => {
+    const allow = $('#permission-allow');
+    const deny = $('#permission-deny');
+    $('#permission-title').textContent = prompt.title;
+    $('#permission-detail').textContent = prompt.detail;
+    allow.textContent = prompt.allow;
+    deny.textContent = prompt.deny;
+    $('#permission').hidden = false;
     const done = answer => { $('#permission').hidden = true; allow.onclick = null; deny.onclick = null; resolve(answer); };
     // Nothing may be awaited before request(): the gesture ends the moment this handler yields.
     allow.onclick = () => chrome.permissions.request({ origins: prompt.origins }, ok => { void chrome.runtime.lastError; done(ok === true); });
     deny.onclick = () => done(false);
     allow.focus();
   });
+  const result = permissionQueue.then(run);
+  permissionQueue = result.catch(() => {});
+  return result;
 }
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   if (message.type === 'permission') { void askForAccess(message.prompt).then(allow => reply({ allow })); return true; }

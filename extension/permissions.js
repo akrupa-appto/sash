@@ -8,7 +8,10 @@
 // Chrome, and the worker then reads the answer back off chrome.permissions.contains().
 // https://developer.chrome.com/docs/extensions/reference/api/permissions
 
-export const ALL_SITES = 'https://*/*';
+// checkto acts on any http(s) tab (see isWebsite() in panel.js), so "all sites" has to actually
+// cover both schemes — granting only https://*/* would still block checkto on an ordinary
+// http:// site even after the user accepted the scarier "every site" prompt.
+export const ALL_SITES = ['https://*/*', 'http://*/*'];
 
 export function originOf(url) {
   try { return new URL(url).origin; } catch { return ''; }
@@ -35,7 +38,7 @@ export function allSitesPrompt() {
   return {
     scope: 'all-sites',
     origin: 'every site',
-    origins: [ALL_SITES],
+    origins: ALL_SITES,
     title: 'allow checkto to access EVERY site you visit?',
     detail: 'this is much broader than allowing one site. checkto could read and act on any page in this browser, including your email, your bank, and anything you are signed in to. only do this if you understand the risk. allowing one site at a time is safer.',
     allow: 'i understand the risk, allow all sites',
@@ -67,7 +70,7 @@ export async function ensureOriginAccess(url, ask) {
 }
 
 export async function ensureAllSitesAccess(ask) {
-  return ensureAccess([ALL_SITES], allSitesPrompt(), ask,
+  return ensureAccess(ALL_SITES, allSitesPrompt(), ask,
     'checkto does not have access to every site. allow one site at a time instead.',
     'checkto does not have access to every site. try again and accept chrome\'s prompt.');
 }
