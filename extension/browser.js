@@ -36,7 +36,7 @@ export class ChromePage {
     this.initialized = false;
   }
   url() { return this.currentUrl; }
-  async title() { return this.evaluate(() => document.title); }
+  async title() { this.currentTitle = await this.evaluate(() => document.title); return this.currentTitle; }
   context() { return { pages: () => this.pages.filter(p => p.attached && p.initialized) }; }
   async attach() {
     this.signal.throwIfAborted();
@@ -47,8 +47,10 @@ export class ChromePage {
     this.signal.throwIfAborted();
     try { await chrome.debugger.attach({ tabId: this.tabId }, '1.3'); }
     catch (err) {
+      // Keep Chrome's reason; only blame DevTools or another debugger when that is what Chrome said.
       if (/chrome-extension:/.test(err.message)) throw new Error(`could not control this tab: it is showing a page from another Chrome extension. switch it back to the website you want, then try again.`);
-      throw new Error(`could not control this tab: ${err.message}. close DevTools or another browser-control extension on this tab, then try again.`);
+      if (/already attached|debugger|devtools/i.test(err.message)) throw new Error(`could not control this tab: ${err.message}. close DevTools or another browser-control extension on this tab, then try again.`);
+      throw new Error(`could not control this tab: ${err.message}. choose another website tab and try again.`);
     }
     this.attached = true;
     this.signal.throwIfAborted();
