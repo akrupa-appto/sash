@@ -7,10 +7,12 @@ const snap = () => ({
   fingerprint: state, scroll: { y: 0, max: 0 },
   elements: [{ id: 1, role: 'link', name: 'README.md', kind: 'click', inViewport: true }],
 });
+let snapFn = () => snap();
+let clickFn = async () => { executed++; state = clickDestination === 'progress' ? `record-${executed}` : clickDestination; };
 mock.module('./browser.ts', { namedExports: {
-  snapshot: async () => snap(), screenshot: async () => '', settle: async () => {},
+  snapshot: async () => snapFn(), screenshot: async () => '', settle: async () => {},
   describe: e => `[${e.id}] ${e.role} "${e.name}"`,
-  click: async () => { executed++; state = clickDestination === 'progress' ? `record-${executed}` : clickDestination; },
+  click: async (p, id) => clickFn(p, id),
   typeText: async () => {}, selectOption: async () => {}, scroll: async () => {},
 }});
 mock.module('./jev.ts', { namedExports: {
@@ -130,4 +132,36 @@ test('after three waits in a row the next step must inspect the page instead of 
   assert.equal(lastQuestions.operation.criteria.WAIT, undefined, 'jev must not be offered WAIT on the capped step');
   assert.equal(result.status, 'done');
   clickDestination = 'file-preview';
+});
+
+test('jev cannot swap the control the planner named for a skip button', async () => {
+  const el = snap;
+  const twoButtons = () => ({ ...el(), elements: [
+    { id: 1, role: 'button', name: 'Continue', kind: 'click', inViewport: true },
+    { id: 2, role: 'button', name: 'Skip for now (demo mode)', kind: 'click', inViewport: true },
+  ] });
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let clicked = [];
+  snapFn = twoButtons;
+  clickFn = async (_p, id) => { clicked.push(id); state = 'ob2'; };
+  try {
+    plans = [{ status: 'continue', next: 'click the "Continue" button' }, { status: 'done', answer: 'ok' }];
+    decisions = [{ operation: { choice: 'CLICK' }, click_target: { choice: 'el_2' } }];
+    const result = await run(true, 5);
+    assert.deepEqual(clicked, [1]);
+    assert.equal(result.status, 'done');
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
+test('the planner sees every step of a long run, older ones shortened', async () => {
+  clickDestination = 'progress';
+  plans = [...Array.from({ length: 30 }, () => ({ status: 'continue', next: 'x'.repeat(400) })), { status: 'done', answer: 'ok' }];
+  decisions = Array.from({ length: 30 }, () => choice('CLICK'));
+  try {
+    await run(true, 40);
+    const last = planCalls.at(-1).history;
+    assert.equal(last.length, 30);
+    assert.ok(last[0].length < 300 && last[0].endsWith('…'));
+    assert.ok(last.at(-1).length > 400);
+  } finally { clickDestination = 'file-preview'; }
 });

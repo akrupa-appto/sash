@@ -73,6 +73,12 @@ const REPEAT_STOP_AT = 4;
 // After this many waits in a row the next step must inspect the page instead of waiting again.
 const WAIT_CAP = 3;
 
+// The planner sees the whole run: recent steps in full, older ones shortened. A skipped step early in
+// a long task must still be visible when the final answer is written.
+function compactHistory(history: string[], full = 12, older = 220): string[] {
+  return history.map((h, i) => (i < history.length - full && h.length > older ? h.slice(0, older) + "…" : h));
+}
+
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
   for (const m of goal.matchAll(/["“”']([^"“”']{1,120})["“”']/g)) out.push(m[1].trim());
@@ -172,7 +178,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           {
             task: input.goal,
             earlierTasks: (input.previousTasks ?? []).slice(-6),
-            history: history.slice(-20),
+            history: compactHistory(history),
             lastResult: history.length ? history[history.length - 1].split(" → ").slice(1).join(" → ") || undefined : undefined,
             page: { url: snap.url, title: snap.title, scroll: scrollPos, text: snap.text, elements: elementLines },
             step,
@@ -318,7 +324,18 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             break;
           }
           case "CLICK": {
-            const id = elId(pick("click_target"));
+            let id = elId(pick("click_target"));
+            // The planner named a control in quotes. If exactly one clickable element carries that name and
+            // jev picked something else (a skip, dismiss, or nearby control), use the named one.
+            if (planText) {
+              const wanted = quotedStrings(planText).map((q) => q.toLowerCase());
+              const picked = clickable.find((x) => x.id === id);
+              const pickedName = (picked?.name ?? "").toLowerCase();
+              if (wanted.length && !wanted.some((q) => pickedName === q || pickedName.includes(q))) {
+                const matches = clickable.filter((x) => wanted.some((q) => x.name.toLowerCase() === q));
+                if (matches.length === 1) { id = matches[0].id; note = `jev chose "${picked?.name ?? id}", corrected to the element the supervisor named`; }
+              }
+            }
             const e = snap.elements.find((x) => x.id === id);
             action = `CLICK ${e ? b.describe(e) : `[${id}]`}`;
             await b.click(page, id);

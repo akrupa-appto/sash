@@ -127,3 +127,24 @@ test('a failed click is not blindly force-clicked again', async () => {
   await assert.rejects(click({ url: () => 'https://example.test', locator: () => ({ first: () => link }) }, 1), /element was replaced/);
   assert.equal(attempts, 1);
 });
+
+test('a fragment-only link does not wait for a document navigation', async () => {
+  let waited = false;
+  const link = { evaluate: async () => 'https://example.test/#', click: async ({ noWaitAfter }) => assert.equal(noWaitAfter, undefined) };
+  await click({ url: () => 'https://example.test/', locator: () => ({ first: () => link }), waitForURL: async () => { waited = true; } }, 1);
+  assert.equal(waited, false);
+});
+
+test('a link whose handler prevents navigation returns once the page changed in place', async () => {
+  let text = 100;
+  const link = { evaluate: async () => 'https://example.test/settings', click: async () => { text = 250; } };
+  const page = {
+    url: () => 'https://example.test/',
+    locator: () => ({ first: () => link }),
+    evaluate: async () => text,
+    waitForURL: () => new Promise((_, reject) => setTimeout(() => reject(new Error('page.waitForURL: Timeout 30000ms exceeded.')), 30000).unref()),
+  };
+  const t0 = Date.now();
+  await click(page, 1);
+  assert.ok(Date.now() - t0 < 5000);
+});

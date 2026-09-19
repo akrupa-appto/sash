@@ -109,6 +109,8 @@ function loc(page: Page, id: number) {
   return page.locator(`[data-jev-idx="${id}"]`).first();
 }
 
+const domSize = (page: Page) => page.evaluate?.(() => document.body?.innerText.length ?? 0).catch(() => -1) ?? Promise.resolve(-1);
+
 export async function click(page: Page, id: number) {
   const l = loc(page, id);
   const before = page.url();
@@ -120,10 +122,27 @@ export async function click(page: Page, id: number) {
   // can target stale controls after an asynchronous page replacement.
   // Keep actionability short, but give a link's destination time to load.
   // Waiting separately avoids timing out the click during a slow response.
-  const navigates = !!href && href !== before;
+  // A fragment-only link ("#", "#section") never loads a new document.
+  const stripHash = (u: string) => u.split("#")[0];
+  const navigates = !!href && stripHash(href) !== stripHash(before);
+  const beforeDom = navigates ? await domSize(page) : -1;
   await l.click({ timeout: 5000, ...(navigates ? { noWaitAfter: true } : {}) });
   if (navigates) {
-    await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 30000 });
+    let settledInPlace = false;
+    const navigation = page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // A click handler that prevents the default navigation (single-page apps) changes the page in
+    // place instead. Stop waiting once the document has visibly changed without a URL change.
+    const inPlace = (async () => {
+      for (let waited = 0; waited < 30000 && beforeDom >= 0; waited += 500) {
+        await new Promise(r => setTimeout(r, 500));
+        if (page.url() !== before) return;
+        const now = await domSize(page);
+        if (waited >= 1500 && now >= 0 && now !== beforeDom) { settledInPlace = true; return; }
+      }
+      await navigation;
+    })();
+    await Promise.race([navigation.catch(err => { if (!settledInPlace) throw err; }), inPlace]);
+    navigation.catch(() => {});
   }
 }
 
