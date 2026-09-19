@@ -36,6 +36,7 @@ mock.module('./extension/browser.js', { namedExports: {
 mock.module('./agent.ts', { namedExports: { runTask: async (_page, _input, emit, signal) => {
   taskStarted++;
   activeSignal = signal;
+  emit({ type: 'step', step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload', costUsd: 0 });
   await new Promise(resolve => {
     finishTask = resolve;
     signal.addEventListener('abort', resolve, { once: true });
@@ -121,4 +122,18 @@ test('a failed popup attachment produces one terminal error message', async () =
   assert.equal(replies.length, 1);
   assert.equal(replies[0].text, 'popup attach refused');
   assert.equal(data.runState.status, 'error');
+});
+
+
+test('a finished run keeps its actions on the reply it produced', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  assert.equal((await send({ type: 'run', tabId: 12, goal: 'upload the file', mode: 'fast' })).ok, true);
+  await until(() => taskStarted === before + 1);
+  finishTask();
+  await until(() => data.runState?.running === false);
+  const reply = data.runState.messages.at(-1);
+  assert.equal(reply.role, 'agent');
+  assert.equal(reply.text, 'finished');
+  assert.deepEqual(reply.steps.map(s => s.action), ['CLICK [5] button "upload"']);
 });

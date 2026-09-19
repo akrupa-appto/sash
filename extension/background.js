@@ -145,7 +145,8 @@ async function execute(run, message) {
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
-    state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings) });
+    // Keep the run's actions with the reply they produced so earlier runs still show their steps.
+    state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
     state.messages = state.messages.slice(-20);
     clearConfig();
     state.running = false;
