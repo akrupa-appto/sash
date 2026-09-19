@@ -2,9 +2,21 @@
 
 one line per task. do it, tick it, move on.
 
+start here, in this order:
+
+1. the password leak in `snapshot.js` (below). it is the only item that is actively wrong right now rather than merely missing.
+2. the two composer fixes adam screenshotted, as one small pr.
+3. the favicon badge. it is the single cheapest change with the most payoff: it answers "which tabs does it control" and "did it finish" at once, and it works while the panel is closed.
+
+everything else is ordered inside its own list.
+
 numbers in brackets are adam's item numbers from the 2026-09-19 list, so a line here maps back to what he actually complained about.
 
 ---
+
+## fix: security
+
+- [ ] **the page snapshot sends password values to the planner.** `snapshot.js:55` reads `el.value` for every typeable element, and `input[type=password]` falls into that branch, so a field a password manager has already filled arrives in the element list we post to openrouter, openai, gemini or a custom server. the settings page promises keys "never synced or sent to a Checkto server"; shipping the user's password to a third-party model breaks the same promise. omit the value for `type=password` at the serializer, the way chatgpt does, so no policy layer above it can leak. keep the element itself listed so the agent can still see a login form is there. add a test with a filled password input asserting the value never reaches the planner payload.
 
 ## fix: ui
 
@@ -25,7 +37,7 @@ every one of these is visible in adam's 2026-09-19 screenshots.
 ## implement
 
 - [ ] [14] the agent cannot ask a question. add a planner status that ends the run with a question, render it in the panel as waiting for an answer, and resume from the user's next message.
-- [ ] [14] the agent never pauses before something irreversible (payment, send, delete, public post). ask first unless the task text already authorizes it. builds on the question status above.
+- [ ] [14] the agent never pauses before something irreversible. do not build this as a keyword list of payment/send/delete/post: chatgpt has no such list anywhere, because a verb denylist is brittle and endless to maintain. their reviewer classifies the pending action and the client just renders the verdict and a risk level. cheapest honest version for us: make the planner return a risk field with the action it proposes, and pause on high. builds on the question status above.
 - [ ] [15] tabs the run opens are mixed in with the user's own. put them in a "checkto" chrome tab group in `attachPopup` (needs the `tabGroups` permission). never group the tab the user started from.
 - [ ] [12] a run that ends blocked or errored explains its reason but never names its outcome. put one word on the agent message itself: "done", "could not finish", or "needs you".
 
@@ -42,28 +54,60 @@ these are the claims nothing on this machine has actually proven.
 
 ## take from the chatgpt extension
 
-adam handed over the unpacked ChatGPT/Codex extension (build 1.26.901.11451) on 2026-09-19. every line below names the evidence in that build. these are new scope, not bugs.
+adam handed over the unpacked ChatGPT/Codex extension (build 1.26.901.11451) on 2026-09-19. every line names the evidence. these are new scope, not bugs.
 
-### the whole in-page feedback layer is missing
+one caveat before trusting any of the copy below: the browser agent's own chat UI is not in the bundle. `codex-work-sidepanel.html` mounts an iframe of `chatgpt.com/?surface=browser_side_chat`, so its wording is server-rendered. the mechanisms are local and solid; the wording comes from the codex side panel next door, so treat it as the same design language rather than as the browser agent's exact strings.
 
-checkto ships no content scripts at all. every permission it has is `debugger` and `tabs`, so all feedback lives in the side panel. when the agent works in a tab the user is not looking at, the page itself says nothing.
+if you only take three things from it: the favicon badge, the end-of-run tab contract, and one blocking state per turn.
 
-- [ ] draw an agent cursor on the controlled page. a content script animates a pointer to the element and reports arrival before the click lands, so the user sees what is about to be clicked. chatgpt: `content-scripts/codex.js`, `images/cursor-chat.png`, messages `AGENT_CURSOR_STATE` out and `AGENT_CURSOR_ARRIVED` back carrying `sessionId`, `turnId`, `moveSequence`.
-- [ ] badge the favicon of every tab the run touches, with three states: active (working here), deliverable (finished, something for you), handoff (your turn, it is waiting on you). chatgpt: `TAB_FAVICON_BADGE`. this is the cheapest answer to both "which tabs does it control" [15] and "it never tells me it finished" [12], and it works while the panel is closed.
-- [ ] ping a content script before reinjecting it, rather than assuming the last injection survived. chatgpt: `CONTENT_PING` answered with `{ok: true}`.
+### the in-page feedback layer we do not have
 
-### tab ownership
+checkto ships no content scripts. its permissions are `debugger` and `tabs`, so every signal lives in the side panel. when the agent works in a tab the user is not looking at, the page says nothing.
 
-- [ ] give each controlled tab a lease bound to a session and a turn, and route debugger events and cursor state through it. chatgpt tracks tab creation, replacement, movement and grouping so its model of the browser stays correct when the user drags a tab out or chrome swaps it. checkto tracks one tab id and nothing else. this has to land before tab groups [15] mean anything.
+- [ ] badge the favicon of each tab the run touches. dim the site's real favicon to `0.3` and stamp a glyph over it: a cursor while working, a green dot (`#22c55e`) when the tab holds a result, a yellow dot (`#facc15`) when the agent is waiting on the user. stash the original in a `data-` attribute and restore it before the tab closes, so no stale badge is ever seen. chatgpt: `TAB_FAVICON_BADGE`, states `active`/`deliverable`/`handoff`. no banner, no injected bar. it survives full-page apps, shows up in the tab strip, and works with the panel closed.
+- [ ] treat the finished badge as an unread marker: it stays until the user actually looks at that tab, then clears on tab activation or window focus. chatgpt: `readEffectiveBadge`, cleared by `handleTabActivated` and `handleWindowFocused`. this is the honest answer to "it never tells me it finished" [12], and it needs no notification permission.
+- [ ] draw an agent cursor on the controlled page so the user sees what is about to be clicked before it is clicked. chatgpt: `content-scripts/codex.js`, `images/cursor-chat.png` as the only web-accessible resource, in a closed shadow root at `z-index:2147483646`, `aria-hidden`, hidden in print, with a mutation observer repairing the host.
+- [ ] only paint the cursor for a tab the user can actually see. position keeps tracking in the background, rendering does not. chatgpt: `isObserved` means the tab is active in its window, and `readCursorOverlayState` returns `visible:false` otherwise.
+- [ ] mute agent tabs the user is not watching, and unmute the moment one becomes active. only ever unmute what we muted (`mutedInfo.reason === "extension"` and our own id). nothing is worse than a background tab playing audio at someone.
+- [ ] ping a content script before reinjecting rather than assuming the last injection survived. chatgpt: `CONTENT_PING` answered `{ok: true}`. reapply badges on `tabs.onUpdated` at `status === "complete"`, and re-pull overlay state on `pageshow` so bfcache restores are not blank.
+
+### tab ownership, which has to come before tab groups
+
+- [ ] give each controlled tab a lease bound to a session and a turn, carrying an instance id so a restarted worker can tell whose lease it is. chatgpt refuses a second claim with `Tab N is already part of browser session M`. checkto tracks one tab id and nothing else.
+- [ ] decide what happens to each tab when a run ends, and make the agent say which. chatgpt marks every tab `deliverable` (leave it open, ungroup it, green dot) or `handoff` (leave it open, hold the lease, yellow dot); unmarked tabs the agent opened get closed with the favicon restored first, and tabs the user handed over are just released. that single contract is why their runs do not litter the tab strip.
+- [ ] [15] put agent-opened tabs in a group, created lazily on the first tab, titled "checkto" with a random colour, with the group id persisted so a restarted worker rejoins instead of making a second group. let the model rename the group to the task. never group a tab the user handed us: chatgpt groups only from `createTab` and popups the agent's own page spawned, never from `claimUserTab`. never collapse the group.
+- [ ] reattach to handoff tabs on the next turn instead of starting cold: probe each one, resume the survivors under the new turn id keeping origin and viewport, silently drop the ones the user closed, and restore which was active. chatgpt: `resumeHandoffIfPresent`.
+
+### how a step log should read
+
+- [ ] give every action three strings, not one: a live ticker line while it runs ("Reading …"), an expanded row once done ("Read …"), and a lowercase fragment for the collapsed summary, plus a capitalised twin for when it starts the sentence. chatgpt ships all four per tool. this is the difference between a collapsed log that reads as a sentence and one that reads as a stack trace. checkto's "n actions" block is the place for it.
+- [ ] put a duration divider between the actions and the answer, with three states and no more: "Working" while live, "Worked for 2m" when finished, "You stopped after 40s" when the user stopped it. note that the stopped case is phrased as the user's action, not the agent's failure. chatgpt re-ticks it every second while live and only shows a timer past one second.
+- the answer belongs below the steps, which [13] already fixed. their divider description says the same thing, so that call was right.
+
+### saying why it is stuck
+
+- [ ] name the reason when a page blocks the run instead of going quiet [9]. chatgpt has a dedicated tool for it with four reasons: `captcha_failed`, `access_denied`, `challenge_loop`, `unexpected_bot_error`, described as "the current tab is blocked by bot detection, a failed CAPTCHA, a hard access denial, or a repeated challenge/login loop". checkto currently stops and says nothing useful.
+- [ ] when the agent needs a credential, hand the page back and report what happened with a real outcome, not a guess. chatgpt tracks `submitted`, `declined`, `cancelled`, `unavailable`, `expired`, `origin_changed`, `page_changed`, `locator_invalid`, `submission_failed`, and a `user_took_over` reason. this is the concrete shape of the approval pause in [14].
+
+### asking the human
+
+- [ ] allow exactly one blocking state per turn, picked by scanning the turn backwards in a fixed priority order. chatgpt's order is user input, option picker, setup step, approval, permission request, elicitation, plan. without this you get two cards racing for the same answer.
+- [ ] give every approval three scopes, not a yes/no: allow once, allow for this conversation, allow always. chatgpt puts the widest scope behind a second dialog with an explicit warning, and only for whole-internet access. their strings are "Allow once", "Allow this conversation", "Always allow", "Deny".
+- [ ] when the user asks a question mid-run, offer a multiple-choice picker as well as free text. chatgpt ships an option picker with "Skip" and "Submit" alongside plain user input, because most mid-run questions are a choice between two pages, not an essay.
+- [ ] stop retrying after repeated denials and end the turn saying so. chatgpt: "Auto-review stopped this turn after repeated denials. Add more context or choose a different permission mode to continue." an agent that asks the same thing five times is worse than one that gives up once.
+- [ ] on stop, explicitly decline every pending request instead of dropping them. chatgpt fans out a decline to all six pending request types on interrupt, so nothing is left hanging waiting for an answer that will never come. checkto's stop path must not leave a question card alive.
+- [ ] when the agent hits a login wall, hand back a typed form, not a sentence. chatgpt sends the origin, up to six labelled credential fields with their input types and autocomplete hints, the sign-in options, a submit descriptor and a screenshot, then the human fills it in the panel and the agent resumes and verifies. the agent never reads the credentials back off the page. this and the password fix above are the same piece of work.
+- [ ] gate browser access per origin, with the wording doing the work: "allow checkto to access {origin}?" and a separate, scarier confirm for all sites. checkto already has `optional_host_permissions`, so this is mostly asking at the right moment rather than new permission machinery.
 
 ### ways in
 
-- [ ] add a keyboard shortcut that opens the panel. chatgpt registers `open-codex-side-panel` and binds `Ctrl+Shift+Period` (`Cmd+Shift+Period` on mac). checkto's only entry point is the toolbar icon.
+- [ ] add a keyboard shortcut that opens the panel. chatgpt registers `open-codex-side-panel` on `Ctrl+Shift+Period`, `Cmd+Shift+Period` on mac. checkto's only entry point is the toolbar icon.
 - [ ] add a right-click entry that sends the selection or link to checkto. chatgpt registers one context menu, "Ask ChatGPT", across page, frame, selection, link, editable, image, video and audio.
 
 ### deliberately not copying
 
-- their manifest takes `<all_urls>` plus history, bookmarks, topSites, downloads, sessions, webNavigation and nativeMessaging. checkto's narrow host permissions and `optional_host_permissions` are better and stay as they are. their own bundled notes argue for cutting back to `sidePanel`, `storage` and `activeTab`. the single permission worth adding is `tabGroups`.
+- their manifest takes `<all_urls>` plus history, bookmarks, topSites, downloads, sessions, webNavigation and nativeMessaging. checkto's narrow host permissions and `optional_host_permissions` are better and stay. their own bundled notes argue for cutting back to `sidePanel`, `storage` and `activeTab`. the one permission worth adding is `tabGroups`.
+- they pause a run when the agent's behaviour stops matching the user's instructions, with a gated resume behind a checkbox: "Chat paused as a precaution", "ChatGPT couldn't confirm the agent was interpreting your instructions correctly." that is a prompt-injection defence with a whole review surface behind it. worth knowing it exists; far too big for us now.
 - they strip other extensions' `chrome-extension://` iframes out of pages they control (`content-scripts/foreign-frame-monitor.js`). real problem, wrong size for us. parked with a reason, not forgotten.
 - checkto already debounces its tab picker on tab events and already honours `prefers-reduced-motion` for both animations. checked, nothing to do.
 
