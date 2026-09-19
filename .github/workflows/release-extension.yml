@@ -35,7 +35,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     # the bump commit itself must not trigger another release
-    if: "${{ !startsWith(github.event.head_commit.message, 'chore: extension v') }}"
+    if: "${{ github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore: extension v') }}"
     steps:
       - uses: actions/checkout@v4
         with:
