@@ -16,13 +16,13 @@ const current = () => ({ model: form.elements.model.value, reasoning: form.eleme
 const connected = () => Object.keys(PROVIDERS)
   .filter(id => form.elements[PROVIDER_KEYS[id]].value.trim() && (id !== 'custom' || customOrigin(form.elements.customBaseUrl.value.trim())))
   .map(id => ({ id, label: id === 'custom' ? `Custom · ${new URL(form.elements.customBaseUrl.value.trim()).hostname}` : PROVIDERS[id].label, prefix: PROVIDERS[id].prefix }));
-// The custom server's origin must be granted by the user; Chrome shows the prompt on this user gesture.
-async function grantCustomOrigin() {
+// The custom server's origin must be granted by the user. The request is made straight from the click
+// handler, with no await before it, so Chrome still counts it as a user gesture; an already-granted
+// origin resolves true without a prompt.
+function grantCustomOrigin() {
   const origin = customOrigin(form.elements.customBaseUrl.value.trim());
-  if (!origin || !form.elements.customKey.value.trim()) return true;
-  const pattern = `${origin}/*`;
-  if (await chrome.permissions.contains({ origins: [pattern] })) return true;
-  return chrome.permissions.request({ origins: [pattern] });
+  if (!origin || !form.elements.customKey.value.trim()) return Promise.resolve(true);
+  return chrome.permissions.request({ origins: [`${origin}/*`] });
 }
 function renderModel() {
   const label = document.querySelector('#model-label');

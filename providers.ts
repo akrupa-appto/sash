@@ -165,14 +165,16 @@ export function fastestEffort(provider: ProviderId, model: string): Effort | und
 // setting; a model that still rejects "none" (o-series, GPT-5 before 5.1, GPT-6) falls back to its default.
 // A custom server gets no reasoning field on auto, since many do not accept it at all.
 async function openaiChat(req: ChatRequest, model: string, key: string, base: string, autoOff: boolean, retry = 0): Promise<ChatResult> {
+  // Capability memory is per endpoint: the same model ID can behave differently on OpenAI and on a custom server.
+  const memoKey = autoOff ? model : `${base}#${model}`;
   const known = inferReasoning("openai", model);
-  const effort = req.effort === "auto" ? (!autoOff || noEffortOff.has(model) ? undefined : known ? fastestEffort("openai", model) : "none") : req.effort;
-  if (effort === "none" && noEffortOff.has(model) && req.effort !== "auto") throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level");
+  const effort = req.effort === "auto" ? (!autoOff || noEffortOff.has(memoKey) ? undefined : known ? fastestEffort("openai", model) : "none") : req.effort;
+  if (effort === "none" && noEffortOff.has(memoKey) && req.effort !== "auto") throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level");
   const body = {
     model,
     max_completion_tokens: budget(req, effort),
     ...(effort ? { reasoning_effort: effort } : {}),
-    ...(req.json && !noJsonMode.has(model) ? { response_format: { type: "json_object" } } : {}),
+    ...(req.json && !noJsonMode.has(memoKey) ? { response_format: { type: "json_object" } } : {}),
     messages: [{ role: "system", content: req.system }, { role: "user", content: req.user }],
   };
   let json: any;
@@ -182,8 +184,8 @@ async function openaiChat(req: ChatRequest, model: string, key: string, base: st
     });
   } catch (err) {
     if (err instanceof ProviderError && [400, 422].includes(err.status) && retry < 2) {
-      if (effort === "none" && /reasoning/i.test(err.body)) { noEffortOff.add(model); if (req.effort === "auto") return openaiChat(req, model, key, base, autoOff, retry + 1); throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level"); }
-      if (req.json && !noJsonMode.has(model) && /response_format|json/i.test(err.body)) { noJsonMode.add(model); return openaiChat(req, model, key, base, autoOff, retry + 1); }
+      if (effort === "none" && /reasoning/i.test(err.body)) { noEffortOff.add(memoKey); if (req.effort === "auto") return openaiChat(req, model, key, base, autoOff, retry + 1); throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level"); }
+      if (req.json && !noJsonMode.has(memoKey) && /response_format|json/i.test(err.body)) { noJsonMode.add(memoKey); return openaiChat(req, model, key, base, autoOff, retry + 1); }
     }
     throw err;
   }

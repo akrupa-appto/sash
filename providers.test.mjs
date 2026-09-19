@@ -169,6 +169,12 @@ test('a custom OpenAI-compatible server gets chat completions at its base URL an
       assert.equal(calls[2].url, 'https://api.groq.com/openai/v1/models');
       assert.deepEqual(models.map(m => m.id), ['custom:deepseek-r1', 'custom:llama-4-maverick']);
       assert.deepEqual(models[0].reasoning, { supported_efforts: null, mandatory: false });
+      // what a custom server rejects is remembered for that server only, not for the same model ID on OpenAI
+      _memo.noJsonMode.add('https://api.groq.com/openai/v1#shared-id');
+      await chat({ ...req, spec: 'custom:shared-id' });
+      assert.equal(calls[3].body.response_format, undefined);
+      await withKeys({ OPENAI_API_KEY: 'oa-key' }, () => chat({ ...req, spec: 'openai:shared-id' }));
+      assert.deepEqual(calls[4].body.response_format, { type: 'json_object' });
     });
     // without a valid base URL the key alone does not connect the provider
     await withKeys({ CUSTOM_API_BASE: 'groq', CUSTOM_API_KEY: 'gsk-test' }, () => { assert.equal(providerKey('custom'), undefined); return assert.rejects(chat({ ...req, spec: 'custom:x' }), /CUSTOM_API_KEY/); });
