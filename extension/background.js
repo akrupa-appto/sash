@@ -215,7 +215,7 @@ async function execute(run, message) {
       // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
       if (event.type === 'mark') { markTab(event.tabId, event.disposition); return; }
       if (event.type === 'step') {
-        state.steps.push({ step: event.step, action: event.action, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
+        state.steps.push({ step: event.step, action: event.action, log: event.log, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
         state.cost = (state.cost || 0) + event.costUsd;
       }
       if (event.type === 'end') { outcome = event; return; }
@@ -254,8 +254,13 @@ async function execute(run, message) {
     ]);
     const finalBadge = outcome?.status === 'done' ? BadgeState.DELIVERABLE : outcome?.status === 'blocked' ? BadgeState.HANDOFF : BadgeState.NONE;
     for (const tabId of new Set(pages.map(p => p.tabId))) if (!closed.has(tabId)) await setFeedback(tabId, { badge: marked.get(tabId) ?? finalBadge, cursor: undefined });
-    // Keep the run's actions with the reply they produced so earlier runs still show their steps.
-    state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
+    state.endedAt = Date.now();
+    // Keep the run's actions with the reply they produced so earlier runs still show their steps,
+    // and the run's own duration/stop-state so the duration divider reads right after it moves off screen.
+    state.messages.push({
+      role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings),
+      steps: state.steps.slice(-60), startedAt: state.startedAt, endedAt: state.endedAt, stopped: state.status === 'stopped',
+    });
     state.messages = state.messages.slice(-20);
     clearConfig();
     state.running = false;
@@ -292,7 +297,7 @@ async function handle(message) {
     const sessionId = state.sessionId || crypto.randomUUID();
     const run = { controller: new AbortController(), pages: [], attaching: new Set(), sessionId, turnId: crypto.randomUUID() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
+    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
     void execute(run, { ...message, goal: message.goal.trim() });

@@ -20,6 +20,14 @@ export type RunInput = {
   };
 };
 
+// The step log's four written forms of one action (mirrors extension/types.js's StepLogEntry).
+export type StepLogEntry = {
+  ticker: string; // present-tense line that scrolls by while the step runs
+  expanded: string; // full sentence shown once the step is open/done
+  fragment: string; // lowercase clause that reads mid-sentence
+  fragmentCapitalized: string; // the same clause starting a sentence
+};
+
 export type StepEvent = {
   type: "step";
   step: number;
@@ -31,6 +39,7 @@ export type StepEvent = {
   plan?: string; // the supervisor's single-action instruction for this step
   why?: string;
   action: string;
+  log: StepLogEntry;
   jevMs: number;
   planMs: number;
   execMs: number;
@@ -86,6 +95,33 @@ function newText(prev: string, cur: string, max = 240): string {
   if (i < cur.length) i = cur.lastIndexOf(" ", i - 1) + 1; // back up to the start of the changed word
   const fresh = cur.slice(i).replace(/\s+/g, " ").trim();
   return fresh ? `, showing: "${fresh.slice(0, max)}${fresh.length > max ? "…" : ""}"` : "";
+}
+
+// Builds a StepLogEntry from a present-tense ticker line and its past-tense counterpart. `expanded` and
+// `fragmentCapitalized` end up the same text for most steps; they exist as separate fields because the
+// row that shows a finished step and the clause that opens a joined summary sentence are different jobs.
+function logEntry(ticker: string, past: string): StepLogEntry {
+  return { ticker, expanded: past, fragment: past.charAt(0).toLowerCase() + past.slice(1), fragmentCapitalized: past };
+}
+
+// Fallback ticker/past forms for an operation with no more specific target description yet.
+const GENERIC_LOG: Record<string, { ticker: string; past: string }> = {
+  CLICK: { ticker: "Clicking", past: "Clicked" },
+  TYPE_TEXT: { ticker: "Typing", past: "Typed" },
+  TYPE_AND_ENTER: { ticker: "Typing", past: "Typed" },
+  SELECT: { ticker: "Selecting", past: "Selected" },
+  SCROLL_DOWN: { ticker: "Scrolling down the page", past: "Scrolled down the page" },
+  SCROLL_UP: { ticker: "Scrolling up the page", past: "Scrolled up the page" },
+  GO_BACK: { ticker: "Going back a page", past: "Went back a page" },
+  WAIT: { ticker: "Waiting for the page", past: "Waited for the page" },
+  CANNOT: { ticker: "Checking the page", past: "Found no way to do that on the page" },
+  SWITCH_TAB: { ticker: "Switching tabs", past: "Switched tabs" },
+  DONE: { ticker: "Wrapping up", past: "Finished the task" },
+  BLOCKED: { ticker: "Stopping", past: "Could not continue" },
+};
+function genericLog(chosen: string): StepLogEntry {
+  const g = GENERIC_LOG[chosen];
+  return logEntry(g?.ticker ?? `Doing ${chosen}`, g?.past ?? `Did ${chosen}`);
 }
 
 function quotedStrings(goal: string): string[] {
@@ -212,7 +248,13 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           page = await input.browserTabs.select(p.tabId);
           seenPages.add(page);
           lastFingerprint = "";
-          emit({ type: "step", step, url: page.url(), title: await page.title(), screenshot: "", elementCount: 0, answers: {}, action: `opened tab: ${await page.title()}`, plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd });
+          const switchedTitle = await page.title();
+          emit({
+            type: "step", step, url: page.url(), title: switchedTitle, screenshot: "", elementCount: 0, answers: {},
+            action: `opened tab: ${switchedTitle}`,
+            log: logEntry(`Opening tab: ${switchedTitle}`, `Opened tab: ${switchedTitle}`),
+            plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd,
+          });
           continue;
         }
         if (!p.next) return end("error", "the planner gave no next action");
@@ -307,6 +349,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       const chosen = op.choice;
       let jevMs = res.ms;
       let stepCost = res.cost_usd;
+      let log = genericLog(chosen);
 
       // ---- 3. execute
       try {
@@ -330,7 +373,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             history.push(`read "${snap.title}" (${snap.url}): ${snap.text.slice(0, 4000)}`);
             page = await input.browserTabs.select(id);
             seenPages.add(page);
-            action = `opened tab: ${await page.title()}`;
+            const switchedTitle = await page.title();
+            action = `opened tab: ${switchedTitle}`;
+            log = logEntry(`Opening tab: ${switchedTitle}`, `Opened tab: ${switchedTitle}`);
             lastFingerprint = '';
             break;
           }
@@ -350,7 +395,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               }
             }
             const e = snap.elements.find((x) => x.id === id);
-            action = `CLICK ${e ? b.describe(e) : `[${id}]`}`;
+            const target = e ? b.describe(e) : `[${id}]`;
+            action = `CLICK ${target}`;
+            log = logEntry(`Clicking ${target}`, `Clicked ${target}`);
             await b.click(page, id);
             break;
           }
@@ -372,7 +419,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               note = "text written by text model";
             }
             typedSoFar.push(text);
-            action = `${chosen} ${JSON.stringify(text)} into ${e ? b.describe(e) : `[${id}]`}`;
+            const target = e ? b.describe(e) : `[${id}]`;
+            action = `${chosen} ${JSON.stringify(text)} into ${target}`;
+            log = logEntry(`Typing ${JSON.stringify(text)} into ${target}`, `Typed ${JSON.stringify(text)} into ${target}`);
             await b.typeText(page, id, text, chosen === "TYPE_AND_ENTER", e?.contentEditable);
             break;
           }
@@ -394,7 +443,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               idx = Number((option.answers.select_option as ChoiceAnswer)?.choice.match(/^opt_(\d+)$/)?.[1]);
             }
             if (!e || !Number.isInteger(idx) || idx < 0 || idx >= e.options!.length) throw new Error("No matching dropdown option selected");
-            action = `SELECT "${e?.options?.[idx]}" in ${e ? b.describe(e) : `[${id}]`}`;
+            const target = e ? b.describe(e) : `[${id}]`;
+            action = `SELECT "${e?.options?.[idx]}" in ${target}`;
+            log = logEntry(`Selecting "${e?.options?.[idx]}" in ${target}`, `Selected "${e?.options?.[idx]}" in ${target}`);
             await b.selectOption(page, id, idx);
             break;
           }
@@ -435,6 +486,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         plan: planText,
         why: planWhy,
         action,
+        log,
         jevMs: Math.round(jevMs),
         planMs,
         execMs: Math.round(execMs),
