@@ -119,7 +119,7 @@ function render(state) {
 async function load() {
   const response = await request({ type: 'getState' });
   $('#mode').value = response.mode;
-  $('#model-link').textContent = response.model ? `${response.model.replace(/^(openai|gemini):/, '')} · ${response.reasoning || 'auto'}` : '';
+  $('#model-link').textContent = response.model ? `${response.model.replace(/^(openai|gemini|custom):/, '')} · ${response.reasoning || 'auto'}` : '';
   $('#model-link').hidden = response.mode !== 'careful' || !response.model;
   configured = response.configured; $('#setup').hidden = configured;
   render(response.state); await refreshTabs();

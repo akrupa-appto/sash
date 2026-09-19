@@ -1,6 +1,6 @@
-import { defaults, normalizeSettings, readSettings, validateSettings, PROVIDER_KEYS } from './settings.js';
+import { defaults, normalizeSettings, readSettings, validateSettings, PROVIDER_KEYS, customOrigin } from './settings.js';
 import { createModelPicker } from '../public/model-picker.js';
-import { listModels, PROVIDERS } from '../providers.ts';
+import { listModels, PROVIDERS, providerLabel } from '../providers.ts';
 import { configure, clearConfig } from '../env.ts';
 const form = document.querySelector('#settings');
 const status = document.querySelector('#status');
@@ -13,7 +13,17 @@ function render(settings) {
   renderModel();
 }
 const current = () => ({ model: form.elements.model.value, reasoning: form.elements.reasoning.value || 'auto' });
-const connected = () => Object.keys(PROVIDERS).filter(id => form.elements[PROVIDER_KEYS[id]].value.trim()).map(id => ({ id, label: PROVIDERS[id].label, prefix: PROVIDERS[id].prefix }));
+const connected = () => Object.keys(PROVIDERS)
+  .filter(id => form.elements[PROVIDER_KEYS[id]].value.trim() && (id !== 'custom' || customOrigin(form.elements.customBaseUrl.value.trim())))
+  .map(id => ({ id, label: id === 'custom' ? `Custom · ${new URL(form.elements.customBaseUrl.value.trim()).hostname}` : PROVIDERS[id].label, prefix: PROVIDERS[id].prefix }));
+// The custom server's origin must be granted by the user. The request is made straight from the click
+// handler, with no await before it, so Chrome still counts it as a user gesture; an already-granted
+// origin resolves true without a prompt.
+function grantCustomOrigin() {
+  const origin = customOrigin(form.elements.customBaseUrl.value.trim());
+  if (!origin || !form.elements.customKey.value.trim()) return Promise.resolve(true);
+  return chrome.permissions.request({ origins: [`${origin}/*`] });
+}
 function renderModel() {
   const label = document.querySelector('#model-label');
   label.textContent = picker ? picker.label(current()) : (current().model ? `${current().model} · reasoning ${current().reasoning}` : 'choose a model');
@@ -35,9 +45,10 @@ function ensurePicker() {
   });
   return picker;
 }
-document.querySelector('#model-button').addEventListener('click', () => {
+document.querySelector('#model-button').addEventListener('click', async () => {
   const p = ensurePicker();
-  if (!p) return show('add an OpenRouter, OpenAI, or Gemini key first, then choose a model.', true);
+  if (!p) return show('add an OpenRouter, OpenAI, Gemini, or custom provider key first, then choose a model.', true);
+  if (!(await grantCustomOrigin())) return show('Chrome did not allow access to the custom provider site.', true);
   p.open(current());
 });
 readSettings().then(render).catch(err => show(err.message, true));
@@ -47,6 +58,7 @@ form.addEventListener('submit', async event => {
   try {
     const settings = normalizeSettings(Object.fromEntries(new FormData(form)));
     validateSettings(settings);
+    if (!(await grantCustomOrigin())) throw new Error('Chrome did not allow access to the custom provider site; the custom provider will not work until you allow it.');
     await chrome.storage.local.set({ settings });
     render(settings);
     show('saved on this device. open checkto from the toolbar to start.');
@@ -56,13 +68,13 @@ document.querySelectorAll('[data-reveal]').forEach(button => button.addEventList
   const input = document.getElementById(button.dataset.reveal);
   const hidden = input.type === 'password'; input.type = hidden ? 'text' : 'password';
   button.textContent = hidden ? 'hide' : 'show';
-  button.setAttribute('aria-label', `${hidden ? 'hide' : 'show'} ${{ openrouterKey: 'OpenRouter', typesafeKey: 'TypeSafe', openaiKey: 'OpenAI', geminiKey: 'Gemini' }[input.id]} key`);
+  button.setAttribute('aria-label', `${hidden ? 'hide' : 'show'} ${{ openrouterKey: 'OpenRouter', typesafeKey: 'TypeSafe', openaiKey: 'OpenAI', geminiKey: 'Gemini', customKey: 'custom' }[input.id]} key`);
 }));
 document.querySelector('#clear-keys').addEventListener('click', async () => {
   try {
     await chrome.runtime.sendMessage({ type: 'stop' });
     const settings = await readSettings();
-    settings.openrouterKey = ''; settings.typesafeKey = ''; settings.openaiKey = ''; settings.geminiKey = '';
+    settings.openrouterKey = ''; settings.typesafeKey = ''; settings.openaiKey = ''; settings.geminiKey = ''; settings.customKey = '';
     await chrome.storage.local.set({ settings });
     render(settings); show('saved keys removed.');
   } catch (err) { show(err.message, true); }

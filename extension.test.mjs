@@ -99,6 +99,8 @@ test('an abort during debugger attachment still leaves a detachable handle', asy
 test('extension build is self-contained and only permits direct provider connections', async () => {
   const manifest = JSON.parse(await readFile('extension/manifest.json', 'utf8'));
   assert.deepEqual(manifest.host_permissions, ['https://openrouter.ai/*', 'https://api.typesafe.ai/*', 'https://api.openai.com/*', 'https://generativelanguage.googleapis.com/*']);
+  // A custom OpenAI-compatible server is opt-in per origin at save time, never granted up front.
+  assert.deepEqual(manifest.optional_host_permissions, ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*']);
   assert.equal(manifest.options_ui.open_in_tab, true);
   assert.equal(manifest.content_scripts, undefined);
   assert.equal(manifest.externally_connectable, undefined);

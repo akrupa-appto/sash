@@ -7,6 +7,8 @@ export function configure(settings) {
   env.OPENROUTER_API_KEY = settings.openrouterKey;
   if (settings.openaiKey) env.OPENAI_API_KEY = settings.openaiKey;
   if (settings.geminiKey) env.GEMINI_API_KEY = settings.geminiKey;
+  if (settings.customKey) env.CUSTOM_API_KEY = settings.customKey;
+  if (settings.customBaseUrl) env.CUSTOM_API_BASE = settings.customBaseUrl;
   env.PLANNER_MODEL = settings.model;
   if (settings.jevModel) env.JEV_MODEL = settings.jevModel;
   // The default text model is a fallback, not a choice: leave it unset so the planner's provider can serve it.

@@ -1,6 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { chat, listModels, inferReasoning, geminiThinking, _memo } from './providers.ts';
+import { chat, listModels, inferReasoning, geminiThinking, providerKey, providerLabel, _memo } from './providers.ts';
 
 const withKeys = async (keys, fn) => {
   const saved = {};
@@ -144,4 +144,39 @@ test('reasoning inference follows the documented families', () => {
   _memo.noEffortOff.delete('gemini-2.5-pro'); // an earlier test taught the memo that this model rejects a thinking change
   assert.deepEqual(geminiThinking('gemini-2.5-pro', 'auto'), { thinkingBudget: 1024 });
   assert.deepEqual(geminiThinking('gemini-2.5-flash', 'none'), { thinkingBudget: 0 });
+});
+
+test('a custom OpenAI-compatible server gets chat completions at its base URL and lists its own models', async () => {
+  const calls = [];
+  const fetchMock = mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push({ url: String(url), headers: init.headers, body: init.body ? JSON.parse(init.body) : undefined });
+    if (String(url).endsWith('/models')) return ok({ data: [{ id: 'llama-4-maverick' }, { id: 'deepseek-r1' }] });
+    return ok({ choices: [{ message: { content: '{"status":"done"}' }, finish_reason: 'stop' }] });
+  });
+  try {
+    const keys = { CUSTOM_API_BASE: 'https://api.groq.com/openai/v1/', CUSTOM_API_KEY: 'gsk-test' };
+    await withKeys({ ...keys, OPENAI_API_KEY: undefined }, async () => {
+      assert.equal(providerKey('custom'), 'gsk-test');
+      assert.equal(providerLabel('custom'), 'Custom · api.groq.com');
+      const reply = await chat({ ...req, spec: 'custom:llama-4-maverick' });
+      assert.equal(reply.content, '{"status":"done"}');
+      assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/chat/completions');
+      assert.equal(calls[0].headers.Authorization, 'Bearer gsk-test');
+      assert.equal(calls[0].body.reasoning_effort, undefined, 'auto sends no reasoning field to an unknown server');
+      await chat({ ...req, spec: 'custom:deepseek-r1', effort: 'high' });
+      assert.equal(calls[1].body.reasoning_effort, 'high');
+      const models = await listModels('custom');
+      assert.equal(calls[2].url, 'https://api.groq.com/openai/v1/models');
+      assert.deepEqual(models.map(m => m.id), ['custom:deepseek-r1', 'custom:llama-4-maverick']);
+      assert.deepEqual(models[0].reasoning, { supported_efforts: null, mandatory: false });
+      // what a custom server rejects is remembered for that server only, not for the same model ID on OpenAI
+      _memo.noJsonMode.add('https://api.groq.com/openai/v1#shared-id');
+      await chat({ ...req, spec: 'custom:shared-id' });
+      assert.equal(calls[3].body.response_format, undefined);
+      await withKeys({ OPENAI_API_KEY: 'oa-key' }, () => chat({ ...req, spec: 'openai:shared-id' }));
+      assert.deepEqual(calls[4].body.response_format, { type: 'json_object' });
+    });
+    // without a valid base URL the key alone does not connect the provider
+    await withKeys({ CUSTOM_API_BASE: 'groq', CUSTOM_API_KEY: 'gsk-test' }, () => { assert.equal(providerKey('custom'), undefined); return assert.rejects(chat({ ...req, spec: 'custom:x' }), /CUSTOM_API_KEY/); });
+  } finally { fetchMock.mock.restore(); }
 });
