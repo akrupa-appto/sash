@@ -29,7 +29,7 @@ mock.module('./extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; pages.push(this); }
-    async attach() { if (attachGate) await attachGate; this.attached = true; this.signal.throwIfAborted(); }
+    async attach() { if (this.tabId === 99) throw new Error('popup attach refused'); if (attachGate) await attachGate; this.attached = true; this.signal.throwIfAborted(); }
     async detach() { this.attached = false; }
   },
 } });
@@ -93,4 +93,17 @@ test('web pages cannot send extension control messages', () => {
   let replied = false;
   chrome.runtime.onMessage.fire({ type: 'run', tabId: 9, goal: 'untrusted' }, { id: chrome.runtime.id, url: 'https://example.test' }, () => { replied = true; });
   assert.equal(replied, false);
+});
+
+
+test('a failed popup attachment produces one terminal error message', async () => {
+  await send({ type: 'clear' });
+  await send({ type: 'run', tabId: 13, goal: 'test popup', mode: 'fast' });
+  await until(() => taskStarted === 3);
+  chrome.tabs.onCreated.fire({ id: 99, openerTabId: 13, url: 'https://example.test/popup' });
+  await until(() => data.runState?.running === false);
+  const replies = data.runState.messages.filter(m => m.role === 'agent');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].text, 'popup attach refused');
+  assert.equal(data.runState.status, 'error');
 });

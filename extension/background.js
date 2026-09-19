@@ -35,6 +35,7 @@ async function stop() {
 }
 async function execute(run, message) {
   let settings;
+  let outcome;
   const { controller, pages } = run;
   const attachments = new Set();
   const candidates = new Map();
@@ -84,18 +85,13 @@ async function execute(run, message) {
         state.steps.push({ step: event.step, action: event.action, plan: event.plan, note: event.note, cost: event.costUsd });
         state.cost = (state.cost || 0) + event.costUsd;
       }
-      if (event.type === 'end') {
-        state.status = event.status;
-        state.cost = event.totalCostUsd;
-        state.messages.push({ role: 'agent', text: safeError(event.answer || event.message, settings) });
-        state.messages = state.messages.slice(-20);
-      }
+      if (event.type === 'end') { outcome = event; return; }
       void persist().catch(() => {});
     }, controller.signal);
     if (run.popupError) throw run.popupError;
   } catch (err) {
-    state.status = controller.signal.aborted && !run.popupError ? 'stopped' : 'error';
-    state.messages.push({ role: 'agent', text: state.status === 'stopped' ? 'stopped' : safeError(err, settings) });
+    const status = controller.signal.aborted && !run.popupError ? 'stopped' : 'error';
+    outcome = { status, message: status === 'stopped' ? 'stopped' : safeError(err, settings) };
   } finally {
     run.cleaning = true;
     chrome.tabs.onCreated.removeListener(created);
@@ -104,6 +100,11 @@ async function execute(run, message) {
     // Any attach that was already in flight must finish before the final detach.
     await Promise.allSettled([...attachments]);
     await Promise.allSettled(pages.map(p => p.detach()));
+    if (run.popupError) outcome = { ...outcome, status: 'error', answer: undefined, message: safeError(run.popupError, settings) };
+    state.status = outcome?.status || 'error';
+    state.cost = outcome?.totalCostUsd ?? state.cost;
+    state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings) });
+    state.messages = state.messages.slice(-20);
     clearConfig();
     state.running = false;
     active = undefined;

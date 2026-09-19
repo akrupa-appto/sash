@@ -38,6 +38,22 @@ try {
   assert.equal(await settings.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   console.log('PASS installed extension: settings save, reload, local-only keys, masked fields, mobile-width layout');
 
+  // Prove the native side panel opens, not just that its HTML can render as a tab.
+  const windowId = await settings.evaluate(async () => (await chrome.windows.getCurrent()).id);
+  await settings.evaluate(windowId => {
+    const button = document.createElement('button'); button.id = 'qa-open-panel'; button.textContent = 'open side panel';
+    button.onclick = () => chrome.sidePanel.open({ windowId }).then(() => { globalThis.qaPanelOpened = true; });
+    document.body.append(button);
+  }, windowId);
+  await settings.locator('#qa-open-panel').click();
+  await settings.waitForFunction(() => globalThis.qaPanelOpened === true);
+  const browserSession = await context.browser().newBrowserCDPSession();
+  const targets = (await browserSession.send('Target.getTargets')).targetInfos;
+  assert.ok(targets.some(t => t.url === `chrome-extension://${extensionId}/panel.html`));
+  await browserSession.detach();
+  await settings.evaluate(async () => { await chrome.sidePanel.setOptions({ enabled: false }); await chrome.sidePanel.setOptions({ enabled: true }); document.querySelector('#qa-open-panel').remove(); });
+  console.log('PASS installed extension: native Chrome side panel opens');
+
   // Mock only provider replies in the real extension worker. Chrome APIs and browser actions remain real.
   await worker.evaluate(() => {
     globalThis.fixtureCalls = [];
