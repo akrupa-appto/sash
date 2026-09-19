@@ -24,7 +24,7 @@ function persist() {
 }
 function safeError(error, settings = {}) {
   let text = String(error?.message || error || 'something went wrong');
-  for (const key of [settings.openrouterKey, settings.typesafeKey, settings.openaiKey, settings.geminiKey]) if (key) text = text.split(key).join('[redacted]');
+  for (const key of [settings.openrouterKey, settings.typesafeKey, settings.openaiKey, settings.geminiKey, settings.customKey]) if (key) text = text.split(key).join('[redacted]');
   return text.slice(0, 12000);
 }
 // Chrome ended browser control on its own. Say what happened and what gets the task moving again.

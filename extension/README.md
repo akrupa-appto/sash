@@ -7,7 +7,7 @@ A local Chrome extension with the same fast (Jev) and careful (planner + Jev) mo
 1. Unzip `checkto-extension.zip`.
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked** and choose the `checkto-extension` folder containing `manifest.json`.
-4. In the settings tab, save your OpenRouter key. Optionally add an OpenAI or Gemini key to plan with those APIs directly, and choose a direct TypeSafe connection for Jev. The planner model picker lists the models your keys unlock and the reasoning levels each model accepts.
+4. In the settings tab, save your OpenRouter key. Optionally add an OpenAI or Gemini key to plan with those APIs directly, or a custom OpenAI-compatible server (base URL plus key; Chrome asks once to allow that site), and choose a direct TypeSafe connection for Jev. The planner model picker lists the models your keys unlock and the reasoning levels each model accepts.
 5. Pin Checkto in Chrome's extensions menu. Open a website, click Checkto, and enter a task. Type `@` to search tabs across all windows and add the ones you mean.
 
 Requires Chrome 118 or later. Chrome shows its debugger control banner during a task. **Stop**, closing the controlled tab, or cancelling Chrome's banner ends control. The agent can switch to existing website tabs and follow pages opened by the task. It attaches to tabs as needed and detaches when the task ends. Browser settings, the Chrome Web Store, extension pages, and controls inside embedded frames are not supported.

@@ -136,7 +136,7 @@ let choice = { model: localStorage.getItem('checkto-model') || '', reasoning: lo
 if (choice.model === 'custom') choice.model = localStorage.getItem('checkto-custom-model') || '';
 let picker = null;
 const providersReady = fetch('/api/providers').then(r => r.json()).then(async data => {
-  if (!choice.model || (data.providers.length && !data.providers.some(p => p.prefix ? choice.model.startsWith(p.prefix) : !/^(openai|gemini):/.test(choice.model)))) choice.model = data.default;
+  if (!choice.model || (data.providers.length && !data.providers.some(p => p.prefix ? choice.model.startsWith(p.prefix) : !/^(openai|gemini|custom):/.test(choice.model)))) choice.model = data.default;
   const { createModelPicker } = await import('/model-picker.js');
   picker = createModelPicker({
     providers: data.providers,

@@ -8,7 +8,7 @@ import { launch } from "./browser.ts";
 import { runTask, type Event } from "./agent.ts";
 import { jevVia } from "./jev.ts";
 import { plannerModel } from "./planner.ts";
-import { configuredProviders, listModels, parseModel, PROVIDERS, providerKey } from "./providers.ts";
+import { configuredProviders, listModels, parseModel, PROVIDERS, providerKey, providerLabel } from "./providers.ts";
 
 const PORT = Number(process.env.PORT ?? 8791);
 const MAX_SESSIONS = Number(process.env.MAX_SESSIONS ?? 6);
@@ -81,7 +81,7 @@ export const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/providers") {
     return json(res, 200, {
-      providers: configuredProviders().map((id) => ({ id, label: PROVIDERS[id].label, prefix: PROVIDERS[id].prefix })),
+      providers: configuredProviders().map((id) => ({ id, label: providerLabel(id), prefix: PROVIDERS[id].prefix })),
       // Only offer the env default when its provider is connected; otherwise the client opens the picker.
       default: providerKey(parseModel(plannerModel()).provider) ? plannerModel() : "",
     });
@@ -221,7 +221,7 @@ export const server = http.createServer(async (req, res) => {
       return json(res, 400, { error: "choose a valid reasoning level" });
     }
     if (body.supervisor !== false && !providerKey(parseModel(model).provider)) {
-      return json(res, 400, { error: `${PROVIDERS[parseModel(model).provider].label} is not connected on this server; choose another model` });
+      return json(res, 400, { error: `${providerLabel(parseModel(model).provider)} is not connected on this server; choose another model` });
     }
     let target: string | undefined = body.url ? String(body.url) : message.match(URL_RE)?.[0];
     if (target && !/^https?:\/\//i.test(target)) target = "https://" + target;

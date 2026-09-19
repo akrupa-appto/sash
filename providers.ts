@@ -3,7 +3,7 @@ import { env } from "./env.ts";
 // IDs; the official OpenAI and Gemini APIs are selected with an "openai:" or "gemini:" prefix, so the
 // model spec stays one string everywhere (env, settings, requests). Jev has its own client in jev.ts.
 
-export type ProviderId = "openrouter" | "openai" | "gemini";
+export type ProviderId = "openrouter" | "openai" | "gemini" | "custom";
 export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export const EFFORTS: Effort[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -17,18 +17,31 @@ export type ReasoningMeta = {
 };
 export type ModelInfo = { id: string; name: string; reasoning?: ReasoningMeta; context?: number; price?: { input: number; output: number } }; // USD per 1M tokens
 
-export const PROVIDERS: Record<ProviderId, { label: string; keyEnv: "OPENROUTER_API_KEY" | "OPENAI_API_KEY" | "GEMINI_API_KEY"; keysUrl: string; prefix: string }> = {
+export const PROVIDERS: Record<ProviderId, { label: string; keyEnv: "OPENROUTER_API_KEY" | "OPENAI_API_KEY" | "GEMINI_API_KEY" | "CUSTOM_API_KEY"; keysUrl: string; prefix: string }> = {
   openrouter: { label: "OpenRouter", keyEnv: "OPENROUTER_API_KEY", keysUrl: "https://openrouter.ai/settings/keys", prefix: "" },
   openai: { label: "OpenAI", keyEnv: "OPENAI_API_KEY", keysUrl: "https://platform.openai.com/api-keys", prefix: "openai:" },
   gemini: { label: "Gemini", keyEnv: "GEMINI_API_KEY", keysUrl: "https://aistudio.google.com/apikey", prefix: "gemini:" },
+  // Any OpenAI-compatible chat-completions server (Groq, Together, vLLM, LM Studio, a proxy). CUSTOM_API_BASE is
+  // the URL up to and including /v1; models are listed from its /models endpoint.
+  custom: { label: "Custom", keyEnv: "CUSTOM_API_KEY", keysUrl: "", prefix: "custom:" },
 };
 
 export function parseModel(spec: string): { provider: ProviderId; model: string } {
-  const m = spec.match(/^(openai|gemini):(.+)$/);
+  const m = spec.match(/^(openai|gemini|custom):(.+)$/);
   return m ? { provider: m[1] as ProviderId, model: m[2] } : { provider: "openrouter", model: spec };
 }
+// The custom provider's base URL, without a trailing slash, or undefined when unset or not https/http.
+export function customBase(): string | undefined {
+  const base = (env.CUSTOM_API_BASE || "").trim().replace(/\/+$/, "");
+  return /^https?:\/\/[^\s/]+/.test(base) ? base : undefined;
+}
 export function providerKey(provider: ProviderId): string | undefined {
+  if (provider === "custom" && !customBase()) return undefined;
   return env[PROVIDERS[provider].keyEnv] || undefined;
+}
+export function providerLabel(provider: ProviderId): string {
+  if (provider === "custom") { try { return `Custom · ${new URL(customBase() || "").hostname}`; } catch { return "Custom"; } }
+  return PROVIDERS[provider].label;
 }
 export function configuredProviders(): ProviderId[] {
   return (Object.keys(PROVIDERS) as ProviderId[]).filter((p) => providerKey(p));
@@ -85,7 +98,8 @@ export async function chat(req: ChatRequest): Promise<ChatResult> {
   const { provider, model } = parseModel(req.spec);
   const key = providerKey(provider);
   if (!key) throw new Error(`${PROVIDERS[provider].keyEnv} needed for ${PROVIDERS[provider].label} models`);
-  if (provider === "openai") return openaiChat(req, model, key);
+  if (provider === "openai") return openaiChat(req, model, key, "https://api.openai.com/v1", true);
+  if (provider === "custom") return openaiChat(req, model, key, customBase()!, false);
   if (provider === "gemini") return geminiChat(req, model, key);
   return openrouterChat(req, model, key);
 }
@@ -146,11 +160,13 @@ export function fastestEffort(provider: ProviderId, model: string): Effort | und
   return [...efforts].sort((a, b) => EFFORTS.indexOf(a) - EFFORTS.indexOf(b))[0];
 }
 
-async function openaiChat(req: ChatRequest, model: string, key: string, retry = 0): Promise<ChatResult> {
-  // reasoning_effort values are model-dependent (none/minimal/low/medium/high/xhigh/max). "auto" asks for the
-  // fastest documented setting; a model that still rejects "none" (o-series, GPT-5 before 5.1, GPT-6) falls back to its default.
+// OpenAI chat completions, also used for any OpenAI-compatible server. reasoning_effort values are
+// model-dependent (none/minimal/low/medium/high/xhigh/max). On OpenAI, "auto" asks for the fastest documented
+// setting; a model that still rejects "none" (o-series, GPT-5 before 5.1, GPT-6) falls back to its default.
+// A custom server gets no reasoning field on auto, since many do not accept it at all.
+async function openaiChat(req: ChatRequest, model: string, key: string, base: string, autoOff: boolean, retry = 0): Promise<ChatResult> {
   const known = inferReasoning("openai", model);
-  const effort = req.effort === "auto" ? (noEffortOff.has(model) ? undefined : known ? fastestEffort("openai", model) : "none") : req.effort;
+  const effort = req.effort === "auto" ? (!autoOff || noEffortOff.has(model) ? undefined : known ? fastestEffort("openai", model) : "none") : req.effort;
   if (effort === "none" && noEffortOff.has(model) && req.effort !== "auto") throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level");
   const body = {
     model,
@@ -161,16 +177,17 @@ async function openaiChat(req: ChatRequest, model: string, key: string, retry = 
   };
   let json: any;
   try {
-    json = await fetchJson("openai", "https://api.openai.com/v1/chat/completions", {
+    json = await fetchJson(autoOff ? "openai" : "custom", `${base}/chat/completions`, {
       method: "POST", signal: req.signal, headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
   } catch (err) {
-    if (err instanceof ProviderError && err.status === 400 && retry < 2) {
-      if (effort === "none" && /reasoning/i.test(err.body)) { noEffortOff.add(model); if (req.effort === "auto") return openaiChat(req, model, key, retry + 1); throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level"); }
-      if (req.json && !noJsonMode.has(model) && /response_format|json/i.test(err.body)) { noJsonMode.add(model); return openaiChat(req, model, key, retry + 1); }
+    if (err instanceof ProviderError && [400, 422].includes(err.status) && retry < 2) {
+      if (effort === "none" && /reasoning/i.test(err.body)) { noEffortOff.add(model); if (req.effort === "auto") return openaiChat(req, model, key, base, autoOff, retry + 1); throw new Error("this model cannot turn reasoning off; choose auto or a reasoning level"); }
+      if (req.json && !noJsonMode.has(model) && /response_format|json/i.test(err.body)) { noJsonMode.add(model); return openaiChat(req, model, key, base, autoOff, retry + 1); }
     }
     throw err;
   }
+  if (json.error) throw new Error(`planner request failed: ${String(json.error.message || json.error.code || "provider error").slice(0, 300)}`);
   const choice = json.choices?.[0];
   return {
     content: typeof choice?.message?.content === "string" ? choice.message.content : "",
@@ -272,7 +289,12 @@ export async function listModels(provider: ProviderId, signal?: AbortSignal): Pr
       price: m.pricing ? { input: Number(m.pricing.prompt) * 1e6, output: Number(m.pricing.completion) * 1e6 } : undefined,
     }));
   }
-  if (!key) throw new Error(`${PROVIDERS[provider].keyEnv} needed to list ${PROVIDERS[provider].label} models`);
+  if (!key) throw new Error(provider === "custom" ? "CUSTOM_API_BASE and CUSTOM_API_KEY needed to list custom models" : `${PROVIDERS[provider].keyEnv} needed to list ${PROVIDERS[provider].label} models`);
+  if (provider === "custom") {
+    const json = await fetchJson("custom", `${customBase()}/models`, { signal, headers: { Authorization: `Bearer ${key}` } });
+    // No reasoning metadata exists for an arbitrary server; every level stays selectable and the server decides.
+    return (json.data ?? []).map((m: any) => String(m.id)).sort().map((id: string) => ({ id: `custom:${id}`, name: id, reasoning: { supported_efforts: null, mandatory: false } }));
+  }
   if (provider === "openai") {
     const json = await fetchJson("openai", "https://api.openai.com/v1/models", { signal, headers: { Authorization: `Bearer ${key}` } });
     return (json.data ?? [])

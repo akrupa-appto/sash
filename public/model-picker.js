@@ -111,7 +111,7 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
     const rows = models.filter(m => !q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
     $('.mp-list').innerHTML = rows.length ? rows.map(m => `<button type="button" class="mp-row" role="option" data-id="${esc(m.id)}" aria-selected="${String(m.id === state.model)}">
         <b>${esc(m.name)}</b><span class="mp-meta">${[m.price ? `${money(m.price.input)} / ${money(m.price.output)} per M` : '', tokens(m.context) ? `${tokens(m.context)} ctx` : ''].filter(Boolean).join(' · ')}</span>
-        <small>${esc(m.id.replace(/^(openai|gemini):/, ''))} · ${reasoningSummary(m.reasoning)}</small></button>`).join('')
+        <small>${esc(m.id.replace(/^(openai|gemini|custom):/, ''))} · ${reasoningSummary(m.reasoning)}</small></button>`).join('')
       : `<p class="mp-empty">${models.length ? 'no models match' : 'no models'}</p>`;
     const sel = $('.mp-row[aria-selected=true]'); if (sel) sel.scrollIntoView({ block: 'nearest' });
   }
@@ -153,7 +153,7 @@ export function createModelPicker({ providers, fetchModels, value, onChange, all
     label(current) {
       const m = current?.model || '';
       const info = [...cache.values()].flat().find(x => x.id === m);
-      return m ? `${info?.name || m.replace(/^(openai|gemini):/, '')} · reasoning ${EFFORT_LABELS[current.reasoning] || current.reasoning || 'auto'}` : 'choose a model';
+      return m ? `${info?.name || m.replace(/^(openai|gemini|custom):/, '')} · reasoning ${EFFORT_LABELS[current.reasoning] || current.reasoning || 'auto'}` : 'choose a model';
     },
     // Load a provider's list ahead of time so labels can show model names before the dialog opens.
     async warm(spec) { const id = providerOf(spec || ''); if (!cache.has(id)) cache.set(id, await fetchModels(id)); },
