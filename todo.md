@@ -2,11 +2,17 @@
 
 one line per task. do it, check the box, move on. order inside each list is the order to do them.
 
-## fix
+## fix: ui (all visible in adam's 2026-09-19 screenshots)
 
 - [ ] compare/summarize answers come out as one giant sentence. `planner.ts:34` says "one sentence"; allow a few short lines (one per item) for compare/summarize, keep one sentence for plain confirmations. the panel already renders pre-wrap.
 - [ ] a multi-line message turns the compose box into a capsule blob. `.compose-box` is `border-radius:999px` in `extension/style.css`; make it `22px` and delete the `:has(.selected-tabs)` 20px override. add a `panel.test.mjs` case that types two lines and checks the radius.
-- [ ] settings page is still the old cream theme with system fonts. `cadb09e` scoped the plum tokens to `.panel-page`; move them to `:root`, put Outfit on headings, retune `.privacy` and `--acc` for the dark background.
+- [ ] the @ and the send button float in the middle of a tall compose box. `.compose-row` is `align-items:center`; pin both to the last line (`flex-end`) so they stay by the caret like every chat app.
+- [ ] after a run ends the "n actions" toggle sits half under the status strip. the transcript scrolls to the bottom before the steps block has rendered; scroll again after it mounts, and give the last message room above the strip.
+- [ ] after "new" the status strip still says "finished" from the previous run. reset `state.status` to ready on new chat.
+- [ ] settings page is still the old cream theme with system fonts. `cadb09e` scoped the plum tokens to `.panel-page`; move them to `:root`, put Outfit on headings, retune `.privacy` and `--acc` for the dark background. it has to look like the panel, not like a different product.
+
+## fix: agent
+
 - [ ] custom openrouter model ids show "auto" as the only reasoning option. look the id up in the cached model list before treating it as unknown.
 - [ ] an element can vanish between snapshot and click on pages that re-render every second (`locator.evaluate: Timeout`). retag the page and retry once by role and name before spending a step.
 
