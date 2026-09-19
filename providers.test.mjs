@@ -53,6 +53,11 @@ test('Gemini models use generateContent with an API key header, JSON mime type, 
     assert.equal(calls[0].body.systemInstruction.parts[0].text, 'sys');
     await withKeys({ GEMINI_API_KEY: 'g-key' }, () => chat({ ...req, spec: 'gemini:gemini-2.5-flash' }));
     assert.deepEqual(calls[1].body.generationConfig.thinkingConfig, { thinkingBudget: 0 }, 'auto turns 2.5 Flash thinking off');
+    // A model that refuses to turn thinking off keeps a budget large enough for its hidden thinking on later auto calls.
+    _memo.noEffortOff.add('gemini-2.5-pro');
+    await withKeys({ GEMINI_API_KEY: 'g-key' }, () => chat({ ...req, spec: 'gemini:gemini-2.5-pro', maxTokens: e => ({ none: 1200, low: 4096, medium: 8192 })[e] ?? 16384 }));
+    assert.equal(calls[2].body.generationConfig.thinkingConfig, undefined);
+    assert.equal(calls[2].body.generationConfig.maxOutputTokens, 8192);
   } finally { fetchMock.mock.restore(); }
 });
 

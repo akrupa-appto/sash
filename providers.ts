@@ -178,7 +178,8 @@ async function geminiChat(req: ChatRequest, model: string, key: string, retry = 
     systemInstruction: { parts: [{ text: req.system }] },
     contents: [{ role: "user", parts: [{ text: req.user }] }],
     generationConfig: {
-      maxOutputTokens: budget(req, req.effort === "auto" ? (thinking ? "low" : "none") : req.effort),
+      // Auto with thinking off is the small budget; once a model is known to always think, keep room for it.
+      maxOutputTokens: budget(req, req.effort === "auto" ? (thinking?.thinkingBudget === 0 ? "none" : thinking ? "low" : "medium") : req.effort),
       temperature: req.temperature ?? 0,
       ...(req.json ? { responseMimeType: "application/json" } : {}),
       ...(thinking ? { thinkingConfig: thinking } : {}),
