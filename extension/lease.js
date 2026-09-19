@@ -28,3 +28,14 @@ export function release(tabId) {
 export function get(tabId) {
   return leases.get(tabId);
 }
+
+/**
+ * Record whether we (this extension) hold a tab muted, so we know later that it is
+ * safe for us — and only us — to unmute it. A no-op if no lease is held for the tab.
+ */
+export function setMuted(tabId, mutedByUs) {
+  const lease = leases.get(tabId);
+  if (!lease) return undefined;
+  lease.mutedByUs = mutedByUs;
+  return lease;
+}
