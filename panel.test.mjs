@@ -65,6 +65,16 @@ test('a finished run shows its answer after its own actions, not before them', {
   await page.close();
 });
 
+test('a run that stopped on a question shows it as waiting for an answer', { skip }, async () => {
+  const page = await panel({
+    running: false, status: 'question', steps: [],
+    messages: [{ role: 'user', text: 'open the readme' }, { role: 'agent', text: 'which README do you mean?', steps }],
+  });
+  assert.equal(await page.locator('#status-text').innerText(), 'waiting for an answer');
+  assert.equal(await page.locator('.message.agent.asking > div').last().innerText(), 'which README do you mean?');
+  await page.close();
+});
+
 test('the live action list only shows while the run is in flight', { skip }, async () => {
   const page = await panel({ ...finished, running: true, status: 'working', messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);

@@ -3,9 +3,20 @@ import { decide, writeText, type ChoiceAnswer, type Question } from "./jev.ts";
 import { plan, plannerModel, type ReasoningLevel } from "./planner.ts";
 import * as b from "./browser.ts";
 
+// Everything a paused run needs to carry on from the user's reply: the task it was given, what it has
+// read so far, and which step it stopped on. A resumed run is the same run, not a fresh task.
+export type PausedRun = {
+  goal: string; // the original task, not the reply that resumes it
+  history: string[];
+  step: number;
+  question: string; // what the user was asked
+  action?: string; // set when the pause was a high-risk confirmation: the action waiting for an answer
+};
+
 export type RunInput = {
   url?: string; // omit to continue on the page the browser is already on
-  goal: string;
+  goal: string; // a new task, or — with `resume` — the user's reply to the question that paused the run
+  resume?: PausedRun; // continue a run that stopped to ask something
   values?: string[]; // texts the user says may need typing
   maxSteps?: number;
   previousTasks?: string[]; // earlier messages in this chat, oldest first, so "go on" has context
@@ -40,9 +51,11 @@ export type StepEvent = {
 
 export type EndEvent = {
   type: "end";
-  status: "done" | "blocked" | "max_steps" | "error" | "stopped";
+  status: "done" | "blocked" | "max_steps" | "error" | "stopped" | "question";
   message: string;
   answer?: string; // supervisor's one-line reply for the user
+  question?: string; // status "question": what the run needs the user to answer before it can go on
+  pending?: PausedRun; // status "question": pass it back as RunInput.resume with the user's reply
   totalCostUsd: number;
   steps: number;
 };
@@ -103,11 +116,16 @@ function quotedStrings(goal: string): string[] {
 export async function runTask(page: Page, input: RunInput, emit: (e: Event) => void, signal: AbortSignal) {
   const maxSteps = Math.min(Math.max(input.maxSteps ?? 60, 1), 60);
   const useSupervisor = input.supervisor !== false;
-  const history: string[] = [];
+  // On a resume the task stays the one the run was started with; input.goal is the user's reply to it.
+  const goal = input.resume?.goal ?? input.goal;
+  const history: string[] = [...(input.resume?.history ?? [])];
   const typedSoFar: string[] = [];
-  const baseCandidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(input.goal)].map((s) => s.trim()).filter(Boolean)));
+  const baseCandidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(goal), ...(input.resume ? quotedStrings(input.goal) : [])].map((s) => s.trim()).filter(Boolean)));
   let totalCost = 0;
-  let step = 0;
+  let step = input.resume?.step ?? 0;
+  // The user was just asked about this exact action, so their reply, not another pause, decides it.
+  let riskApproved = Boolean(input.resume?.action);
+  if (input.resume) history.push(`step ${step}: asked the user "${input.resume.question}" → they replied "${input.goal}"`);
   const actionCounts = new Map<string, number>();
   let consecutiveWaits = 0;
   let lastFingerprint = "";
@@ -121,6 +139,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
 
   const end = (status: EndEvent["status"], message: string, answer?: string) =>
     emit({ type: "end", status, message, answer, totalCostUsd: totalCost, steps: step });
+  // Stop the run without executing anything and hand back everything it needs to carry on from the reply.
+  const pause = (question: string, action?: string) =>
+    emit({ type: "end", status: "question", message: question, question, pending: { goal, history: [...history], step, question, action }, totalCostUsd: totalCost, steps: step });
 
   try {
     if (input.url) {
@@ -189,7 +210,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       ];
 
       // ---- 1. supervisor thinks: one concrete action, or done/blocked
-      let stepGoal = input.goal;
+      let stepGoal = goal;
       let planText: string | undefined;
       let planWhy: string | undefined;
       let planCompletes = false;
@@ -198,7 +219,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       if (useSupervisor) {
         const p = await plan(
           {
-            task: input.goal,
+            task: goal,
             earlierTasks: (input.previousTasks ?? []).slice(-6),
             history: compactHistory(history),
             lastResult: history.length ? history[history.length - 1].split(" → ").slice(1).join(" → ") || undefined : undefined,
@@ -228,6 +249,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           return end("done", p.why ?? "Task complete", p.answer);
         }
         if (p.status === "blocked") return end("blocked", p.why ?? "Cannot continue", p.answer);
+        // The supervisor needs something only the user knows: stop here, nothing is executed.
+        if (p.status === "question") return pause(p.question ?? p.why ?? "i need one more detail before i can go on.");
         if (p.tabId !== undefined && input.browserTabs) {
           if (!tabs?.some(t => t.id === p.tabId)) return end("error", "the requested tab is no longer available");
           history.push(`step ${step}: read "${snap.title}" (${snap.url}): ${snap.text.slice(0, 4000)}; switching to tab ${p.tabId}${p.why ? `: ${p.why}` : ''}`);
@@ -238,6 +261,12 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           continue;
         }
         if (!p.next) return end("error", "the planner gave no next action");
+        // The supervisor judged this action hard to undo. Ask before doing it, the same way a question stops
+        // the run; the user's reply, carried back in `resume`, is what lets it through.
+        if (p.risk === "high") {
+          if (!riskApproved) return pause(`i am about to ${p.next}${p.why ? `, because ${p.why}` : ""}. this is hard to undo. should i go ahead?`, p.next);
+          riskApproved = false; // one answer covers one action
+        }
         stepGoal = p.next;
         planText = p.next;
         planWhy = p.why;
@@ -397,7 +426,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               text = candidates[0];
             } else {
               text = await writeText(
-                `Task: ${input.goal}\nThis step: ${stepGoal}\nPage title: ${snap.title}\nURL: ${snap.url}\nField: ${e ? b.describe(e) : id}\nAlready typed this run: ${JSON.stringify(typedSoFar)}\nWhat exact text should be typed into this field?`,
+                `Task: ${goal}\nThis step: ${stepGoal}\nPage title: ${snap.title}\nURL: ${snap.url}\nField: ${e ? b.describe(e) : id}\nAlready typed this run: ${JSON.stringify(typedSoFar)}\nWhat exact text should be typed into this field?`,
                 signal,
               );
               note = "text written by text model";

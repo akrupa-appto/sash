@@ -29,11 +29,11 @@ const choice = (operation, achieved = 0) => ({
   operation: { choice: operation }, goal_achieved: { noul: achieved },
   click_target: { choice: 'el_1' },
 });
-async function run(supervisor, maxSteps = 3) {
+async function run(supervisor, maxSteps = 3, extra = {}) {
   state = 'repository'; executed = 0; planCalls = [];
   const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
   const events = [];
-  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}) }, e => events.push(e), new AbortController().signal);
+  await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}), ...extra }, e => events.push(e), new AbortController().signal);
   return events.at(-1);
 }
 
@@ -267,4 +267,49 @@ test('an element that vanishes between snapshot and click is retried by name ins
     assert.match(step1.note, /re-tagged/);
     assert.equal(events.at(-1).status, 'done');
   } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
+test('a planner question stops the run unexecuted, and the next message continues that run', async () => {
+  plans = [
+    { status: 'continue', next: 'open README.md' },
+    { status: 'question', question: 'which README do you mean, the root one or docs/README.md?', why: 'two files match' },
+  ];
+  decisions = [choice('CLICK')];
+  const asked = await run(true);
+  assert.equal(asked.status, 'question');
+  assert.equal(asked.question, 'which README do you mean, the root one or docs/README.md?');
+  assert.equal(executed, 1, 'the question must not carry out another action');
+  assert.equal(planCalls.length, 2);
+
+  plans = [{ status: 'done', answer: 'opened the root readme' }];
+  decisions = [];
+  const resumed = await run(true, 3, { goal: 'the root one', resume: asked.pending });
+  assert.equal(resumed.status, 'done');
+  // The resumed run is the same task with everything it had already read, plus the user's answer.
+  assert.equal(planCalls[0].task, 'open the raw README.md');
+  assert.match(planCalls[0].history[0], /supervisor said "open README.md"/);
+  assert.match(planCalls[0].history.at(-1), /which README do you mean.*they replied "the root one"/);
+  assert.equal(planCalls[0].step, 3);
+});
+
+test('a high-risk action waits for the user before it runs, a low-risk one does not', async () => {
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high', why: 'it removes the account for good' }];
+  decisions = [choice('CLICK')];
+  const paused = await run(true);
+  assert.equal(paused.status, 'question');
+  assert.equal(executed, 0, 'nothing may be executed before the user answers');
+  assert.match(paused.question, /Delete account/);
+  assert.equal(paused.pending.action, 'click the "Delete account" button');
+
+  plans = [{ status: 'continue', next: 'click the "Delete account" button', risk: 'high' }, { status: 'done', answer: 'deleted' }];
+  decisions = [choice('CLICK')];
+  const resumed = await run(true, 3, { goal: 'yes, go ahead', resume: paused.pending });
+  assert.equal(resumed.status, 'done');
+  assert.equal(executed, 1, 'the answer lets exactly that action through');
+
+  plans = [{ status: 'continue', next: 'open README.md', risk: 'low' }, { status: 'done', answer: 'ok' }];
+  decisions = [choice('CLICK')];
+  const low = await run(true);
+  assert.equal(low.status, 'done');
+  assert.equal(executed, 1);
 });
