@@ -165,3 +165,15 @@ test('the planner sees every step of a long run, older ones shortened', async ()
     assert.ok(last.at(-1).length > 400);
   } finally { clickDestination = 'file-preview'; }
 });
+
+test('history records what appeared on the page after an action, not only that it changed', async () => {
+  clickDestination = 'progress';
+  const orig = snapFn;
+  snapFn = () => ({ ...snap(), text: `Jev header ${state === 'repository' ? 'Runs list' : 'Run finished: 7/8 tests passed on "#42 feat: browser settings"'}` });
+  plans = [{ status: 'continue', next: 'open the run' }, { status: 'done', answer: 'ok' }];
+  decisions = [choice('CLICK')];
+  try {
+    await run(true, 5);
+    assert.match(planCalls[1].history[0], /showing: "Run finished: 7\/8 tests passed on "#42 feat: browser settings""/);
+  } finally { snapFn = orig; clickDestination = 'file-preview'; }
+});

@@ -79,6 +79,15 @@ function compactHistory(history: string[], full = 12, older = 220): string[] {
   return history.map((h, i) => (i < history.length - full && h.length > older ? h.slice(0, older) + "…" : h));
 }
 
+// The part of the page text that was not there before, shortened: the observation the step produced.
+function newText(prev: string, cur: string, max = 240): string {
+  let i = 0;
+  while (i < prev.length && i < cur.length && prev[i] === cur[i]) i++;
+  if (i < cur.length) i = cur.lastIndexOf(" ", i - 1) + 1; // back up to the start of the changed word
+  const fresh = cur.slice(i).replace(/\s+/g, " ").trim();
+  return fresh ? `, showing: "${fresh.slice(0, max)}${fresh.length > max ? "…" : ""}"` : "";
+}
+
 function quotedStrings(goal: string): string[] {
   const out: string[] = [];
   for (const m of goal.matchAll(/["“”']([^"“”']{1,120})["“”']/g)) out.push(m[1].trim());
@@ -97,6 +106,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   let consecutiveWaits = 0;
   let lastFingerprint = "";
   let lastUrl = "";
+  let lastText = "";
   const seenPages = new Set(page.context().pages());
 
   const end = (status: EndEvent["status"], message: string, answer?: string) =>
@@ -134,16 +144,17 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       const tabs = await input.browserTabs?.list();
       const currentTabId = input.browserTabs?.currentId(page);
       // Tell the models whether the previous action changed anything.
+      // Record what appeared, not just that something changed, so a final answer written many steps
+      // later can still quote the run, item, or result that was actually observed.
       if (history.length && lastFingerprint) {
         history[history.length - 1] +=
           snap.fingerprint === lastFingerprint
             ? " → page did not change"
-            : snap.url !== lastUrl
-              ? ` → now on "${snap.title}" (${snap.url})`
-              : " → page changed";
+            : (snap.url !== lastUrl ? ` → now on "${snap.title}" (${snap.url})` : " → page changed") + newText(lastText, snap.text);
       }
       lastFingerprint = snap.fingerprint;
       lastUrl = snap.url;
+      lastText = snap.text;
 
       const scrollPos =
         snap.scroll.max === 0
