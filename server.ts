@@ -8,6 +8,7 @@ import { launch } from "./browser.ts";
 import { runTask, type Event } from "./agent.ts";
 import { jevVia } from "./jev.ts";
 import { plannerModel } from "./planner.ts";
+import { configuredProviders, listModels, parseModel, PROVIDERS, providerKey } from "./providers.ts";
 
 const PORT = Number(process.env.PORT ?? 8791);
 const MAX_SESSIONS = Number(process.env.MAX_SESSIONS ?? 6);
@@ -57,6 +58,16 @@ function readJson(req: http.IncomingMessage): Promise<any> {
   });
 }
 
+// Model lists change rarely; one fetch per provider per ten minutes keeps the picker instant.
+const modelCache = new Map<string, { at: number; models: unknown }>();
+async function cachedModels(provider: keyof typeof PROVIDERS) {
+  const hit = modelCache.get(provider);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.models;
+  const models = await listModels(provider);
+  modelCache.set(provider, { at: Date.now(), models });
+  return models;
+}
+
 const json = (res: http.ServerResponse, code: number, body: unknown) => {
   res.writeHead(code, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -68,6 +79,29 @@ export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
   const m = url.pathname.match(/^\/api\/session\/([a-f0-9]+)(?:\/(task|close|recording-start|recording-stop))?$/);
 
+  if (req.method === "GET" && url.pathname === "/api/providers") {
+    return json(res, 200, {
+      providers: configuredProviders().map((id) => ({ id, label: PROVIDERS[id].label, prefix: PROVIDERS[id].prefix })),
+      // Only offer the env default when its provider is connected; otherwise the client opens the picker.
+      default: providerKey(parseModel(plannerModel()).provider) ? plannerModel() : "",
+    });
+  }
+  if (req.method === "GET" && url.pathname === "/api/models") {
+    const provider = url.searchParams.get("provider") ?? "openrouter";
+    if (!(provider in PROVIDERS)) return json(res, 400, { error: "unknown provider" });
+    if (!providerKey(provider as keyof typeof PROVIDERS)) return json(res, 400, { error: `${PROVIDERS[provider as keyof typeof PROVIDERS].label} is not connected on this server` });
+    try {
+      const models = await cachedModels(provider as keyof typeof PROVIDERS);
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      return res.end(JSON.stringify({ models }));
+    } catch (err) {
+      return json(res, 502, { error: (err as Error).message.slice(0, 300) });
+    }
+  }
+  if (req.method === "GET" && url.pathname === "/model-picker.js") {
+    res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" });
+    return res.end(fs.readFileSync(path.join(root, "public", "model-picker.js")));
+  }
   if (req.method === "GET" && url.pathname === "/app") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     return res.end(indexHtml());
@@ -186,9 +220,8 @@ export const server = http.createServer(async (req, res) => {
     if (!["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(reasoning)) {
       return json(res, 400, { error: "choose a valid reasoning level" });
     }
-    const preset = ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash", "moonshotai/kimi-k3"].includes(model);
-    if (body.supervisor !== false && preset && (!["auto", "none", "low", "high", "max"].includes(reasoning) || (model === "z-ai/glm-5.3-flash" && reasoning === "none"))) {
-      return json(res, 400, { error: "this model does not support that reasoning level; choose auto, low, high, or maximum" });
+    if (body.supervisor !== false && !providerKey(parseModel(model).provider)) {
+      return json(res, 400, { error: `${PROVIDERS[parseModel(model).provider].label} is not connected on this server; choose another model` });
     }
     let target: string | undefined = body.url ? String(body.url) : message.match(URL_RE)?.[0];
     if (target && !/^https?:\/\//i.test(target)) target = "https://" + target;
