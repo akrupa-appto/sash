@@ -27,9 +27,23 @@ function safeError(error, settings = {}) {
   for (const key of [settings.openrouterKey, settings.typesafeKey, settings.openaiKey, settings.geminiKey]) if (key) text = text.split(key).join('[redacted]');
   return text.slice(0, 12000);
 }
+// Chrome ended browser control on its own. Say what happened and what gets the task moving again.
+export function detachMessage({ reason, title, url }) {
+  const where = title ? `"${title}"` : 'the tab';
+  const why = { canceled_by_user: "Chrome's control banner was cancelled", target_closed: 'the tab closed', replaced_with_devtools: 'DevTools opened on it' }[reason] || `Chrome reported "${reason}"`;
+  // Sign-in pages only: "account" alone matches ordinary account settings pages.
+  const login = /sign[ -]?in|log[ -]?in|login|\bsso\b|accounts\.google\.com|\/oauth|\/auth\b/i.test(`${title} ${url}`);
+  const next = login && reason === 'target_closed'
+    ? 'i cannot sign in for you. reopen the sign-in page, finish signing in yourself, then say "go on" and i will continue from there.'
+    : login
+      ? 'i cannot sign in for you. finish signing in on that page yourself, then say "go on" and i will continue from there.'
+      : 'open the tab you want me to use and say "go on" to continue.';
+  return `browser control of ${where} ended: ${why}. ${next}`;
+}
 async function stop() {
   const run = active;
   if (!run) return;
+  run.userStopped = true;
   run.controller.abort(new DOMException('stopped', 'AbortError'));
   await Promise.allSettled(run.pages.map(p => p.detach()));
 }
@@ -80,7 +94,11 @@ async function execute(run, message) {
     const page = pages.find(p => p.tabId === source.tabId);
     if (!page || run.cleaning) return;
     page.attached = false; page.initialized = false;
-    if (reason === 'canceled_by_user' || source.tabId === state.tabId) controller.abort();
+    if (reason === 'canceled_by_user' || source.tabId === state.tabId) {
+      // Remember why control ended so the user gets an explanation, not a bare "stopped".
+      run.detached ??= { reason, title: page.currentTitle || state.tabTitle || '', url: page.currentUrl || '' };
+      controller.abort();
+    }
   };
   chrome.tabs.onCreated.addListener(created);
   chrome.tabs.onUpdated.addListener(updated);
@@ -113,8 +131,7 @@ async function execute(run, message) {
     }, controller.signal);
     if (run.popupError) throw run.popupError;
   } catch (err) {
-    const status = controller.signal.aborted && !run.popupError ? 'stopped' : 'error';
-    outcome = { status, message: status === 'stopped' ? 'stopped' : safeError(err, settings) };
+    outcome = { status: controller.signal.aborted && !run.popupError ? 'stopped' : 'error', message: controller.signal.aborted && !run.popupError ? 'stopped' : safeError(err, settings) };
   } finally {
     run.cleaning = true;
     chrome.tabs.onCreated.removeListener(created);
@@ -124,6 +141,8 @@ async function execute(run, message) {
     await Promise.allSettled([...attachments]);
     await Promise.allSettled(pages.map(p => p.detach()));
     if (run.popupError) outcome = { ...outcome, status: 'error', answer: undefined, message: safeError(run.popupError, settings) };
+    // The agent reports an aborted run as "stopped" whether the user or Chrome ended it; only the user's stop is a plain stop.
+    else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
     state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings) });

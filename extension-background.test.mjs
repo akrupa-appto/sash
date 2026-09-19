@@ -80,13 +80,27 @@ test('stop while attach is pending detaches after the pending attach completes',
   attachGate = undefined;
 });
 
-test('Chrome cancelling browser control aborts the current task', async () => {
+test('Chrome cancelling browser control aborts the current task and explains what ended it', async () => {
   await send({ type: 'run', tabId: 12, goal: 'test', mode: 'fast' });
   await until(() => taskStarted === 2);
+  pages.at(-1).currentTitle = 'Sign in - Google Accounts'; pages.at(-1).currentUrl = 'https://accounts.google.com/signin';
   chrome.debugger.onDetach.fire({ tabId: 12 }, 'canceled_by_user');
   await until(() => data.runState?.running === false);
   assert.equal(activeSignal.aborted, true);
+  assert.equal(data.runState.status, 'blocked');
+  const text = data.runState.messages.at(-1).text;
+  assert.match(text, /browser control of "Sign in - Google Accounts" ended: Chrome's control banner was cancelled/);
+  assert.match(text, /finish signing in on that page yourself, then say "go on"/);
+});
+
+test('the stop button still reports a plain stop', async () => {
+  const started = taskStarted;
+  await send({ type: 'run', tabId: 13, goal: 'test', mode: 'fast' });
+  await until(() => taskStarted === started + 1);
+  await send({ type: 'stop' });
+  await until(() => data.runState?.running === false);
   assert.equal(data.runState.status, 'stopped');
+  assert.equal(data.runState.messages.at(-1).text, 'stopped');
 });
 
 test('web pages cannot send extension control messages', () => {
@@ -98,8 +112,9 @@ test('web pages cannot send extension control messages', () => {
 
 test('a failed popup attachment produces one terminal error message', async () => {
   await send({ type: 'clear' });
+  const started = taskStarted;
   await send({ type: 'run', tabId: 13, goal: 'test popup', mode: 'fast' });
-  await until(() => taskStarted === 3);
+  await until(() => taskStarted === started + 1);
   chrome.tabs.onCreated.fire({ id: 99, openerTabId: 13, url: 'https://example.test/popup' });
   await until(() => data.runState?.running === false);
   const replies = data.runState.messages.filter(m => m.role === 'agent');
