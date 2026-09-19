@@ -342,9 +342,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               const wanted = quotedStrings(planText).map((q) => q.toLowerCase());
               const picked = clickable.find((x) => x.id === id);
               const pickedName = (picked?.name ?? "").toLowerCase();
-              if (wanted.length && !wanted.some((q) => pickedName === q || pickedName.includes(q))) {
-                const matches = clickable.filter((x) => wanted.some((q) => x.name.toLowerCase() === q));
-                if (matches.length === 1) { id = matches[0].id; note = `jev chose "${picked?.name ?? id}", corrected to the element the supervisor named`; }
+              const exact = clickable.filter((x) => wanted.some((q) => x.name.toLowerCase() === q));
+              // One element carries exactly the quoted name: it wins over a pick that only contains the name
+              // ("Save as draft" for "Save") or does not carry it at all ("Skip" for "Continue").
+              if (wanted.length && exact.length === 1 && exact[0].id !== id && !wanted.some((q) => pickedName === q)) {
+                id = exact[0].id; note = `jev chose "${picked?.name ?? id}", corrected to the element the supervisor named`;
               }
             }
             const e = snap.elements.find((x) => x.id === id);

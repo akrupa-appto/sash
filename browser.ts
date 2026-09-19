@@ -109,7 +109,15 @@ function loc(page: Page, id: number) {
   return page.locator(`[data-jev-idx="${id}"]`).first();
 }
 
-const domSize = (page: Page) => page.evaluate?.(() => document.body?.innerText.length ?? 0).catch(() => -1) ?? Promise.resolve(-1);
+// A bounded signature of the visible text (length plus a hash of the first 20k characters), so an
+// in-place view swap is noticed even when the replacement text has the same length.
+const domSignature = (page: Page): Promise<string | null> =>
+  page.evaluate?.(() => {
+    const t = document.body?.innerText ?? "";
+    let h = 0;
+    for (let i = 0; i < t.length && i < 20000; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+    return `${t.length}:${h}`;
+  }).catch(() => null) ?? Promise.resolve(null);
 
 export async function click(page: Page, id: number) {
   const l = loc(page, id);
@@ -125,7 +133,7 @@ export async function click(page: Page, id: number) {
   // A fragment-only link ("#", "#section") never loads a new document.
   const stripHash = (u: string) => u.split("#")[0];
   const navigates = !!href && stripHash(href) !== stripHash(before);
-  const beforeDom = navigates ? await domSize(page) : -1;
+  const beforeDom = navigates ? await domSignature(page) : null;
   await l.click({ timeout: 5000, ...(navigates ? { noWaitAfter: true } : {}) });
   if (navigates) {
     let settledInPlace = false;
@@ -133,11 +141,11 @@ export async function click(page: Page, id: number) {
     // A click handler that prevents the default navigation (single-page apps) changes the page in
     // place instead. Stop waiting once the document has visibly changed without a URL change.
     const inPlace = (async () => {
-      for (let waited = 0; waited < 30000 && beforeDom >= 0; waited += 500) {
+      for (let waited = 0; waited < 30000 && beforeDom !== null; waited += 500) {
         await new Promise(r => setTimeout(r, 500));
         if (page.url() !== before) return;
-        const now = await domSize(page);
-        if (waited >= 1500 && now >= 0 && now !== beforeDom) { settledInPlace = true; return; }
+        const now = await domSignature(page);
+        if (waited >= 1500 && now !== null && now !== beforeDom) { settledInPlace = true; return; }
       }
       await navigation;
     })();

@@ -153,6 +153,22 @@ test('jev cannot swap the control the planner named for a skip button', async ()
   } finally { snapFn = origSnap; clickFn = origClick; }
 });
 
+test('an exact-name match beats a pick that only contains the planner-quoted name', async () => {
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let clicked = [];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'button', name: 'Save as draft', kind: 'click', inViewport: true },
+    { id: 2, role: 'button', name: 'Save', kind: 'click', inViewport: true },
+  ] });
+  clickFn = async (_p, id) => { clicked.push(id); state = 'saved'; };
+  try {
+    plans = [{ status: 'continue', next: 'click the "Save" button' }, { status: 'done', answer: 'ok' }];
+    decisions = [{ operation: { choice: 'CLICK' }, click_target: { choice: 'el_1' } }];
+    await run(true, 5);
+    assert.deepEqual(clicked, [2]);
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
 test('the planner sees every step of a long run, older ones shortened', async () => {
   clickDestination = 'progress';
   plans = [...Array.from({ length: 30 }, () => ({ status: 'continue', next: 'x'.repeat(400) })), { status: 'done', answer: 'ok' }];

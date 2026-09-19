@@ -135,13 +135,14 @@ test('a fragment-only link does not wait for a document navigation', async () =>
   assert.equal(waited, false);
 });
 
-test('a link whose handler prevents navigation returns once the page changed in place', async () => {
-  let text = 100;
-  const link = { evaluate: async () => 'https://example.test/settings', click: async () => { text = 250; } };
+test('a link whose handler prevents navigation returns once the page changed in place, even at equal length', async () => {
+  let text = 'runs list view';
+  const link = { evaluate: async () => 'https://example.test/settings', click: async () => { text = 'settings view!'; } };
+  assert.equal(text.length, 'settings view!'.length);
   const page = {
     url: () => 'https://example.test/',
     locator: () => ({ first: () => link }),
-    evaluate: async () => text,
+    evaluate: async () => { let h = 0; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0; return `${text.length}:${h}`; },
     waitForURL: () => new Promise((_, reject) => setTimeout(() => reject(new Error('page.waitForURL: Timeout 30000ms exceeded.')), 30000).unref()),
   };
   const t0 = Date.now();
