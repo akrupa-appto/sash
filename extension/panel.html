@@ -13,9 +13,12 @@
 </div>
 <div id="messages" aria-live="polite"></div>
 <details class="steps" id="steps-wrap" hidden><summary id="steps-label">activity</summary><div id="steps"></div></details>
+<div class="duration" id="live-duration" hidden></div>
 </main>
 <form class="composer" id="task-form">
 <div class="run-status" id="run-status"><span class="dot"></span><span id="status-text">ready</span><span class="cost" id="cost"></span></div>
+<p class="blocked-reason" id="blocked" hidden></p>
+<div id="request" hidden></div>
 <div class="mode-row"><button type="button" class="text-button settings-link" id="model-link" title="change the planner model in settings"></button><label class="sr-only" for="mode">agent mode</label><select id="mode"><option value="careful">careful</option><option value="fast">fast</option></select></div>
 <div class="compose-box">
 <div class="tab-picker" id="tab-picker" hidden><div class="picker-heading"><span>open tabs</span><span id="tab-count"></span></div><div id="tab-results" role="listbox" aria-label="open tabs"></div><div class="picker-footer">↑ ↓ to browse <span>enter to add · esc to close</span></div></div>

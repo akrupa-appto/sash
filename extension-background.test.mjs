@@ -20,6 +20,9 @@ const grantedOrigins = [];
 let allowAccess = true;
 const sidePanelOpens = [];
 const menuCreated = [];
+let pendingRequest; // set to make the fixture run end waiting on the user
+let nextOutcome; // set to make the fake run end straight away with that outcome
+let lastInput;
 
 globalThis.chrome = {
   storage: { local: {
@@ -67,15 +70,23 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, _input, emit, signal) => {
+mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   taskStarted++;
   activeSignal = signal;
+  lastInput = input;
   emit({ type: 'step', step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload', costUsd: 0 });
+  if (nextOutcome) { const outcome = nextOutcome; nextOutcome = undefined; emit({ type: 'end', totalCostUsd: 0, ...outcome }); return; }
   await new Promise(resolve => {
     finishTask = resolve;
     signal.addEventListener('abort', resolve, { once: true });
   });
-  emit({ type: 'end', status: signal.aborted ? 'stopped' : 'done', message: signal.aborted ? 'stopped' : 'finished', totalCostUsd: 0 });
+  emit({
+    type: 'end',
+    status: signal.aborted ? 'stopped' : pendingRequest ? 'needs_input' : 'done',
+    message: signal.aborted ? 'stopped' : 'finished',
+    totalCostUsd: 0,
+    ...(!signal.aborted && pendingRequest ? { requests: [pendingRequest], request: pendingRequest } : {}),
+  });
 } } });
 await import('./extension/background.js');
 const send = message => new Promise(resolve => chrome.runtime.onMessage.fire(message, { id: chrome.runtime.id, url: chrome.runtime.getURL('panel.html') }, resolve));
@@ -159,6 +170,74 @@ test('a failed popup attachment produces one terminal error message', async () =
 });
 
 
+test('stopping a turn that is waiting declines the request instead of dropping it', async () => {
+  await send({ type: 'clear' });
+  pendingRequest = { id: 'req-1', type: 'approval', action: 'send the message' };
+  const before = taskStarted;
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'fast' });
+    await until(() => taskStarted === before + 1);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-1']);
+    await send({ type: 'stop' });
+    await until(() => (data.runState.requests || []).length === 0);
+    assert.deepEqual(data.runState.declined, [{ id: 'req-1', type: 'approval', outcome: 'declined', reason: 'stopped' }]);
+    // The decline counts: three of them and the agent stops asking this one altogether.
+    assert.equal(data.runState.denials['approval:send the message'], 1);
+    // An answer to a request nobody is waiting on any more is refused, not silently accepted.
+    assert.match((await send({ type: 'answer', id: 'req-1', outcome: 'submitted', scope: 'once' })).error, /no longer waiting/);
+  } finally { pendingRequest = undefined; }
+});
+
+test('a new run is refused while a request is pending, and the request survives untouched', async () => {
+  await send({ type: 'clear' });
+  pendingRequest = { id: 'req-2', type: 'approval', action: 'submit this $500 order' };
+  const before = taskStarted;
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'submit this order', mode: 'fast' });
+    await until(() => taskStarted === before + 1);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-2']);
+
+    // The user, seeing an ordinary-looking chat box, types "yes" instead of answering the card.
+    // The handler must refuse the new run rather than silently overwriting `requests`.
+    const attempt = await send({ type: 'run', tabId: 12, goal: 'yes', mode: 'fast' });
+    assert.match(attempt.error, /pending request/);
+    assert.equal(taskStarted, before + 1, 'no new run started over the pending request');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-2'], 'the pending request is still there, not dropped');
+    assert.equal(data.runState.declined, undefined, 'nothing was declined either: it is simply still waiting');
+
+    // Answering the card properly still works afterwards -- the refusal is not a dead end.
+    nextOutcome = { status: 'done', message: 'order submitted', totalCostUsd: 0 };
+    await send({ type: 'answer', id: 'req-2', outcome: 'submitted', scope: 'once' });
+    await until(() => data.runState?.status === 'done');
+    assert.deepEqual(data.runState.requests, []);
+  } finally { pendingRequest = undefined; }
+});
+
+test('a paused request carries the coverage/failure guards back in when the answer resumes the run', async () => {
+  await send({ type: 'clear' });
+  const resumeState = { goal: 'open the readme', history: ['step 1: did CLICK [1] link "README.md"'], step: 1, realActions: 1, pagesSeen: ['fp1'], coverageRefusals: 0 };
+  const request = { id: 'ask-1', type: 'user_input', question: 'which README do you mean?' };
+  nextOutcome = { status: 'needs_input', message: request.question, requests: [request], request, resumeState };
+  await send({ type: 'run', tabId: 12, goal: 'open the readme', mode: 'careful' });
+  await until(() => data.runState?.running === false);
+  assert.equal(data.runState.status, 'needs_input');
+  assert.equal(data.runState.messages.at(-1).text, 'which README do you mean?');
+  assert.deepEqual(data.runState.resumeState, resumeState);
+
+  nextOutcome = { status: 'done', message: 'finished', answer: 'opened the root readme' };
+  await send({ type: 'answer', id: 'ask-1', text: 'the root one' });
+  await until(() => data.runState?.status === 'done');
+  assert.deepEqual(lastInput.resume, resumeState, "the answer carries the paused run's guards back into the agent");
+  assert.equal(lastInput.goal, 'the root one');
+  assert.equal(data.runState.resumeState, undefined);
+});
+
 test('a finished run keeps its actions on the reply it produced', async () => {
   await send({ type: 'clear' });
   const before = taskStarted;
@@ -197,6 +276,22 @@ test('a finished run leaves a badge that stays until the user looks at that tab'
   // Looking at the tab itself is what marks it read.
   chrome.tabs.onActivated.fire({ tabId: 12 });
   await untilBadge(12, 'none');
+});
+
+// A turn waiting on an answer is waiting on that very tab: the tab contract has to treat it exactly
+// like a blocked one, or the sign-in tab the request card points at is closed under the user.
+test('a turn that ends waiting hands its tab over instead of finishing with it', async () => {
+  await send({ type: 'clear' });
+  pendingRequest = { id: 'req-2', type: 'credential', kind: 'credential', origin: 'https://example.test', fields: [] };
+  const before = taskStarted;
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'sign in', mode: 'fast' });
+    await until(() => taskStarted === before + 1);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    await untilBadge(12, 'handoff');
+  } finally { pendingRequest = undefined; }
 });
 
 test('focusing a window clears the badge on the tab it reveals', async () => {

@@ -95,3 +95,29 @@ Open, in the order Adam raised them (todo.md has the detail):
 5. Verification debt: OpenAI, Gemini, and custom-server planner paths have never been called with a real key on this machine; mocked-fetch tests only. The Google sign-in detach reason has not been confirmed against Chrome.
 
 Rules learned this session that are not yet in AGENTS.md: retarget stacked PRs to main before merging their parent (GitHub closes a PR whose base branch is deleted and will not reopen it); `git push --follow-tags` skips lightweight tags.
+
+## Blocking requests (2026-09-19, branch todo/feat-request-queue)
+
+- Every way a turn can stop and wait for the human lives in `extension/requests.js`, keyed by `types.js` `RequestType`. Do not add a second, parallel pause mechanism next to it.
+- One turn hands back exactly one request. `pickBlocking` walks `RequestType` in its declared key order and takes the most recent of the highest-priority kind; the panel renders whatever it returns. Reordering those keys reorders the product.
+- Stopping declines; it never drops. `declineAll` writes an outcome for every pending request, in the agent on abort and in the worker on a stop, a cleared chat, or a restarted worker (`expired`). Only a real refusal (`declined`, `stopped`) counts towards the denial tally.
+- After `DENIAL_LIMIT` (3) refusals of the same `denialKey`, the turn ends with the cutoff message instead of asking again. The count lives in the worker's run state and is cleared when that request is finally answered.
+- The credential handoff describes a form; it never carries a value. Fields are rebuilt through `credentialField`, which drops whatever the page held, so the snapshot's own values cannot travel to a model or into the run state. What the user types in the panel goes straight to `submitCredentials` and nowhere else: not persisted, not logged, not passed to the agent, which verifies from the page afterwards.
+- Only whole-internet approval (`origin` absent or `*`) gets the second confirm dialog. A single-origin "always" is granted on one click on purpose.
+- `panel.js` keeps one additive `renderRequest` block; `render()` was not restructured. Panel changes stay that shape.
+- Still owed, per AGENTS.md: this changed the planner prompt (new `blocked_reason`, `ask`, `approve`, `credential` statuses) and has only been run against mocked planners. One real lab run before this is trusted in production.
+
+## pr4-agent-fixes done-guards (2026-09-19, folded into the request queue below)
+
+- The three "done" guards run in a fixed order and the order is the decision, not an accident. Guards that hand the run back to work come first (the failed-step re-check, then the "test the app" coverage floor, both of which `continue`), and only then the guard that ends the run (unsupported claims in the answer). A shallow or unconfirmed run gets a chance to earn its success; a fabricated claim never does. Same order on the planner's `done` and on jev's own `DONE`.
+- A retag-retry that recovers a vanished element is not a failed step. The retry runs first in the catch block and only a still-failing action sets `pendingFailure`, otherwise every re-rendering page would end runs as unconfirmed.
+- The exploratory-task check and the claim corpus both read the run's `goal`, not `input.goal`; on a resume `input.goal` is only the user's reply to what paused it.
+
+## Unifying the two pause mechanisms (2026-09-19)
+
+- PR #23 (`pr4-agent-fixes`, merged first) independently built a second pause mechanism: a planner `status:"question"` plus a `risk:"high"` field on `continue`, with its own `PausedRun`/resume plumbing and an `outcomeWord()` prefix ("done: …", "could not finish: …", "needs you: …") on every terminal message. PR #24's own decision above forbids a second, parallel pause mechanism, so this merge folds #23's cases into the request queue instead of keeping both:
+  - `status:"question"` is gone; the planner asks with `status:"ask"` (already in this branch), which becomes a `user_input`/`option_picker` request.
+  - `risk:"high"` is gone; the planner asks with `status:"approve"` (already in this branch), which becomes a three-scope `approval` request with a real button click, not a free-text "yes"/AFFIRM regex. That is a strictly stronger explicit-consent gate than #23's regex ever was ("maybe" cannot be misread as approval because there is no text reply to misread — the panel only sends `SUBMITTED` on a button click).
+  - `outcomeWord()` is deleted. The panel already renders `state.status` into its own status word (`extension/panel.js` `#status-text`), so prefixing the message text duplicated that and read stiffly ("could not finish: i could not confirm this worked…"). `end()` now emits the raw message everywhere, matching what this branch already did; the two `agent.test.mjs` assertions on `/^done: /` / `/^could not finish: /` were rewritten to check the raw text.
+  - What #23 had and this branch did not, preserved: the exploratory-task coverage floor (`realActions`/`pagesSeen`/`coverageRefusals`), the unconfirmed-failed-step guard (`pendingFailure`), and the stale-element retag retry. These are independent of *why* a turn pauses, so they now live on a small `PausedRun`-shaped `resume` field carried on the `needs_input` `EndEvent` (`resumeState`) and threaded back into `RunInput.resume` by `extension/background.js` on every kind of answer (ask, approve, credential) — not only #23's original question/risk pauses. A pause for a credential handoff or an approval no longer loses track of an unconfirmed failed step from earlier in the same run.
+  - `panel.test.mjs`'s stale "the live action list only shows while the run is in flight" test (asserting the old "2 actions" step-count label) is deleted; #24's own log-ticker replacement test a few lines later already supersedes it.
