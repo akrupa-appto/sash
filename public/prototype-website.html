@@ -1,0 +1,448 @@
+<!doctype html>
+<!--
+PROTOTYPE. Three website directions for checkto on one page, switched by ?variant=A|B|C and the floating bar.
+Throwaway: not linked from the app, not production.
+
+<design_plan>
+seed: 99 (prompt length). 99 mod 3 = 0 -> cinematic center for the first variant; the other two take the remaining hero layouts so the three disagree structurally.
+A "cursor"      cinematic center. Cabinet Grotesk display + Satoshi body. ground #ECEAF4, ink #12111A, cobalt #2E3BFF, coral #FF5C3A, white glass. H1 max-w-5xl. bento 6-col dense, spans 4x2 / 2 / 2 / 3 / 3, zero voids. GSAP: demo frame scale .8->1 then fade; cursor that travels to each heading and clicks. signature: the travelling cursor.
+B "night shift" editorial split, big negative space. Outfit display (300 + 600) + Geist body + Geist Mono log. plum #171020, deep #0E0A14, text #F5EBF0, peach #FFB48A, sky #97D7FF (two accents on purpose). H1 max-w-5xl. horizontal accordion instead of a card grid; stacking receipt cards with real run numbers; marquee. GSAP: stacking cards, scrubbed word reveal. signature: the self-typing run log overlapping the headline.
+C "tab strip"   artistic asymmetry: the page is a browser. Satoshi 900 display + Geist body. white #FFFFFF, chrome #DDE4EC, ink #0B0F14, orange #FF4D00, green #12B76A. H1 max-w-5xl overlapped by a tilted grayscale screenshot. bento 6-col dense, spans 3x2 / 3 / 3 / 2 / 4, zero voids. GSAP: images scale .8->1 then fade, scrubbed word reveal, marquee. signature: the address bar is the hero's input.
+no meta-labels, no numbered markers, no emojis. dark backgrounds use white text. every filled button uses ink-on-light or light-on-ink with >= 7:1 contrast.
+</design_plan>
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>checkto · website prototype</title>
+<link rel="preconnect" href="https://api.fontshare.com">
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&f[]=cabinet-grotesk@500,700,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: { fontFamily: {
+  cabinet: ['"Cabinet Grotesk"','sans-serif'], satoshi: ['Satoshi','sans-serif'], outfit: ['Outfit','sans-serif'], geist: ['Geist','sans-serif'], mono: ['"Geist Mono"','monospace'] } } } }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<style>
+  html { scroll-behavior: auto }
+  body { -webkit-font-smoothing: antialiased }
+  [data-variant] { display: none }
+  [data-variant].on { display: block }
+  .h1 { font-size: clamp(3rem, 5vw, 5.5rem); line-height: .96; letter-spacing: -.035em }
+  .h2 { font-size: clamp(2.2rem, 4vw, 4rem); line-height: 1; letter-spacing: -.03em }
+  .grain::before { content:""; position:absolute; inset:0; pointer-events:none; opacity:.35; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E") }
+  .marquee { display:flex; gap:3rem; width:max-content; animation: marquee 38s linear infinite }
+  @keyframes marquee { to { transform: translateX(-50%) } }
+  .word { display:inline-block; opacity:.14 }
+  .switcher { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:1000; display:flex; align-items:center; gap:6px; background:#111; color:#fff; border:1px solid #444; border-radius:999px; padding:6px 8px; font:12px/1 ui-monospace,Menlo,monospace; box-shadow:0 10px 40px #0008 }
+  .switcher button { background:#333; color:#fff; border:0; border-radius:999px; width:28px; height:28px; cursor:pointer; font:inherit }
+  .switcher b { padding:0 8px; font-weight:500; white-space:nowrap }
+  @media (prefers-reduced-motion: reduce) { .marquee { animation: none } }
+  /* A */
+  .a-pill { backdrop-filter: blur(14px); background: rgba(255,255,255,.62); border: 1px solid rgba(255,255,255,.85) }
+  .a-window { box-shadow: 0 40px 120px -30px #12111A66, 0 0 0 1px #12111A14 }
+  #a-cursor { position: fixed; z-index: 50; width: 34px; height: 34px; pointer-events:none; left:0; top:0; filter: drop-shadow(0 6px 10px #2E3BFF55) }
+  .a-ring { position:absolute; width:14px; height:14px; border:2px solid #2E3BFF; border-radius:50%; opacity:0; pointer-events:none }
+  .a-card { background:#fff; border:1px solid #12111A12 }
+  /* B */
+  .b-acc { display:flex; gap:10px; height: 520px }
+  .b-acc > div { flex: 1; transition: flex .6s cubic-bezier(.2,.8,.2,1); position:relative; overflow:hidden; border-radius: 22px; min-width: 72px; cursor: pointer }
+  .b-acc > div.open, .b-acc > div:hover { flex: 4.2 }
+  .b-acc .vt { position:absolute; left:22px; bottom:22px; writing-mode: vertical-rl; transform: rotate(180deg); white-space:nowrap }
+  .b-acc .body { position:absolute; inset:0; padding:28px; opacity:0; transition: opacity .4s .15s; display:flex; flex-direction:column; justify-content:flex-end }
+  .b-acc > div.open .body, .b-acc > div:hover .body { opacity:1 }
+  .b-acc > div.open .vt, .b-acc > div:hover .vt { opacity:0 }
+  .b-log { font-family: "Geist Mono", monospace; }
+  .b-caret::after { content:""; display:inline-block; width:.55em; height:1.05em; background:#FFB48A; vertical-align:-.15em; margin-left:2px; animation: blink 1s steps(2) infinite }
+  @keyframes blink { 50% { opacity:0 } }
+  .b-stack { position: sticky; }
+  /* C */
+  .c-tab { border-radius: 10px 10px 0 0; }
+  .c-chrome { background:#DDE4EC }
+</style>
+</head>
+<body>
+<main class="overflow-x-hidden w-full max-w-full">
+
+<!-- =============================== A · cursor =============================== -->
+<div data-variant="A" data-name="cursor" class="font-satoshi text-[#12111A] bg-[#ECEAF4]">
+  <svg id="a-cursor" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2 L20 11 L12.5 12.8 L9.5 20 Z" fill="#2E3BFF" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+  <nav class="fixed top-5 left-1/2 -translate-x-1/2 z-40 a-pill rounded-full pl-5 pr-2 py-2 flex items-center gap-6 text-[15px]">
+    <span class="font-cabinet font-extrabold text-lg tracking-tight">checkto<span class="text-[#2E3BFF]">.</span></span>
+    <a class="hidden md:inline hover:text-[#2E3BFF]" href="#a-how">how it works</a>
+    <a class="hidden md:inline hover:text-[#2E3BFF]" href="#a-tabs">extension</a>
+    <a class="hidden md:inline hover:text-[#2E3BFF]" href="/gallery">recordings</a>
+    <a href="/" class="bg-[#12111A] text-white rounded-full px-4 py-2 font-medium">try a task</a>
+  </nav>
+
+  <section class="relative pt-44 pb-24 md:pt-56 px-6 text-center">
+    <div class="absolute inset-0 -z-0 grain" style="background: radial-gradient(60% 50% at 50% 0%, #ffffff 0%, #ECEAF4 60%), radial-gradient(30% 30% at 80% 20%, #2E3BFF22, transparent 70%), radial-gradient(25% 25% at 15% 30%, #FF5C3A1f, transparent 70%);"></div>
+    <h1 class="relative h1 font-cabinet font-extrabold max-w-5xl mx-auto">
+      say it once.<br>the browser
+      <img src="https://picsum.photos/seed/checkto-hero/480/240" alt="" class="inline-block align-[-.12em] h-[.82em] w-[1.9em] object-cover rounded-full border-[3px] border-white shadow-lg grayscale contrast-125">
+      does the rest.
+    </h1>
+    <p class="relative mt-8 max-w-xl mx-auto text-lg md:text-xl text-[#12111A]/70 leading-relaxed">you type what you want done and which site. checkto opens it, reads the page like you do, clicks the right things, and shows you the whole run.</p>
+    <div class="relative mt-10 flex flex-wrap justify-center gap-3">
+      <a href="/" class="bg-[#12111A] text-white rounded-full px-7 py-4 text-base font-medium">give it a task</a>
+      <a href="#a-tabs" class="bg-white text-[#12111A] border border-[#12111A]/15 rounded-full px-7 py-4 text-base font-medium">put it in chrome</a>
+    </div>
+
+    <div class="relative mt-24 md:mt-32 mx-auto max-w-6xl" id="a-demo-wrap">
+      <div class="absolute -inset-x-32 -top-24 -bottom-40 -z-10" style="background: radial-gradient(50% 60% at 50% 60%, #12111A 0%, #12111A00 70%); opacity:.9"></div>
+      <div id="a-demo" class="a-window bg-white rounded-2xl overflow-hidden text-left">
+        <div class="flex items-center gap-3 px-4 py-3 border-b border-[#12111A]/10 bg-[#F6F5FA]">
+          <div class="flex gap-1.5"><i class="w-3 h-3 rounded-full bg-[#FF5C3A] block"></i><i class="w-3 h-3 rounded-full bg-[#F5C97C] block"></i><i class="w-3 h-3 rounded-full bg-[#7CF5B1] block"></i></div>
+          <div class="flex-1 rounded-lg bg-white border border-[#12111A]/10 px-4 py-2 text-sm text-[#12111A]/60 font-mono"><span id="a-typed"></span><span class="inline-block w-[7px] h-[1em] bg-[#2E3BFF] align-middle ml-0.5 animate-pulse"></span></div>
+        </div>
+        <div class="grid md:grid-cols-[1fr_300px]">
+          <div class="relative aspect-[16/10] overflow-hidden bg-[#0B0B10]">
+            <img src="https://picsum.photos/seed/github-run/1600/1000" alt="" class="absolute inset-0 w-full h-full object-cover grayscale contrast-125 opacity-80">
+            <div id="a-target-1" class="absolute left-[18%] top-[22%] w-[26%] h-[7%] rounded-md border-2 border-[#2E3BFF] bg-[#2E3BFF]/10 opacity-0"></div>
+            <div id="a-target-2" class="absolute left-[10%] top-[48%] w-[40%] h-[9%] rounded-md border-2 border-[#2E3BFF] bg-[#2E3BFF]/10 opacity-0"></div>
+            <div id="a-target-3" class="absolute left-[60%] top-[70%] w-[22%] h-[8%] rounded-md border-2 border-[#FF5C3A] bg-[#FF5C3A]/10 opacity-0"></div>
+            <svg id="a-demo-cursor" viewBox="0 0 24 24" class="absolute w-7 h-7 left-[45%] top-[85%]" aria-hidden="true"><path d="M4 2 L20 11 L12.5 12.8 L9.5 20 Z" fill="#2E3BFF" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          </div>
+          <ul id="a-steps" class="p-5 text-sm space-y-3 border-l border-[#12111A]/10 bg-[#F6F5FA]">
+            <li class="flex gap-3 opacity-30"><span class="w-5 h-5 rounded-full border border-[#12111A]/30 grid place-items-center text-[10px] shrink-0">1</span><span>open github.com/typesafe-ai</span></li>
+            <li class="flex gap-3 opacity-30"><span class="w-5 h-5 rounded-full border border-[#12111A]/30 grid place-items-center text-[10px] shrink-0">2</span><span>sort repositories by stars</span></li>
+            <li class="flex gap-3 opacity-30"><span class="w-5 h-5 rounded-full border border-[#12111A]/30 grid place-items-center text-[10px] shrink-0">3</span><span>open the top repo</span></li>
+            <li class="flex gap-3 opacity-30"><span class="w-5 h-5 rounded-full border border-[#12111A]/30 grid place-items-center text-[10px] shrink-0">4</span><span>open the raw README</span></li>
+            <li class="mt-6 pt-4 border-t border-[#12111A]/10 text-[#12111A]/60 font-mono text-xs">30.2s · $0.0026 in model cost</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="a-how" class="py-32 md:py-48 px-6">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="h2 font-cabinet font-extrabold max-w-3xl a-heading">two speeds. one browser you can watch.</h2>
+      <div class="mt-16 grid grid-cols-6 grid-flow-dense gap-4 auto-rows-[200px] md:auto-rows-[230px]">
+        <div class="a-card col-span-6 md:col-span-4 row-span-2 rounded-3xl overflow-hidden relative group">
+          <img src="https://picsum.photos/seed/live-browser/1400/900" alt="" class="absolute inset-0 w-full h-full object-cover grayscale contrast-125 transition-transform duration-700 group-hover:scale-105">
+          <div class="absolute inset-0 bg-gradient-to-t from-[#12111A] via-[#12111A]/40 to-transparent"></div>
+          <div class="absolute bottom-0 p-8 text-white"><h3 class="font-cabinet font-bold text-3xl">watch it live</h3><p class="mt-2 text-white/75 max-w-md">a real browser, streamed. you see every click as it happens, and you can stop it at any point.</p></div>
+        </div>
+        <div class="a-card col-span-3 md:col-span-2 rounded-3xl p-7 flex flex-col justify-between">
+          <span class="inline-flex self-start rounded-full bg-[#2E3BFF] text-white text-xs px-3 py-1 font-medium">fast</span>
+          <div><h3 class="font-cabinet font-bold text-2xl">short, specific tasks</h3><p class="mt-1 text-[#12111A]/60 text-sm">one model picks each action. most runs finish in under ten seconds.</p></div>
+        </div>
+        <div class="a-card col-span-3 md:col-span-2 rounded-3xl p-7 flex flex-col justify-between">
+          <span class="inline-flex self-start rounded-full bg-[#FF5C3A] text-white text-xs px-3 py-1 font-medium">careful</span>
+          <div><h3 class="font-cabinet font-bold text-2xl">multi-step work</h3><p class="mt-1 text-[#12111A]/60 text-sm">a planner thinks before each action. slower, and it gets the long ones right.</p></div>
+        </div>
+        <div class="a-card col-span-6 md:col-span-3 rounded-3xl p-7 overflow-hidden relative">
+          <h3 class="font-cabinet font-bold text-2xl">every run becomes a video</h3>
+          <p class="mt-1 text-[#12111A]/60 text-sm">send the recording to whoever asked for the thing.</p>
+          <div class="absolute bottom-6 left-0 right-0 overflow-hidden"><div class="marquee text-sm text-[#12111A]/50 font-mono"><span>audit 12 invoices</span><span>sort github by stars</span><span>open the top story's comments</span><span>find the changelog</span><span>fill the intake form</span><span>audit 12 invoices</span><span>sort github by stars</span><span>open the top story's comments</span><span>find the changelog</span><span>fill the intake form</span></div></div>
+        </div>
+        <div class="a-card col-span-6 md:col-span-3 rounded-3xl p-7 bg-[#12111A] text-white flex flex-col justify-between">
+          <h3 class="font-cabinet font-bold text-2xl">or run it in your own chrome</h3>
+          <p class="text-white/70 text-sm">the extension works on your open tabs. your model keys stay on your machine.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="a-tabs" class="py-32 md:py-48 px-6 bg-white">
+    <div class="max-w-6xl mx-auto grid md:grid-cols-[1fr_1fr] gap-16">
+      <div id="a-pin"><h2 class="h2 font-cabinet font-extrabold a-heading">one task,<br>many tabs.</h2><p class="mt-6 text-[#12111A]/60 max-w-sm text-lg">type <kbd class="bg-[#ECEAF4] px-1.5 rounded">@</kbd> in the side panel to bring any open tab into the conversation. checkto moves between them on its own.</p></div>
+      <div id="a-gallery" class="space-y-6">
+        <div class="rounded-3xl bg-[#ECEAF4] p-8 h-[380px] flex flex-col justify-end"><span class="font-mono text-xs text-[#2E3BFF]">@ mail.google.com</span><h3 class="font-cabinet font-bold text-3xl mt-2">"find the invoice from friday"</h3></div>
+        <div class="rounded-3xl bg-[#12111A] text-white p-8 h-[380px] flex flex-col justify-end"><span class="font-mono text-xs text-[#FFB48A]">@ app.xero.com</span><h3 class="font-cabinet font-bold text-3xl mt-2">"and put it against the right bill"</h3></div>
+        <div class="rounded-3xl bg-[#2E3BFF] text-white p-8 h-[380px] flex flex-col justify-end"><span class="font-mono text-xs text-white/70">@ slack.com</span><h3 class="font-cabinet font-bold text-3xl mt-2">"tell sam it's done"</h3></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="py-32 md:py-48 px-6">
+    <p class="a-reveal max-w-5xl mx-auto font-cabinet font-bold text-[clamp(1.8rem,3.6vw,3.4rem)] leading-[1.15] tracking-tight">it reads the page the way you do. it does not need an api, a login flow you wrote, or a script that breaks when a button moves. if you can do it in a browser, you can hand it over.</p>
+  </section>
+
+  <section class="px-6 pb-32 md:pb-48">
+    <div class="max-w-6xl mx-auto rounded-[2.5rem] bg-[#12111A] text-white p-12 md:p-24 text-center relative overflow-hidden grain">
+      <div class="absolute inset-0 -z-0" style="background: radial-gradient(40% 60% at 70% 20%, #2E3BFF66, transparent 70%), radial-gradient(30% 40% at 20% 90%, #FF5C3A55, transparent 70%)"></div>
+      <h2 class="relative h2 font-cabinet font-extrabold a-heading">give it something boring.</h2>
+      <p class="relative mt-6 text-white/70 text-lg max-w-lg mx-auto">the first runs are on us. no card, no setup, just a task and a site.</p>
+      <a href="/" class="relative inline-block mt-10 bg-white text-[#12111A] rounded-full px-8 py-4 text-lg font-medium">start a task</a>
+    </div>
+    <footer class="max-w-6xl mx-auto mt-16 flex flex-wrap justify-between gap-4 text-sm text-[#12111A]/50"><span>checkto</span><div class="flex gap-6"><a href="/playground">playground</a><a href="/gallery">recordings</a><a href="#">extension</a><a href="#">privacy</a></div></footer>
+  </section>
+</div>
+
+<!-- =============================== B · night shift =============================== -->
+<div data-variant="B" data-name="night shift" class="font-geist bg-[#171020] text-[#F5EBF0]">
+  <nav class="fixed top-0 inset-x-0 z-40 flex items-center justify-between px-6 md:px-10 py-6 mix-blend-difference text-white">
+    <span class="font-outfit font-semibold text-xl tracking-tight">checkto</span>
+    <div class="flex items-center gap-8 text-sm">
+      <a class="hidden md:inline" href="#b-what">what it does</a>
+      <a class="hidden md:inline" href="#b-runs">real runs</a>
+      <a class="hidden md:inline" href="/gallery">recordings</a>
+      <a href="/" class="underline underline-offset-4 decoration-[#FFB48A]">open the app</a>
+    </div>
+  </nav>
+
+  <section class="relative min-h-screen px-6 md:px-10 pt-40 pb-32 md:pt-56 grain">
+    <div class="absolute inset-0 -z-0" style="background: radial-gradient(45% 45% at 85% 10%, #FFB48A2b, transparent 70%), radial-gradient(35% 40% at 5% 80%, #97D7FF22, transparent 70%)"></div>
+    <div class="relative max-w-7xl mx-auto grid md:grid-cols-12 gap-10 items-start">
+      <div class="md:col-span-7">
+        <h1 class="h1 font-outfit font-light max-w-5xl">the boring half of the internet, <span class="font-semibold">handled.</span></h1>
+        <p class="mt-10 max-w-md text-[#F5EBF0]/65 text-lg leading-relaxed">checkto is a browser that takes instructions in plain words. give it the site and the job. watch it work, or don't.</p>
+        <div class="mt-12 flex flex-wrap gap-3">
+          <a href="/" class="bg-[#FFB48A] text-[#171020] rounded-full px-7 py-4 font-medium">try a task</a>
+          <a href="#b-what" class="text-[#F5EBF0] border border-[#F5EBF0]/30 rounded-full px-7 py-4 font-medium">how it works</a>
+        </div>
+      </div>
+      <div class="md:col-span-5 md:-ml-16 md:mt-32">
+        <div class="b-log rounded-2xl bg-[#0E0A14] border border-white/10 p-6 text-[13px] leading-7 text-[#F5EBF0]/85 shadow-[0_40px_120px_-20px_#000]">
+          <div class="flex gap-2 text-[#F5EBF0]/40 text-xs mb-4"><span>run · careful</span><span class="ml-auto">deepseek v4.1 flash</span></div>
+          <div id="b-log"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="b-what" class="py-32 md:py-48 px-6 md:px-10">
+    <div class="max-w-7xl mx-auto">
+      <h2 class="h2 font-outfit font-light max-w-4xl">hover a panel. <span class="font-semibold">each one is a different kind of job.</span></h2>
+      <div class="b-acc mt-16 hidden md:flex">
+        <div class="open bg-[#0E0A14]"><img src="https://picsum.photos/seed/inbox/900/1200" alt="" class="absolute inset-0 w-full h-full object-cover grayscale opacity-40 mix-blend-luminosity"><span class="vt font-outfit text-2xl">read and find</span><div class="body bg-gradient-to-t from-[#0E0A14] to-transparent"><h3 class="font-outfit font-semibold text-3xl">read and find</h3><p class="mt-2 max-w-sm text-[#F5EBF0]/70">"open the top story's comments." "find last friday's invoice." nine seconds, most of the time.</p></div></div>
+        <div class="bg-[#2A1B33]"><img src="https://picsum.photos/seed/forms/900/1200" alt="" class="absolute inset-0 w-full h-full object-cover grayscale opacity-40 mix-blend-luminosity"><span class="vt font-outfit text-2xl">fill and submit</span><div class="body bg-gradient-to-t from-[#0E0A14] to-transparent"><h3 class="font-outfit font-semibold text-3xl">fill and submit</h3><p class="mt-2 max-w-sm text-[#F5EBF0]/70">forms, dates, dropdowns, rich text. it types like a person and checks the save went through.</p></div></div>
+        <div class="bg-[#3A2440]"><img src="https://picsum.photos/seed/audit/900/1200" alt="" class="absolute inset-0 w-full h-full object-cover grayscale opacity-40 mix-blend-luminosity"><span class="vt font-outfit text-2xl">go through a list</span><div class="body bg-gradient-to-t from-[#0E0A14] to-transparent"><h3 class="font-outfit font-semibold text-3xl">go through a list</h3><p class="mt-2 max-w-sm text-[#F5EBF0]/70">twelve invoices, one after another, including the one where the save failed and it tried again.</p></div></div>
+        <div class="bg-[#4C2C4A]"><img src="https://picsum.photos/seed/tabs/900/1200" alt="" class="absolute inset-0 w-full h-full object-cover grayscale opacity-40 mix-blend-luminosity"><span class="vt font-outfit text-2xl">move between tabs</span><div class="body bg-gradient-to-t from-[#0E0A14] to-transparent"><h3 class="font-outfit font-semibold text-3xl">move between tabs</h3><p class="mt-2 max-w-sm text-[#F5EBF0]/70">in the chrome extension, mention any open tab. it carries what it learned from one to the next.</p></div></div>
+      </div>
+      <div class="md:hidden mt-12 space-y-4">
+        <div class="rounded-2xl bg-[#0E0A14] p-6"><h3 class="font-outfit font-semibold text-2xl">read and find</h3><p class="mt-2 text-[#F5EBF0]/70">"open the top story's comments." nine seconds, most of the time.</p></div>
+        <div class="rounded-2xl bg-[#2A1B33] p-6"><h3 class="font-outfit font-semibold text-2xl">fill and submit</h3><p class="mt-2 text-[#F5EBF0]/70">forms, dates, dropdowns, rich text.</p></div>
+        <div class="rounded-2xl bg-[#3A2440] p-6"><h3 class="font-outfit font-semibold text-2xl">go through a list</h3><p class="mt-2 text-[#F5EBF0]/70">twelve invoices, one after another.</p></div>
+        <div class="rounded-2xl bg-[#4C2C4A] p-6"><h3 class="font-outfit font-semibold text-2xl">move between tabs</h3><p class="mt-2 text-[#F5EBF0]/70">mention any open tab in chrome.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="b-runs" class="py-32 md:py-48 px-6 md:px-10">
+    <div class="max-w-7xl mx-auto">
+      <h2 class="h2 font-outfit font-light max-w-4xl">these are <span class="font-semibold">real runs</span>, with the time and the model cost.</h2>
+      <div class="mt-20 max-w-3xl mx-auto">
+        <div class="b-stack top-28 rounded-3xl bg-[#F5EBF0] text-[#171020] p-8 md:p-12 mb-8 b-card"><div class="flex justify-between font-mono text-xs text-[#171020]/50"><span>github.com</span><span>fast</span></div><h3 class="font-outfit font-semibold text-3xl md:text-4xl mt-4">sort typesafe-ai's repos by stars, open the raw README of the top one</h3><div class="mt-8 flex gap-10 font-mono text-sm"><span>30.2s</span><span>$0.0026</span><span class="text-[#12B76A]">done</span></div></div>
+        <div class="b-stack top-32 rounded-3xl bg-[#FFB48A] text-[#171020] p-8 md:p-12 mb-8 b-card"><div class="flex justify-between font-mono text-xs text-[#171020]/50"><span>news.ycombinator.com</span><span>fast</span></div><h3 class="font-outfit font-semibold text-3xl md:text-4xl mt-4">open the comments of the top story</h3><div class="mt-8 flex gap-10 font-mono text-sm"><span>9.3s</span><span>$0.0012</span><span>done</span></div></div>
+        <div class="b-stack top-36 rounded-3xl bg-[#97D7FF] text-[#171020] p-8 md:p-12 mb-8 b-card"><div class="flex justify-between font-mono text-xs text-[#171020]/50"><span>docs site</span><span>careful · glm 5.3 flash</span></div><h3 class="font-outfit font-semibold text-3xl md:text-4xl mt-4">find the changelog and open the latest entry</h3><div class="mt-8 flex gap-10 font-mono text-sm"><span>51.4s</span><span>$0.0020</span><span>done</span></div></div>
+        <div class="b-stack top-40 rounded-3xl bg-[#0E0A14] text-[#F5EBF0] border border-white/10 p-8 md:p-12 mb-8 b-card"><div class="flex justify-between font-mono text-xs text-white/50"><span>staging accounting app</span><span>fast</span></div><h3 class="font-outfit font-semibold text-3xl md:text-4xl mt-4">audit twelve invoices, retry the one whose save failed</h3><div class="mt-8 flex gap-10 font-mono text-sm"><span>12 of 12</span><span class="text-[#FFB48A]">done</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="py-16 overflow-hidden border-y border-white/10">
+    <div class="marquee font-outfit text-[clamp(2rem,5vw,4.5rem)] font-light whitespace-nowrap text-[#F5EBF0]/80"><span>open the top story's comments</span><span class="text-[#FFB48A]">·</span><span>fill the intake form</span><span class="text-[#97D7FF]">·</span><span>find friday's invoice</span><span class="text-[#FFB48A]">·</span><span>sort by stars</span><span class="text-[#97D7FF]">·</span><span>open the top story's comments</span><span class="text-[#FFB48A]">·</span><span>fill the intake form</span><span class="text-[#97D7FF]">·</span><span>find friday's invoice</span><span class="text-[#FFB48A]">·</span><span>sort by stars</span><span class="text-[#97D7FF]">·</span></div>
+  </section>
+
+  <section class="py-32 md:py-48 px-6 md:px-10">
+    <p class="b-reveal max-w-5xl mx-auto font-outfit font-light text-[clamp(1.8rem,3.6vw,3.4rem)] leading-[1.15]">you should not have to learn anything to use this. write the way you would text a colleague. if it is unsure, it says so. if it fails, it shows you where.</p>
+  </section>
+
+  <section class="px-6 md:px-10 pb-32 md:pb-48">
+    <div class="max-w-7xl mx-auto border-t border-white/10 pt-24 grid md:grid-cols-2 gap-12 items-end">
+      <h2 class="h1 font-outfit font-light">start with <span class="font-semibold">one job</span> you hate.</h2>
+      <div class="md:justify-self-end flex flex-col items-start gap-6"><a href="/" class="bg-[#F5EBF0] text-[#171020] rounded-full px-8 py-4 text-lg font-medium">open checkto</a><p class="text-[#F5EBF0]/50 text-sm max-w-xs">no card. the first runs are free, and every run tells you what it cost.</p></div>
+    </div>
+    <footer class="max-w-7xl mx-auto mt-24 flex flex-wrap justify-between gap-4 text-sm text-[#F5EBF0]/40"><span>checkto</span><div class="flex gap-6"><a href="/playground">playground</a><a href="/gallery">recordings</a><a href="#">extension</a><a href="#">privacy</a></div></footer>
+  </section>
+</div>
+
+<!-- =============================== C · tab strip =============================== -->
+<div data-variant="C" data-name="tab strip" class="font-geist bg-white text-[#0B0F14]">
+  <nav class="sticky top-0 z-40 c-chrome pt-2">
+    <div class="px-3 flex items-end gap-1 text-sm">
+      <a href="#" class="c-tab bg-white px-5 py-2.5 flex items-center gap-2 font-medium"><i class="w-2.5 h-2.5 rounded-full bg-[#FF4D00] block"></i>checkto</a>
+      <a href="#c-how" class="c-tab px-5 py-2.5 text-[#0B0F14]/60 hover:bg-white/60 hidden sm:block">how it works</a>
+      <a href="#c-tabs" class="c-tab px-5 py-2.5 text-[#0B0F14]/60 hover:bg-white/60 hidden sm:block">extension</a>
+      <a href="/gallery" class="c-tab px-5 py-2.5 text-[#0B0F14]/60 hover:bg-white/60 hidden sm:block">recordings</a>
+      <span class="ml-2 mb-2 text-[#0B0F14]/40 text-lg">+</span>
+    </div>
+    <div class="bg-white border-b border-[#0B0F14]/10 px-3 py-2 flex items-center gap-3">
+      <span class="text-[#0B0F14]/40 text-lg leading-none">&larr;</span><span class="text-[#0B0F14]/25 text-lg leading-none">&rarr;</span>
+      <div class="flex-1 rounded-full bg-[#F1F4F7] px-4 py-1.5 text-sm text-[#0B0F14]/60 font-mono truncate">checkto.app <span class="text-[#0B0F14]/30">·</span> a browser that takes orders</div>
+      <a href="/" class="bg-[#0B0F14] text-white rounded-full px-4 py-1.5 text-sm font-medium">run a task</a>
+    </div>
+  </nav>
+
+  <section class="relative pt-24 pb-32 md:pt-36 md:pb-48 px-6 overflow-visible">
+    <img src="https://picsum.photos/seed/tilted-page/1000/700" alt="" class="hidden md:block absolute right-[-6%] top-24 w-[46%] rounded-2xl rotate-[-6deg] grayscale contrast-125 shadow-[0_50px_100px_-30px_#0B0F1466] border border-[#0B0F14]/10 c-hero-img">
+    <div class="relative max-w-6xl mx-auto">
+      <h1 class="h1 font-satoshi font-black max-w-5xl">a browser<br>that takes<br><span class="text-[#FF4D00]">orders.</span></h1>
+      <form action="/" method="get" class="mt-12 max-w-2xl bg-white rounded-2xl border-2 border-[#0B0F14] p-2 flex gap-2 shadow-[8px_8px_0_#0B0F14]">
+        <input name="prompt" class="flex-1 min-w-0 px-4 py-3 text-base outline-none placeholder:text-[#0B0F14]/40" placeholder="go to news.ycombinator.com and open the top story's comments">
+        <button class="bg-[#0B0F14] text-white rounded-xl px-5 py-3 font-medium shrink-0">run it</button>
+      </form>
+      <p class="mt-6 text-[#0B0F14]/55 max-w-md">name a site and say what you want done. checkto opens it, reads the page, and clicks through. you watch the whole thing.</p>
+    </div>
+  </section>
+
+  <section id="c-how" class="py-32 md:py-48 px-6 bg-[#F1F4F7]">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="h2 font-satoshi font-black max-w-3xl">everything it can do, one tab at a time.</h2>
+      <div class="mt-16 grid grid-cols-6 grid-flow-dense gap-4 auto-rows-[190px] md:auto-rows-[220px]">
+        <div class="col-span-6 md:col-span-3 row-span-2 bg-white rounded-2xl border border-[#0B0F14]/10 overflow-hidden flex flex-col">
+          <div class="c-chrome px-3 pt-2 flex gap-1 text-xs"><span class="c-tab bg-white px-3 py-1.5">gmail</span><span class="c-tab px-3 py-1.5 text-[#0B0F14]/50">xero</span><span class="c-tab px-3 py-1.5 text-[#0B0F14]/50">slack</span></div>
+          <div class="p-7 flex-1 flex flex-col justify-end">
+            <p class="font-mono text-sm text-[#FF4D00]">@gmail @xero @slack</p>
+            <h3 class="font-satoshi font-bold text-3xl mt-2">mention a tab, any tab</h3>
+            <p class="mt-2 text-[#0B0F14]/60">in the chrome extension, type @ to hand it your open tabs. it moves between them on its own and keeps what it learned.</p>
+          </div>
+        </div>
+        <div class="col-span-3 bg-white rounded-2xl border border-[#0B0F14]/10 p-7 flex flex-col justify-between"><span class="font-mono text-xs text-[#12B76A]">fast</span><div><h3 class="font-satoshi font-bold text-2xl">one model, one click at a time</h3><p class="mt-1 text-sm text-[#0B0F14]/60">under ten seconds for most short tasks.</p></div></div>
+        <div class="col-span-3 bg-white rounded-2xl border border-[#0B0F14]/10 p-7 flex flex-col justify-between"><span class="font-mono text-xs text-[#FF4D00]">careful</span><div><h3 class="font-satoshi font-bold text-2xl">plans before it acts</h3><p class="mt-1 text-sm text-[#0B0F14]/60">pick the model and how hard it thinks.</p></div></div>
+        <div class="col-span-6 md:col-span-2 bg-[#0B0F14] text-white rounded-2xl p-7 flex flex-col justify-between"><h3 class="font-satoshi font-bold text-2xl">keys stay with you</h3><p class="text-sm text-white/65">the extension stores your model key in your browser. nothing goes through us.</p></div>
+        <div class="col-span-6 md:col-span-4 rounded-2xl overflow-hidden relative group border border-[#0B0F14]/10"><img src="https://picsum.photos/seed/recording/1200/600" alt="" class="absolute inset-0 w-full h-full object-cover grayscale contrast-125 group-hover:scale-105 transition-transform duration-700"><div class="absolute inset-0 bg-gradient-to-r from-white via-white/70 to-transparent"></div><div class="absolute inset-0 p-7 flex flex-col justify-end max-w-xs"><h3 class="font-satoshi font-bold text-2xl">a video of every run</h3><p class="text-sm text-[#0B0F14]/60 mt-1">forward it instead of explaining.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="c-tabs" class="py-32 md:py-48 px-6">
+    <div class="max-w-6xl mx-auto"><h2 class="h2 font-satoshi font-black max-w-3xl">what a run looks like.</h2></div>
+    <div class="max-w-4xl mx-auto mt-16 space-y-16">
+      <figure class="c-shot"><img src="https://picsum.photos/seed/step-a/1600/900" alt="" class="w-full rounded-2xl grayscale contrast-125 border border-[#0B0F14]/10"><figcaption class="mt-4 font-mono text-sm text-[#0B0F14]/60">it opens the site and reads what is on screen.</figcaption></figure>
+      <figure class="c-shot"><img src="https://picsum.photos/seed/step-b/1600/900" alt="" class="w-full rounded-2xl grayscale contrast-125 border border-[#0B0F14]/10"><figcaption class="mt-4 font-mono text-sm text-[#0B0F14]/60">it picks the one control that gets it closer, and clicks.</figcaption></figure>
+      <figure class="c-shot"><img src="https://picsum.photos/seed/step-c/1600/900" alt="" class="w-full rounded-2xl grayscale contrast-125 border border-[#0B0F14]/10"><figcaption class="mt-4 font-mono text-sm text-[#0B0F14]/60">it stops when the page proves the job is done, not when it feels done.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="py-12 overflow-hidden border-y border-[#0B0F14]/10 bg-[#0B0F14] text-white">
+    <div class="marquee font-satoshi font-black text-[clamp(2rem,5vw,4.5rem)] whitespace-nowrap"><span>news.ycombinator.com</span><span class="text-[#FF4D00]">/</span><span>github.com</span><span class="text-[#FF4D00]">/</span><span>mail.google.com</span><span class="text-[#FF4D00]">/</span><span>app.xero.com</span><span class="text-[#FF4D00]">/</span><span>news.ycombinator.com</span><span class="text-[#FF4D00]">/</span><span>github.com</span><span class="text-[#FF4D00]">/</span><span>mail.google.com</span><span class="text-[#FF4D00]">/</span><span>app.xero.com</span><span class="text-[#FF4D00]">/</span></div>
+  </section>
+
+  <section class="py-32 md:py-48 px-6">
+    <p class="c-reveal max-w-5xl mx-auto font-satoshi font-bold text-[clamp(1.8rem,3.6vw,3.4rem)] leading-[1.15] tracking-tight">no scripts. no integrations. no waiting for someone to build the connector. if a person can do it in a tab, checkto can do it in a tab.</p>
+  </section>
+
+  <section class="px-6 pb-32 md:pb-48">
+    <div class="max-w-6xl mx-auto bg-[#F1F4F7] rounded-3xl p-12 md:p-24 grid md:grid-cols-2 gap-10 items-center">
+      <h2 class="h2 font-satoshi font-black">open a tab.<br>tell it what to do.</h2>
+      <div class="flex flex-wrap gap-3 md:justify-end"><a href="/" class="bg-[#0B0F14] text-white rounded-full px-8 py-4 text-lg font-medium">run a task</a><a href="#" class="bg-white text-[#0B0F14] border border-[#0B0F14]/15 rounded-full px-8 py-4 text-lg font-medium">add to chrome</a></div>
+    </div>
+    <footer class="max-w-6xl mx-auto mt-16 flex flex-wrap justify-between gap-4 text-sm text-[#0B0F14]/50"><span>checkto</span><div class="flex gap-6"><a href="/playground">playground</a><a href="/gallery">recordings</a><a href="#">extension</a><a href="#">privacy</a></div></footer>
+  </section>
+</div>
+
+</main>
+
+<div class="switcher" role="group" aria-label="prototype variant">
+  <button id="prev" aria-label="previous variant">&larr;</button>
+  <b id="label"></b>
+  <button id="next" aria-label="next variant">&rarr;</button>
+</div>
+
+<script>
+const KEYS = ['A','B','C'];
+const params = new URLSearchParams(location.search);
+const current = KEYS.includes(params.get('variant')) ? params.get('variant') : 'A';
+const root = document.querySelector(`[data-variant="${current}"]`);
+root.classList.add('on');
+document.getElementById('label').textContent = `${current} (${root.dataset.name})`;
+function go(delta) { const i = (KEYS.indexOf(current) + delta + KEYS.length) % KEYS.length; params.set('variant', KEYS[i]); location.search = params.toString(); }
+document.getElementById('prev').onclick = () => go(-1);
+document.getElementById('next').onclick = () => go(1);
+addEventListener('keydown', e => {
+  const t = e.target; if (t.matches('input,textarea,[contenteditable]')) return;
+  if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1);
+});
+
+gsap.registerPlugin(ScrollTrigger);
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function splitWords(sel) {
+  document.querySelectorAll(sel).forEach(p => {
+    p.innerHTML = p.textContent.trim().split(/\s+/).map(w => `<span class="word">${w}</span>`).join(' ');
+    gsap.to(p.querySelectorAll('.word'), { opacity: 1, stagger: .06, ease: 'none', scrollTrigger: { trigger: p, start: 'top 80%', end: 'bottom 45%', scrub: true } });
+  });
+}
+function typewriter(el, lines, done) {
+  let li = 0;
+  const next = () => {
+    if (li >= lines.length) return done && done();
+    const line = document.createElement('div'); line.className = lines[li].cls || ''; el.appendChild(line);
+    const text = lines[li].t; let ci = 0;
+    const tick = () => { line.textContent = text.slice(0, ++ci); if (ci < text.length) setTimeout(tick, 18); else { li++; setTimeout(next, lines[li - 1].pause || 220); } };
+    tick();
+  };
+  next();
+}
+
+if (current === 'A') {
+  // demo frame: scale .8 -> 1 on the way in, fade out on the way past
+  gsap.fromTo('#a-demo', { scale: .8, opacity: .6 }, { scale: 1, opacity: 1, ease: 'none', scrollTrigger: { trigger: '#a-demo-wrap', start: 'top 90%', end: 'top 30%', scrub: true } });
+  gsap.to('#a-demo', { opacity: 0, scale: .96, ease: 'none', scrollTrigger: { trigger: '#a-demo-wrap', start: 'bottom 45%', end: 'bottom 5%', scrub: true } });
+  // in-frame run: type task, move cursor, highlight, tick steps
+  const steps = document.querySelectorAll('#a-steps li');
+  const dc = '#a-demo-cursor';
+  const run = gsap.timeline({ repeat: -1, repeatDelay: 2.5, paused: reduced });
+  run.add(() => { document.getElementById('a-typed').textContent = ''; }, 0);
+  const task = 'go to github.com/typesafe-ai, sort by stars and open the raw README';
+  for (let i = 1; i <= task.length; i++) run.add(() => { document.getElementById('a-typed').textContent = task.slice(0, i); }, i * .03);
+  run.set(steps, { opacity: .3 }, '>');
+  run.to(steps[0], { opacity: 1, duration: .2 }, '>+.4');
+  run.to(dc, { left: '30%', top: '25%', duration: .9, ease: 'power2.inOut' }, '<');
+  run.to('#a-target-1', { opacity: 1, duration: .2 }, '>-.1').to(dc, { scale: .8, duration: .08, yoyo: true, repeat: 1 });
+  run.to(steps[1], { opacity: 1, duration: .2 }, '>+.6').to('#a-target-1', { opacity: 0, duration: .3 }, '<');
+  run.to(dc, { left: '28%', top: '52%', duration: .8, ease: 'power2.inOut' }, '<');
+  run.to('#a-target-2', { opacity: 1, duration: .2 }).to(dc, { scale: .8, duration: .08, yoyo: true, repeat: 1 });
+  run.to(steps[2], { opacity: 1, duration: .2 }, '>+.6').to('#a-target-2', { opacity: 0, duration: .3 }, '<');
+  run.to(dc, { left: '70%', top: '73%', duration: .8, ease: 'power2.inOut' }, '<');
+  run.to('#a-target-3', { opacity: 1, duration: .2 }).to(dc, { scale: .8, duration: .08, yoyo: true, repeat: 1 });
+  run.to(steps[3], { opacity: 1, duration: .2 }, '>+.6').to('#a-target-3', { opacity: 0, duration: .3 }, '>+1');
+  // signature: a cursor that travels to each heading and clicks it
+  const cur = document.getElementById('a-cursor');
+  const xTo = gsap.quickTo(cur, 'x', { duration: .9, ease: 'power3.out' }), yTo = gsap.quickTo(cur, 'y', { duration: .9, ease: 'power3.out' });
+  const park = () => { xTo(innerWidth - 90); yTo(innerHeight - 110); };
+  park();
+  document.querySelectorAll('.a-heading').forEach(h => {
+    const ring = document.createElement('span'); ring.className = 'a-ring'; h.style.position = 'relative'; h.appendChild(ring);
+    ScrollTrigger.create({ trigger: h, start: 'top 60%', end: 'bottom 30%',
+      onEnter: () => { const r = h.getBoundingClientRect(); xTo(r.right + 8); yTo(r.top + r.height * .55); ring.style.right = '-24px'; ring.style.top = (r.height * .5 - 7) + 'px';
+        gsap.fromTo(ring, { opacity: 1, scale: .4 }, { opacity: 0, scale: 3, duration: .7, delay: .5 });
+        gsap.fromTo(cur, { scale: 1 }, { scale: .82, duration: .1, delay: .5, yoyo: true, repeat: 1 }); },
+      onLeave: park, onLeaveBack: park, onEnterBack: () => { const r = h.getBoundingClientRect(); xTo(r.right + 8); yTo(r.top + r.height * .55); } });
+  });
+  // bento cards rise in
+  gsap.from('.a-card', { y: 40, opacity: 0, duration: .8, stagger: .08, scrollTrigger: { trigger: '#a-how', start: 'top 70%' } });
+  // pinned title with scrolling gallery
+  ScrollTrigger.matchMedia({ '(min-width: 768px)': () => { ScrollTrigger.create({ trigger: '#a-pin', start: 'top 120px', endTrigger: '#a-gallery', end: 'bottom bottom', pin: true, pinSpacing: false }); } });
+  splitWords('.a-reveal');
+}
+
+if (current === 'B') {
+  typewriter(document.getElementById('b-log'), [
+    { t: '> sort typesafe-ai repos by stars, open the raw README', cls: 'text-[#F5EBF0]' , pause: 500 },
+    { t: 'open  github.com/typesafe-ai', cls: 'text-[#97D7FF]' },
+    { t: 'click "Repositories"' },
+    { t: 'click "Sort" then "Stars"' },
+    { t: 'open  typesafe-sdk-js', cls: 'text-[#97D7FF]' },
+    { t: 'click "README.md" then "Raw"' },
+    { t: 'done  raw README is on screen', cls: 'text-[#FFB48A]', pause: 400 },
+    { t: '30.2s · $0.0026', cls: 'text-[#F5EBF0]/50 b-caret' },
+  ]);
+  // stacking cards: each shrinks a little as the next arrives
+  const cards = gsap.utils.toArray('.b-card');
+  cards.forEach((c, i) => { if (i === cards.length - 1) return; gsap.to(c, { scale: .94, opacity: .7, ease: 'none', scrollTrigger: { trigger: cards[i + 1], start: 'top 80%', end: 'top 30%', scrub: true } }); });
+  document.querySelectorAll('.b-acc > div').forEach(d => d.addEventListener('click', () => { document.querySelectorAll('.b-acc > div').forEach(x => x.classList.remove('open')); d.classList.add('open'); }));
+  gsap.from('h1', { y: 30, opacity: 0, duration: 1.1, ease: 'power3.out' });
+  splitWords('.b-reveal');
+}
+
+if (current === 'C') {
+  gsap.from('.c-hero-img', { rotate: 4, y: 60, opacity: 0, duration: 1.2, ease: 'power3.out', delay: .1 });
+  gsap.from('h1', { y: 30, opacity: 0, duration: 1, ease: 'power3.out' });
+  document.querySelectorAll('.c-shot').forEach(f => {
+    gsap.fromTo(f, { scale: .8, opacity: .3 }, { scale: 1, opacity: 1, ease: 'none', scrollTrigger: { trigger: f, start: 'top 95%', end: 'top 40%', scrub: true } });
+    gsap.to(f, { opacity: 0, scale: .96, ease: 'none', scrollTrigger: { trigger: f, start: 'bottom 35%', end: 'bottom 5%', scrub: true } });
+  });
+  splitWords('.c-reveal');
+}
+</script>
+</body>
+</html>
