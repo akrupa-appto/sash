@@ -193,3 +193,30 @@ test('history records what appeared on the page after an action, not only that i
     assert.match(planCalls[1].history[0], /showing: "Run finished: 7\/8 tests passed on "#42 feat: browser settings""/);
   } finally { snapFn = orig; clickDestination = 'file-preview'; }
 });
+
+test('an element that vanishes between snapshot and click is retried by name instead of burning the step', async () => {
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let attempts = [];
+  // The page re-renders every snapshot, so the element carries a new id each time.
+  let nextId = 1;
+  snapFn = () => ({ ...snap(), elements: [{ id: nextId++, role: 'link', name: 'README.md', kind: 'click', inViewport: true }] });
+  clickFn = async (_p, id) => {
+    attempts.push(id);
+    if (attempts.length === 1) throw new Error('locator.evaluate: Timeout 30000ms exceeded.\n  waiting for locator');
+    state = 'file-preview';
+  };
+  try {
+    plans = [{ status: 'continue', next: 'open README.md' }, { status: 'done', answer: 'opened' }];
+    decisions = [choice('CLICK')];
+    const events = [];
+    state = 'repository'; planCalls = [];
+    const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
+    await runTask(page, { goal: 'open the raw README.md', supervisor: true, maxSteps: 5 }, e => events.push(e), new AbortController().signal);
+    assert.equal(attempts.length, 2, 'the click is retried once against a fresh snapshot');
+    assert.notEqual(attempts[1], attempts[0], 'the retry uses the re-tagged element id, not the stale one');
+    const step1 = events.find(e => e.type === 'step');
+    assert.doesNotMatch(step1.note ?? '', /action failed/);
+    assert.match(step1.note, /re-tagged/);
+    assert.equal(events.at(-1).status, 'done');
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
