@@ -1,0 +1,66 @@
+name: release extension
+
+# Every merge to main that touches the extension or the code it bundles bumps the manifest patch
+# version, commits it back, tags extension-vX.Y.Z, and publishes a release with the zip.
+on:
+  push:
+    branches: [main]
+    paths:
+      - extension/**
+      - agent.ts
+      - planner.ts
+      - providers.ts
+      - jev.ts
+      - public/model-picker.js
+      - scripts/build-extension.mjs
+      - scripts/package-extension.mjs
+      - package.json
+      - package-lock.json
+  workflow_dispatch:
+    inputs:
+      part:
+        description: version part to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+concurrency:
+  group: release-extension
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # the bump commit itself must not trigger another release
+    if: "${{ github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore: extension v') }}"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - id: bump
+        run: echo "version=$(node scripts/bump-extension.mjs ${{ inputs.part || 'patch' }})" >> "$GITHUB_OUTPUT"
+      - run: npm run package:extension
+      - name: commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extension/manifest.json
+          git commit -m "chore: extension v${{ steps.bump.outputs.version }}"
+          git tag "extension-v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:main --follow-tags
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "extension-v${{ steps.bump.outputs.version }}" dist/checkto-extension.zip \
+            --title "checkto extension v${{ steps.bump.outputs.version }}" \
+            --notes "Built from ${{ github.sha }}. Unzip and load the folder unpacked at chrome://extensions (Developer mode). See extension/README.md."
