@@ -12,6 +12,7 @@ let activeSignal;
 let taskStarted = 0;
 let finishTask;
 let attachGate;
+let pendingRequest; // set to make the fixture run end waiting on the user
 
 globalThis.chrome = {
   storage: { local: {
@@ -41,7 +42,13 @@ mock.module('./agent.ts', { namedExports: { runTask: async (_page, _input, emit,
     finishTask = resolve;
     signal.addEventListener('abort', resolve, { once: true });
   });
-  emit({ type: 'end', status: signal.aborted ? 'stopped' : 'done', message: signal.aborted ? 'stopped' : 'finished', totalCostUsd: 0 });
+  emit({
+    type: 'end',
+    status: signal.aborted ? 'stopped' : pendingRequest ? 'needs_input' : 'done',
+    message: signal.aborted ? 'stopped' : 'finished',
+    totalCostUsd: 0,
+    ...(!signal.aborted && pendingRequest ? { requests: [pendingRequest], request: pendingRequest } : {}),
+  });
 } } });
 await import('./extension/background.js');
 const send = message => new Promise(resolve => chrome.runtime.onMessage.fire(message, { id: chrome.runtime.id, url: chrome.runtime.getURL('panel.html') }, resolve));
@@ -124,6 +131,27 @@ test('a failed popup attachment produces one terminal error message', async () =
   assert.equal(data.runState.status, 'error');
 });
 
+
+test('stopping a turn that is waiting declines the request instead of dropping it', async () => {
+  await send({ type: 'clear' });
+  pendingRequest = { id: 'req-1', type: 'approval', action: 'send the message' };
+  const before = taskStarted;
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'fast' });
+    await until(() => taskStarted === before + 1);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-1']);
+    await send({ type: 'stop' });
+    await until(() => (data.runState.requests || []).length === 0);
+    assert.deepEqual(data.runState.declined, [{ id: 'req-1', type: 'approval', outcome: 'declined', reason: 'stopped' }]);
+    // The decline counts: three of them and the agent stops asking this one altogether.
+    assert.equal(data.runState.denials['approval:send the message'], 1);
+    // An answer to a request nobody is waiting on any more is refused, not silently accepted.
+    assert.match((await send({ type: 'answer', id: 'req-1', outcome: 'submitted', scope: 'once' })).error, /no longer waiting/);
+  } finally { pendingRequest = undefined; }
+});
 
 test('a finished run keeps its actions on the reply it produced', async () => {
   await send({ type: 'clear' });

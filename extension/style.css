@@ -24,3 +24,17 @@
 .tab-option{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;color:var(--fg);padding:8px;border-radius:8px;font-weight:400}.tab-option[aria-selected=true]{background:rgba(255,255,255,.07)}.tab-option[aria-disabled=true]{opacity:.5}.tab-monogram{display:grid;place-items:center;width:26px;height:26px;border-radius:7px;background:rgba(255,255,255,.08);color:var(--acc);flex:none;font-size:12px}.tab-option-text{min-width:0;display:grid;gap:2px}.tab-option strong,.tab-option small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400}.tab-option strong{font-size:12px}.tab-option small{font-size:10px;color:var(--dim)}.picker-footer{display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding:8px 12px;font-size:9px;color:var(--dim)}.picker-empty{font-size:12px;padding:16px 8px;margin:0}
 @keyframes pulse{50%{opacity:.3}}@media(prefers-reduced-motion:reduce){.running .dot,.tab-card .hand{animation:none}}@media(max-width:500px){.settings-page{padding:28px 18px}.two{grid-template-columns:1fr;gap:0}}@media(max-height:550px){.intro{padding-top:12px}.tab-card{display:none}.intro h1{font-size:28px}}
 .model-button{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;font-weight:400}.model-button #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.settings-page .label{display:block;margin-bottom:6px}.settings-page dialog.mp{--mp-bg:var(--deep);--mp-active:rgba(255,255,255,.08)}
+
+.blocked-reason{margin:0 8px 8px;font-size:11px;color:var(--bad)}
+.request-card{margin:0 0 8px;padding:12px}
+.request-question{margin:0 0 8px;font-size:13px}
+.request-card .muted{margin:0 0 8px}
+.request-shot{display:block;width:100%;border:1px solid var(--line);border-radius:8px;margin-bottom:10px}
+.request-fields{display:grid;gap:8px}
+.request-field{display:grid;gap:4px;font-size:11px;color:var(--dim)}
+.request-field input,.request-text{padding:8px 10px;font-size:12px}
+.request-options{display:flex;flex-wrap:wrap;gap:6px}
+.request-options button{font-size:11px;padding:6px 10px;border-radius:999px}
+.request-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.request-actions button{font-size:11px;padding:7px 11px}
+.confirm-warning{margin:0 0 10px;font-size:12px;color:var(--bad)}

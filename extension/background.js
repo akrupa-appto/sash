@@ -2,14 +2,19 @@ import { runTask } from '../agent.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { readSettings, validateSettings } from './settings.js';
+import { declineAll, denialKey, RequestOutcome } from './requests.js';
+import { RequestType } from './types.js';
 
 let active;
-let state = { running: false, messages: [], steps: [], status: 'ready' };
+let state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
 let saving = Promise.resolve();
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   const saved = (await chrome.storage.local.get('runState')).runState;
   if (saved) state = { ...saved, running: false };
+  // Anything the old session was waiting on cannot be answered any more: say so rather than
+  // leaving a card on screen that resolves to nothing.
+  declinePending(RequestOutcome.EXPIRED);
   if (saved?.running) {
     state.status = 'stopped';
     state.messages.push({ role: 'agent', text: 'the browser restarted, so the task stopped. send a task to continue.' });
@@ -39,6 +44,52 @@ export function detachMessage({ reason, title, url }) {
       ? 'i cannot sign in for you. finish signing in on that page yourself, then say "go on" and i will continue from there.'
       : 'open the tab you want me to use and say "go on" to continue.';
   return `browser control of ${where} ended: ${why}. ${next}`;
+}
+// Nothing may be left silently waiting. Every pending request gets an explicit decline, and each
+// one counts towards the denial tally that stops the agent asking the same thing forever.
+function declinePending(reason = 'stopped') {
+  const pending = state.requests || [];
+  if (!pending.length) return [];
+  const declined = declineAll(pending, reason);
+  // Only a real refusal counts towards the cutoff: a new chat or a restarted worker is not the
+  // user saying no.
+  if (reason === RequestOutcome.DECLINED || reason === 'stopped') {
+    const denials = { ...(state.denials || {}) };
+    for (const request of pending) { const key = denialKey(request); denials[key] = (denials[key] ?? 0) + 1; }
+    state.denials = denials;
+  }
+  state.declined = declined;
+  state.requests = [];
+  return declined;
+}
+// Fill the handed-back form on the real page. The values pass straight through: they are never
+// written to state, persisted, logged, or handed to the agent, which verifies from the page after.
+async function submitCredentials(request, values) {
+  if (!Number.isInteger(state.tabId)) return RequestOutcome.UNAVAILABLE;
+  const { snapshot, typeText, click } = await import('./browser.js');
+  const tab = await chrome.tabs.get(state.tabId).catch(() => undefined);
+  if (!tab || !supportedUrl(tab.url)) return RequestOutcome.UNAVAILABLE;
+  if (request.origin && new URL(tab.url).origin !== request.origin) return RequestOutcome.ORIGIN_CHANGED;
+  const controller = new AbortController();
+  const page = new ChromePage(tab, controller.signal, []);
+  await page.attach();
+  try {
+    const snap = await snapshot(page);
+    const fields = request.fields.filter(f => values[f.label] !== undefined && values[f.label] !== '');
+    if (!fields.length) return RequestOutcome.CANCELLED;
+    for (const field of fields) {
+      const element = snap.elements.find(e => e.id === field.elementId);
+      // The page was retagged since the form was handed over: the ids no longer mean anything.
+      if (!element || element.role !== field.inputType || element.name !== field.label) return RequestOutcome.LOCATOR_INVALID;
+    }
+    for (const field of fields) await typeText(page, field.elementId, values[field.label], false);
+    if (request.submit?.elementId) await click(page, request.submit.elementId);
+    return RequestOutcome.SUBMITTED;
+  } catch {
+    return RequestOutcome.SUBMISSION_FAILED;
+  } finally {
+    await page.detach();
+  }
 }
 async function stop() {
   const run = active;
@@ -116,7 +167,7 @@ async function execute(run, message) {
     const references = mentioned.map(t => `tab ${t.id}: ${t.title || ''} (${t.url})`).join('\n');
     await runTask(page, {
       goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), supervisor: mode === 'careful', model: settings.model,
-      reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true,
+      reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true, denials: state.denials,
       browserTabs: {
         list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
         select: selectTab, currentId: page => page.tabId,
@@ -145,6 +196,11 @@ async function execute(run, message) {
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
+    // What the turn is waiting on, and why the page stopped it. The panel shows one card and the
+    // reason in plain words; a stop leaves nothing pending because the agent declined it already.
+    state.blockedReason = outcome?.blockedReason;
+    state.requests = outcome?.requests ?? [];
+    if (outcome?.declined?.length) state.declined = outcome.declined;
     // Keep the run's actions with the reply they produced so earlier runs still show their steps.
     state.messages.push({ role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings), steps: state.steps.slice(-60) });
     state.messages = state.messages.slice(-20);
@@ -162,11 +218,59 @@ async function handle(message) {
     try { validateSettings(settings); } catch { configured = false; }
     return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning };
   }
-  if (message.type === 'stop') { await stop(); return { ok: true }; }
+  if (message.type === 'stop') {
+    await stop();
+    // A stop from a turn that ended waiting: decline what is still on screen rather than dropping it.
+    if (declinePending('stopped').length) await persist();
+    return { ok: true };
+  }
   if (message.type === 'clear') {
     if (active) throw new Error('stop the current task before starting a new chat');
-    state = { running: false, messages: [], steps: [], status: 'ready' };
+    declinePending('cancelled');
+    state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
     await persist(); return { ok: true };
+  }
+  // The panel answering the one card it showed.
+  if (message.type === 'answer') {
+    if (active) throw new Error('a task is already running');
+    const request = (state.requests || []).find(r => r.id === message.id);
+    if (!request) throw new Error('that question is no longer waiting for an answer');
+    if (message.outcome === RequestOutcome.DECLINED) {
+      declinePending(RequestOutcome.DECLINED);
+      state.status = 'ready';
+      state.messages.push({ role: 'agent', text: 'okay, i left that alone. tell me what to do instead.' });
+      await persist();
+      return { ok: true };
+    }
+    let resume = 'go on';
+    if (request.kind === 'credential' && message.outcome === RequestOutcome.USER_TOOK_OVER) {
+      state.requests = [];
+      resume = 'check whether the sign-in worked and carry on with the task';
+    } else if (request.kind === 'credential') {
+      // `values` is used here and nowhere else: it is not stored, persisted, or passed to the agent.
+      const outcome = await submitCredentials(request, message.values || {});
+      state.messages.push({ role: 'agent', text: {
+        [RequestOutcome.SUBMITTED]: 'signed in with what you gave me. checking the page.',
+        [RequestOutcome.ORIGIN_CHANGED]: 'that tab is on a different site now, so i did not fill anything in.',
+        [RequestOutcome.LOCATOR_INVALID]: 'the sign-in form changed since i handed it over, so i did not fill anything in.',
+        [RequestOutcome.UNAVAILABLE]: 'that tab is gone, so there was nothing to fill in.',
+        [RequestOutcome.CANCELLED]: 'nothing was filled in.',
+      }[outcome] ?? 'the sign-in form would not accept that, so nothing was submitted.' });
+      state.requests = [];
+      if (outcome !== RequestOutcome.SUBMITTED) { state.status = 'ready'; await persist(); return { ok: true, outcome }; }
+      resume = 'check whether the sign-in worked and carry on with the task';
+    } else if (request.type === RequestType.APPROVAL || request.type === RequestType.PERMISSION_REQUEST) {
+      state.grants = { ...(state.grants || {}), [denialKey(request)]: message.scope || 'once' };
+      state.requests = [];
+    } else {
+      resume = String(message.text || message.choice || '').trim() || 'go on';
+      state.requests = [];
+    }
+    const denials = { ...(state.denials || {}) };
+    delete denials[denialKey(request)];
+    state.denials = denials;
+    await persist();
+    return handle({ type: 'run', tabId: state.tabId, goal: resume, mode: (await readSettings()).mode });
   }
     if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
@@ -174,7 +278,7 @@ async function handle(message) {
     if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
     const run = { controller: new AbortController(), pages: [], attaching: new Set() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
+    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, requests: [], blockedReason: undefined };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
     void execute(run, { ...message, goal: message.goal.trim() });
