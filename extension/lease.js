@@ -28,3 +28,20 @@ export function release(tabId) {
 export function get(tabId) {
   return leases.get(tabId);
 }
+
+/**
+ * Record how the run is leaving this tab. The mark only exists once a run has made one, and a
+ * fresh claim drops it: a tab being driven again is no longer a tab that was left behind.
+ */
+export function mark(tabId, disposition) {
+  const held = leases.get(tabId);
+  if (!held) return undefined;
+  held.disposition = disposition;
+  return held;
+}
+
+/** Every lease held, or every lease one session holds. */
+export function list(sessionId) {
+  const held = [...leases.values()];
+  return sessionId === undefined ? held : held.filter(l => l.sessionId === sessionId);
+}

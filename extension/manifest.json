@@ -9,6 +9,7 @@
     "sidePanel",
     "debugger",
     "tabs",
+    "tabGroups",
     "activeTab"
   ],
   "host_permissions": [

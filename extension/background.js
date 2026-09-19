@@ -2,6 +2,8 @@ import { runTask } from '../agent.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { readSettings, validateSettings } from './settings.js';
+import * as lease from './lease.js';
+import { Disposition, endRun, groupTab, markTab, releaseAll, resumeHandoffIfPresent } from './tabs.js';
 
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready' };
@@ -57,6 +59,8 @@ async function execute(run, message) {
     controller.signal.throwIfAborted();
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
+    // The user handed this tab over, so it is never grouped and never closed when the run ends.
+    lease.claim(id, { sessionId: run.sessionId, turnId: run.turnId, openedByUs: false });
     let page = pages.find(p => p.tabId === id);
     if (!page) { page = new ChromePage(tab, controller.signal, pages); pages.push(page); }
     if (!page.attached) await page.attach();
@@ -73,6 +77,8 @@ async function execute(run, message) {
   const attachPopup = (tab) => {
     if (!candidates.has(tab.id) || !supportedUrl(tab.url) || pages.some(p => p.tabId === tab.id) || run.attaching.has(tab.id)) return;
     run.attaching.add(tab.id);
+    void groupTab(tab.id); // tabs the run opened live together in the "checkto" group, out of the user's way
+
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
     const work = page.attach().then(() => {
@@ -87,7 +93,11 @@ async function execute(run, message) {
     work.finally(() => { attachments.delete(work); pendingTabs.delete(tab.id); });
   };
   const created = tab => {
-    if (pages.some(p => p.tabId === tab.openerTabId)) { candidates.set(tab.id, true); attachPopup(tab); }
+    if (!pages.some(p => p.tabId === tab.openerTabId)) return;
+    candidates.set(tab.id, true);
+    // Opened by a page the run drives, so the run owns it: it gets grouped, and closed at the end unless marked.
+    try { lease.claim(tab.id, { sessionId: run.sessionId, turnId: run.turnId, openedByUs: true }); } catch {}
+    attachPopup(tab);
   };
   const updated = (_id, _change, tab) => attachPopup(tab);
   const detached = (source, reason) => {
@@ -108,6 +118,8 @@ async function execute(run, message) {
     const mode = message.mode === 'fast' ? 'fast' : 'careful';
     validateSettings(settings, mode);
     configure(settings);
+    // Pick the tabs the last turn handed back up where they stand, rather than starting cold.
+    await resumeHandoffIfPresent(run.sessionId, run.turnId);
     const page = await selectTab(message.tabId);
     state.status = 'working';
     await persist();
@@ -122,6 +134,8 @@ async function execute(run, message) {
         select: selectTab, currentId: page => page.tabId,
       },
     }, event => {
+      // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
+      if (event.type === 'mark') { markTab(event.tabId, event.disposition); return; }
       if (event.type === 'step') {
         state.steps.push({ step: event.step, action: event.action, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
         state.cost = (state.cost || 0) + event.costUsd;
@@ -143,6 +157,9 @@ async function execute(run, message) {
     if (run.popupError) outcome = { ...outcome, status: 'error', answer: undefined, message: safeError(run.popupError, settings) };
     // The agent reports an aborted run as "stopped" whether the user or Chrome ended it; only the user's stop is a plain stop.
     else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
+    // A blocked run is waiting on the user on that very tab, so it is handed over, never closed under them.
+    if (outcome?.status === 'blocked' && Number.isInteger(state.tabId)) markTab(state.tabId, Disposition.HANDOFF);
+    await endRun(run.sessionId).catch(() => {});
     state.status = outcome?.status || 'error';
     state.cost = outcome?.totalCostUsd ?? state.cost;
     // Keep the run's actions with the reply they produced so earlier runs still show their steps.
@@ -165,6 +182,7 @@ async function handle(message) {
   if (message.type === 'stop') { await stop(); return { ok: true }; }
   if (message.type === 'clear') {
     if (active) throw new Error('stop the current task before starting a new chat');
+    if (state.sessionId) await releaseAll(state.sessionId);
     state = { running: false, messages: [], steps: [], status: 'ready' };
     await persist(); return { ok: true };
   }
@@ -172,9 +190,11 @@ async function handle(message) {
     if (active) throw new Error('a task is already running');
     if (!Number.isInteger(message.tabId) || typeof message.goal !== 'string' || !message.goal.trim() || message.goal.length > 10000) throw new Error('choose a tab and enter a task');
     if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
-    const run = { controller: new AbortController(), pages: [], attaching: new Set() };
+    // The session outlives one turn: it is what holds a handed-off tab until the next turn resumes it.
+    const sessionId = state.sessionId || crypto.randomUUID();
+    const run = { controller: new AbortController(), pages: [], attaching: new Set(), sessionId, turnId: crypto.randomUUID() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
+    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});
     void execute(run, { ...message, goal: message.goal.trim() });
