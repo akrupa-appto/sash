@@ -94,8 +94,9 @@ test('Chrome cancelling browser control aborts the current task and explains wha
 });
 
 test('the stop button still reports a plain stop', async () => {
+  const started = taskStarted;
   await send({ type: 'run', tabId: 13, goal: 'test', mode: 'fast' });
-  await until(() => taskStarted === 3);
+  await until(() => taskStarted === started + 1);
   await send({ type: 'stop' });
   await until(() => data.runState?.running === false);
   assert.equal(data.runState.status, 'stopped');

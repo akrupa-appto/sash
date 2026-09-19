@@ -33,9 +33,11 @@ export function detachMessage({ reason, title, url }) {
   const why = { canceled_by_user: "Chrome's control banner was cancelled", target_closed: 'the tab closed', replaced_with_devtools: 'DevTools opened on it' }[reason] || `Chrome reported "${reason}"`;
   // Sign-in pages only: "account" alone matches ordinary account settings pages.
   const login = /sign[ -]?in|log[ -]?in|login|\bsso\b|accounts\.google\.com|\/oauth|\/auth\b/i.test(`${title} ${url}`);
-  const next = login
-    ? 'i cannot sign in for you. finish signing in on that page yourself, then say "go on" and i will continue from there.'
-    : 'open the tab you want me to use and say "go on" to continue.';
+  const next = login && reason === 'target_closed'
+    ? 'i cannot sign in for you. reopen the sign-in page, finish signing in yourself, then say "go on" and i will continue from there.'
+    : login
+      ? 'i cannot sign in for you. finish signing in on that page yourself, then say "go on" and i will continue from there.'
+      : 'open the tab you want me to use and say "go on" to continue.';
   return `browser control of ${where} ended: ${why}. ${next}`;
 }
 async function stop() {
