@@ -1,6 +1,29 @@
 import { collectSnapshot, pageReady } from '../snapshot.js';
 
-export function supportedUrl(url) { return /^https?:\/\//i.test(url || ''); }
+export function supportedUrl(url) {
+  return /^https?:\/\//i.test(url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)(?:\/|$)/i.test(url || '');
+}
+
+// Serialize this function into the page just like collectSnapshot. App content often
+// scrolls inside a pane while the document and its fixed sidebar do not scroll.
+function scrollState() {
+  const root = document.scrollingElement || document.documentElement;
+  let target = root;
+  let area = root.scrollHeight > root.clientHeight + 4 ? innerWidth * innerHeight : 0;
+  for (const el of document.querySelectorAll('body *')) {
+    if (el === root || el.clientHeight < 80 || el.scrollHeight <= el.clientHeight + 4) continue;
+    const style = getComputedStyle(el);
+    if (!/(auto|scroll|overlay)/.test(style.overflowY) || style.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    const width = Math.max(0, Math.min(innerWidth, r.right) - Math.max(0, r.left));
+    const height = Math.max(0, Math.min(innerHeight, r.bottom) - Math.max(0, r.top));
+    const size = width * height;
+    if (size > area) { target = el; area = size; }
+  }
+  document.querySelectorAll('[data-checkto-scroll]').forEach(el => el.removeAttribute('data-checkto-scroll'));
+  target.setAttribute('data-checkto-scroll', 'true');
+  return { y: Math.round(target.scrollTop), max: Math.max(0, target.scrollHeight - target.clientHeight) };
+}
 
 export class ChromePage {
   constructor(tab, signal, pages) {
@@ -19,8 +42,11 @@ export class ChromePage {
     this.signal.throwIfAborted();
     if (!supportedUrl(this.currentUrl)) throw new Error('open a regular website first; Chrome settings, the web store, and extension pages cannot be controlled');
     await chrome.tabs.update(this.tabId, { active: true });
+    const tab = await chrome.tabs.get(this.tabId);
+    if (Number.isInteger(tab.windowId)) await chrome.windows.update(tab.windowId, { focused: true });
     this.signal.throwIfAborted();
-    await chrome.debugger.attach({ tabId: this.tabId }, '1.3');
+    try { await chrome.debugger.attach({ tabId: this.tabId }, '1.3'); }
+    catch (err) { throw new Error(`could not control this tab: ${err.message}. close DevTools or another browser-control extension on this tab, then try again.`); }
     this.attached = true;
     this.signal.throwIfAborted();
     await this.command('Page.enable');
@@ -109,6 +135,7 @@ export async function snapshot(page) {
     }
   }
   // Existing login fields must never disclose their values to a model.
+  raw.scroll = await page.evaluate(scrollState);
   for (const e of raw.elements) if (e.role === 'password') e.value = undefined;
   page.currentUrl = raw.url;
   page.currentTitle = raw.title;
@@ -177,7 +204,11 @@ export async function selectOption(page, id, index) {
   }, { id, index });
 }
 export async function scroll(page, dir) {
-  await page.command('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 100, y: 100, deltaX: 0, deltaY: dir === 'down' ? 640 : -640 });
+  await page.evaluate(scrollState);
+  await page.evaluate(dir => {
+    const target = document.querySelector('[data-checkto-scroll]') || document.scrollingElement;
+    target.scrollBy({ top: dir === 'down' ? 640 : -640, behavior: 'instant' });
+  }, dir);
   await page.waitForTimeout(200);
 }
 export async function settle(page) { await page.waitForTimeout(350); await page.ready(); }

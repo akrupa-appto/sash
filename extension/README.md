@@ -1,6 +1,6 @@
 # checkto for Chrome
 
-A local Chrome extension with the same fast (Jev) and careful (planner + Jev) modes as the Checkto app. It controls the tab you choose, using your existing browser session. No Checkto server or Anchor account is needed.
+A local Chrome extension with the same fast (Jev) and careful (planner + Jev) modes as the Checkto app. It can work across your open website tabs, using your existing browser sessions. No Checkto server or Anchor account is needed.
 
 ## Install
 
@@ -8,13 +8,13 @@ A local Chrome extension with the same fast (Jev) and careful (planner + Jev) mo
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked** and choose the `checkto-extension` folder containing `manifest.json`.
 4. In the settings tab, save your OpenRouter key. Optionally choose a direct TypeSafe connection for Jev.
-5. Pin Checkto in Chrome's extensions menu. Open a website, click Checkto, select the tab, and enter a task.
+5. Pin Checkto in Chrome's extensions menu. Open a website, click Checkto, and enter a task. Type `@` to search tabs across all windows and add the ones you mean.
 
-Requires Chrome 118 or later. Chrome shows its debugger control banner during a task. **Stop**, closing the controlled tab, or cancelling Chrome's banner ends control. Pages opened by the task can be followed; unrelated tabs are left alone. Browser settings, the Chrome Web Store, extension pages, and controls inside embedded frames are not supported.
+Requires Chrome 118 or later. Chrome shows its debugger control banner during a task. **Stop**, closing the controlled tab, or cancelling Chrome's banner ends control. The agent can switch to existing website tabs and follow pages opened by the task. It attaches to tabs as needed and detaches when the task ends. Browser settings, the Chrome Web Store, extension pages, and controls inside embedded frames are not supported.
 
 ## Local data
 
-Keys, settings, and a short chat history stay in `chrome.storage.local` in this Chrome profile. They are not synced, and there is no Checkto backend in this flow. During a task, instructions and visible page content are sent directly to the selected model providers using your keys. Local extension storage is not an encrypted vault. The settings page can remove keys, and **new chat** clears the stored conversation. Uninstalling removes the extension's local data.
+Keys, settings, and a short chat history stay in `chrome.storage.local` in this Chrome profile. They are not synced, and there is no Checkto backend in this flow. During a task, instructions, open website tab titles and URLs, and visible content from visited tabs are sent directly to the selected model providers using your keys. Local extension storage is not an encrypted vault. The settings page can remove keys, and **new chat** clears the stored conversation. Uninstalling removes the extension's local data.
 
 OpenRouter supplies the planner and text generation. With direct TypeSafe and no OpenRouter key, fast mode can still click, select, and type text quoted in your task; generating new text needs an OpenRouter key. Model access and billing depend on your provider account.
 

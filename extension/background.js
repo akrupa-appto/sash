@@ -25,7 +25,7 @@ function persist() {
 function safeError(error, settings = {}) {
   let text = String(error?.message || error || 'something went wrong');
   for (const key of [settings.openrouterKey, settings.typesafeKey]) if (key) text = text.split(key).join('[redacted]');
-  return text.slice(0, 600);
+  return text.slice(0, 12000);
 }
 async function stop() {
   const run = active;
@@ -37,6 +37,23 @@ async function execute(run, message) {
   let settings;
   let outcome;
   const { controller, pages } = run;
+  const pendingTabs = new Map();
+  const selectTab = async id => {
+    if (pendingTabs.has(id)) await pendingTabs.get(id);
+    controller.signal.throwIfAborted();
+    const tab = await chrome.tabs.get(id);
+    if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
+    let page = pages.find(p => p.tabId === id);
+    if (!page) { page = new ChromePage(tab, controller.signal, pages); pages.push(page); }
+    if (!page.attached) await page.attach();
+    else {
+      await chrome.tabs.update(id, { active: true });
+      if (Number.isInteger(tab.windowId)) await chrome.windows.update(tab.windowId, { focused: true });
+    }
+    state.tabId = id; state.tabTitle = tab.title || tab.url;
+    await persist();
+    return page;
+  };
   const attachments = new Set();
   const candidates = new Map();
   const attachPopup = (tab) => {
@@ -52,14 +69,18 @@ async function execute(run, message) {
       if (!controller.signal.aborted) { run.popupError = err; controller.abort(); }
     });
     attachments.add(work);
-    work.finally(() => attachments.delete(work));
+    pendingTabs.set(tab.id, work);
+    work.finally(() => { attachments.delete(work); pendingTabs.delete(tab.id); });
   };
   const created = tab => {
     if (pages.some(p => p.tabId === tab.openerTabId)) { candidates.set(tab.id, true); attachPopup(tab); }
   };
   const updated = (_id, _change, tab) => attachPopup(tab);
-  const detached = source => {
-    if (pages.some(p => p.tabId === source.tabId) && !run.cleaning) controller.abort();
+  const detached = (source, reason) => {
+    const page = pages.find(p => p.tabId === source.tabId);
+    if (!page || run.cleaning) return;
+    page.attached = false; page.initialized = false;
+    if (reason === 'canceled_by_user' || source.tabId === state.tabId) controller.abort();
   };
   chrome.tabs.onCreated.addListener(created);
   chrome.tabs.onUpdated.addListener(updated);
@@ -69,20 +90,22 @@ async function execute(run, message) {
     const mode = message.mode === 'fast' ? 'fast' : 'careful';
     validateSettings(settings, mode);
     configure(settings);
-    const tab = await chrome.tabs.get(message.tabId);
-    const page = new ChromePage(tab, controller.signal, pages);
-    pages.push(page);
-    await page.attach();
-    state.tabTitle = tab.title || tab.url;
+    const page = await selectTab(message.tabId);
     state.status = 'working';
     await persist();
     const previousTasks = state.messages.slice(0, -1).map(m => `${m.role}: ${m.text}`).slice(-12);
+    const mentioned = await Promise.all((message.tabIds || []).map(id => chrome.tabs.get(id)));
+    const references = mentioned.map(t => `tab ${t.id}: ${t.title || ''} (${t.url})`).join('\n');
     await runTask(page, {
-      goal: message.goal, supervisor: mode === 'careful', model: settings.model,
+      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), supervisor: mode === 'careful', model: settings.model,
       reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true,
+      browserTabs: {
+        list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
+        select: selectTab, currentId: page => page.tabId,
+      },
     }, event => {
       if (event.type === 'step') {
-        state.steps.push({ step: event.step, action: event.action, plan: event.plan, note: event.note, cost: event.costUsd });
+        state.steps.push({ step: event.step, action: event.action, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
         state.cost = (state.cost || 0) + event.costUsd;
       }
       if (event.type === 'end') { outcome = event; return; }
@@ -125,12 +148,12 @@ async function handle(message) {
     state = { running: false, messages: [], steps: [], status: 'ready' };
     await persist(); return { ok: true };
   }
-  if (message.type === 'run') {
+    if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
     if (!Number.isInteger(message.tabId) || typeof message.goal !== 'string' || !message.goal.trim() || message.goal.length > 10000) throw new Error('choose a tab and enter a task');
+    if (message.tabIds !== undefined && (!Array.isArray(message.tabIds) || !message.tabIds.every(Number.isInteger))) throw new Error('invalid tab references');
     const run = { controller: new AbortController(), pages: [], attaching: new Set() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    if (state.tabId !== message.tabId) state.messages = [];
     state = { ...state, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0 };
     state.messages.push({ role: 'user', text: message.goal.trim() });
     void persist().catch(() => {});

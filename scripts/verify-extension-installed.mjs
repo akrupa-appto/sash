@@ -102,9 +102,9 @@ try {
   const panel = await context.newPage();
   await panel.setViewportSize({ width: 390, height: 844 });
   await panel.goto(`chrome-extension://${extensionId}/panel.html`);
-  await panel.waitForFunction(() => document.querySelector('#tab').options.length > 0);
   const tabId = await worker.evaluate(async origin => (await chrome.tabs.query({})).find(t => t.url?.startsWith(origin)).id, origin);
-  await panel.locator('#tab').selectOption(String(tabId));
+  await panel.locator('#goal').fill('@');
+  await panel.locator(`#tab-option-${tabId}`).click();
   assert.equal(await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.equal((await worker.evaluate(() => chrome.sidePanel.getPanelBehavior())).openPanelOnActionClick, true);
   await panel.screenshot({ path: path.join(artifacts, 'panel-ready.png') });
@@ -112,12 +112,12 @@ try {
   for (const mode of ['fast', 'careful']) {
     await fixture.goto(origin);
     await worker.evaluate(mode => { globalThis.fixtureScenario = mode; }, mode);
-    await panel.locator(`[data-mode="${mode}"]`).click();
+    await panel.locator('#mode').selectOption(mode);
     const name = mode === 'careful' ? 'Grace' : 'Ada';
     const plan = mode === 'careful' ? 'business' : 'team';
     await panel.locator('#goal').fill(`type "${name}" into name, select ${plan}, and save`);
     await panel.locator('#send').click();
-    await panel.waitForFunction(() => document.querySelector('#status-text').textContent === 'done', null, { timeout: 20000 });
+    await panel.waitForFunction(() => document.querySelector('#status-text').textContent === 'finished', null, { timeout: 20000 });
     await panel.waitForFunction(() => document.querySelector('#stop').hidden, null, { timeout: 5000 });
     assert.equal(await fixture.locator('#result').textContent(), `saved: ${name} / ${plan}`);
     assert.equal(await worker.evaluate(async tabId => { try { await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', { expression: '1' }); return true; } catch { return false; } }, tabId), false);
@@ -126,10 +126,10 @@ try {
   await panel.screenshot({ path: path.join(artifacts, 'panel-complete.png') });
   await fixture.screenshot({ path: path.join(artifacts, 'completed-form.png') });
   await worker.evaluate(() => { globalThis.fixtureScenario = 'popup'; });
-  await panel.locator('[data-mode="fast"]').click();
+  await panel.locator('#mode').selectOption('fast');
   await panel.locator('#goal').fill('open details in a new tab');
   await panel.locator('#send').click();
-  await panel.waitForFunction(() => ['done','blocked','error'].includes(document.querySelector('#status-text').textContent) && document.querySelector('#stop').hidden);
+  await panel.waitForFunction(() => ['finished','needs your attention','could not finish'].includes(document.querySelector('#status-text').textContent) && document.querySelector('#stop').hidden);
   const lastState = await worker.evaluate(async () => (await chrome.storage.local.get('runState')).runState);
   assert.equal(lastState.status, 'done', JSON.stringify({ state: lastState, tabs: await worker.evaluate(() => fixtureTabs) }));
   const popup = await worker.evaluate(async id => chrome.tabs.get(id), lastState.tabId);

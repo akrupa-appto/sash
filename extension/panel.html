@@ -1,18 +1,20 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto · browser tasks</title><link rel="stylesheet" href="style.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto</title><link rel="stylesheet" href="style.css"></head>
 <body class="panel-page">
-<header class="panel-header"><span class="brand">checkto</span><span class="spacer"></span><button class="secondary" id="new-chat">new chat</button><button class="secondary settings-link">settings</button></header>
-<div class="target"><label for="tab">work in this tab</label><div class="row"><select id="tab" aria-label="tab to control"></select><button class="secondary" id="refresh-tabs" aria-label="refresh tabs">refresh</button></div></div>
+<header class="panel-header"><span class="brand">checkto<span class="brand-dot">.</span></span><div class="header-actions"><button class="icon-button" id="new-chat" title="new chat" aria-label="new chat">＋</button><button class="icon-button settings-link" title="settings" aria-label="settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="var(--bg)"/><circle cx="16" cy="17" r="3" fill="var(--bg)"/></svg></button></div></header>
 <main class="content" id="content">
-<div id="setup" class="notice" hidden><p>add your API keys to get started. they stay on this device.</p><button class="settings-link">open settings</button></div>
-<div class="intro" id="intro"><h1>what should your browser do?</h1><p>pick a tab and give it a task. watch each step here while checkto works on the page.</p><div class="examples"><button data-task="summarize the main points on this page">summarize this page</button><button data-task="find the pricing page and compare the plans">find and compare the plans</button><button data-task="find the contact form on this website">find the contact form</button></div></div>
+<div id="setup" class="notice" hidden><p>connect a model to start.</p><button class="settings-link secondary">open settings <span aria-hidden="true">↗</span></button></div>
+<div class="intro" id="intro"><div class="intro-mark" aria-hidden="true">c.</div><h1>a hand with<br>your tabs.</h1><p>tell me what you need.<br>type <kbd>@</kbd> to bring a tab into the conversation.</p><div class="examples"><button data-task="summarize this page">summarize this page <span>↗</span></button><button data-task="compare these tabs">compare tabs <span>↗</span></button></div></div>
 <div id="messages" aria-live="polite"></div>
-<details class="steps" id="steps-wrap" hidden open><summary id="steps-label">steps</summary><div id="steps"></div></details>
+<details class="steps" id="steps-wrap" hidden><summary id="steps-label">activity</summary><div id="steps"></div></details>
 </main>
 <form class="composer" id="task-form">
 <div class="run-status" id="run-status"><span class="dot"></span><span id="status-text">ready</span><span class="cost" id="cost"></span></div>
-<div class="mode" aria-label="agent mode"><button type="button" data-mode="fast" aria-pressed="false">fast · Jev only</button><button type="button" data-mode="careful" aria-pressed="true">careful · planner + Jev</button></div>
-<label class="muted" for="goal">your task</label><textarea id="goal" placeholder="e.g. search for “quiet keyboard” and open the first result" required maxlength="10000"></textarea>
-<div class="row"><button id="send" type="submit">run on this tab</button><button id="stop" class="danger" type="button" hidden>stop</button></div>
-<div class="status error" id="error" role="alert"></div><p class="footnote">uses your signed-in browser. Chrome shows a control banner while a task runs.</p>
+<div class="compose-box">
+<div class="tab-picker" id="tab-picker" hidden><div class="picker-heading"><span>open tabs</span><span id="tab-count"></span></div><div id="tab-results" role="listbox" aria-label="open tabs"></div><div class="picker-footer">↑ ↓ to browse <span>enter to add · esc to close</span></div></div>
+<div class="selected-tabs" id="selected-tabs" aria-label="referenced tabs"></div>
+<label class="sr-only" for="goal">message checkto</label><textarea id="goal" placeholder="ask anything about your tabs…" required maxlength="10000" rows="2" aria-autocomplete="list" aria-controls="tab-results" aria-expanded="false"></textarea>
+<div class="composer-toolbar"><button class="mention-button" type="button" id="mention-tabs" title="add a tab" aria-label="add a tab">@</button><label class="sr-only" for="mode">agent mode</label><select id="mode"><option value="careful">careful</option><option value="fast">fast</option></select><span class="spacer"></span><button id="send" class="send-button" type="submit" aria-label="send task" title="send task">↑</button><button id="stop" class="stop-button" type="button" hidden aria-label="stop task" title="stop task">■</button></div>
+</div>
+<div class="status error" id="error" role="alert"></div><div class="composer-caption"><span id="tab-context">all your tabs, one conversation</span><span>↵ send</span></div>
 </form><script type="module" src="panel.js"></script></body></html>

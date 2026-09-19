@@ -13,6 +13,11 @@ export type RunInput = {
   reasoning?: ReasoningLevel;
   model?: string; // planner model for this task; fast mode still uses Jev
   liveView?: boolean; // Anchor streams the browser directly; skip screenshot work
+  browserTabs?: {
+    list: () => Promise<{ id: number; title: string; url: string }[]>;
+    select: (id: number) => Promise<Page>;
+    currentId: (page: Page) => number;
+  };
 };
 
 export type StepEvent = {
@@ -79,6 +84,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   const actionCounts = new Map<string, number>();
   let lastFingerprint = "";
   let lastUrl = "";
+  const seenPages = new Set(page.context().pages());
 
   const end = (status: EndEvent["status"], message: string, answer?: string) =>
     emit({ type: "end", status, message, answer, totalCostUsd: totalCost, steps: step });
@@ -97,8 +103,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
 
       // Follow popups / new tabs if the site opened one.
       const pages = page.context().pages();
-      if (pages.length > 1 && pages[pages.length - 1] !== page) {
-        page = pages[pages.length - 1];
+      const newPages = pages.filter(p => !seenPages.has(p));
+      pages.forEach(p => seenPages.add(p));
+      if (newPages.length && newPages[newPages.length - 1] !== page) {
+        page = newPages[newPages.length - 1];
         await b.settle(page);
       }
 
@@ -110,6 +118,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         await b.settle(page);
       }
       const snap = await b.snapshot(page);
+      const tabs = await input.browserTabs?.list();
+      const currentTabId = input.browserTabs?.currentId(page);
       // Tell the models whether the previous action changed anything.
       if (history.length && lastFingerprint) {
         history[history.length - 1] +=
@@ -149,6 +159,8 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             page: { url: snap.url, title: snap.title, scroll: scrollPos, text: snap.text, elements: elementLines },
             step,
             maxSteps,
+            tabs,
+            currentTabId,
           },
           signal,
           input.model,
@@ -158,6 +170,15 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         planMs = Math.round(p.ms);
         if (p.status === "done") return end("done", p.why ?? "Task complete", p.answer);
         if (p.status === "blocked") return end("blocked", p.why ?? "Cannot continue", p.answer);
+        if (p.tabId !== undefined && input.browserTabs) {
+          if (!tabs?.some(t => t.id === p.tabId)) return end("error", "the requested tab is no longer available");
+          history.push(`step ${step}: read "${snap.title}" (${snap.url}): ${snap.text.slice(0, 4000)}; switching to tab ${p.tabId}${p.why ? `: ${p.why}` : ''}`);
+          page = await input.browserTabs.select(p.tabId);
+          seenPages.add(page);
+          lastFingerprint = "";
+          emit({ type: "step", step, url: page.url(), title: await page.title(), screenshot: "", elementCount: 0, answers: {}, action: `opened tab: ${await page.title()}`, plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd });
+          continue;
+        }
         if (!p.next) return end("error", "the planner gave no next action");
         stepGoal = p.next;
         planText = p.next;
@@ -191,6 +212,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           criteria: opCriteria,
         },
       };
+      const otherTabs = tabs?.filter(t => t.id !== currentTabId) ?? [];
+      if (!useSupervisor && otherTabs.length) {
+        opCriteria.SWITCH_TAB = 'Switch to another existing browser tab to continue the task';
+      }
       if (clickable.length)
         questions.click_target = {
           type: "choice",
@@ -229,6 +254,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         page: { url: snap.url, title: snap.title, scroll_position: scrollPos, text: snap.text },
         elements: elementLines,
         history: history.slice(-10),
+        ...(tabs ? { open_tabs: tabs, current_tab_id: currentTabId } : {}),
       };
 
       const res = await decide(state, questions, signal);
@@ -247,6 +273,29 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       // ---- 3. execute
       try {
         switch (chosen) {
+          case "SWITCH_TAB": {
+            if (!input.browserTabs || !otherTabs.length) throw new Error('no other website tabs are available');
+            let choices = otherTabs;
+            while (choices.length > 240) {
+              const size = Math.ceil(choices.length / 240);
+              const groups = Array.from({ length: Math.ceil(choices.length / size) }, (_, i) => choices.slice(i * size, (i + 1) * size));
+              const group = await decide(state, { tab_group: { type: 'choice', instructions: 'Which group contains the tab needed next for the task?', criteria: Object.fromEntries(groups.map((g, i) => [`group_${i}`, g.map(t => `${t.title} (${t.url})`).join('; ')])) } }, signal);
+              totalCost += group.cost_usd; stepCost += group.cost_usd; jevMs += group.ms;
+              const index = Number((group.answers.tab_group as ChoiceAnswer)?.choice?.match(/^group_(\d+)$/)?.[1]);
+              if (!groups[index]) throw new Error('no matching tab group');
+              choices = groups[index];
+            }
+            const target = await decide(state, { tab: { type: 'choice', instructions: 'Which existing tab should be read or controlled next for the task?', criteria: Object.fromEntries(choices.map(t => [`tab_${t.id}`, `${t.title} (${t.url})`])) } }, signal);
+            totalCost += target.cost_usd; stepCost += target.cost_usd; jevMs += target.ms;
+            const id = Number((target.answers.tab as ChoiceAnswer)?.choice?.match(/^tab_(\d+)$/)?.[1]);
+            if (!choices.some(t => t.id === id)) throw new Error('no matching tab');
+            history.push(`read "${snap.title}" (${snap.url}): ${snap.text.slice(0, 4000)}`);
+            page = await input.browserTabs.select(id);
+            seenPages.add(page);
+            action = `opened tab: ${await page.title()}`;
+            lastFingerprint = '';
+            break;
+          }
           case "CLICK": {
             const id = elId(pick("click_target"));
             const e = snap.elements.find((x) => x.id === id);
