@@ -109,6 +109,16 @@ function loc(page: Page, id: number) {
   return page.locator(`[data-jev-idx="${id}"]`).first();
 }
 
+// A bounded signature of the visible text (length plus a hash of the first 20k characters), so an
+// in-place view swap is noticed even when the replacement text has the same length.
+const domSignature = (page: Page): Promise<string | null> =>
+  page.evaluate?.(() => {
+    const t = document.body?.innerText ?? "";
+    let h = 0;
+    for (let i = 0; i < t.length && i < 20000; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+    return `${t.length}:${h}`;
+  }).catch(() => null) ?? Promise.resolve(null);
+
 export async function click(page: Page, id: number) {
   const l = loc(page, id);
   const before = page.url();
@@ -120,10 +130,27 @@ export async function click(page: Page, id: number) {
   // can target stale controls after an asynchronous page replacement.
   // Keep actionability short, but give a link's destination time to load.
   // Waiting separately avoids timing out the click during a slow response.
-  const navigates = !!href && href !== before;
+  // A fragment-only link ("#", "#section") never loads a new document.
+  const stripHash = (u: string) => u.split("#")[0];
+  const navigates = !!href && stripHash(href) !== stripHash(before);
+  const beforeDom = navigates ? await domSignature(page) : null;
   await l.click({ timeout: 5000, ...(navigates ? { noWaitAfter: true } : {}) });
   if (navigates) {
-    await page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 30000 });
+    let settledInPlace = false;
+    const navigation = page.waitForURL(url => url.href !== before, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // A click handler that prevents the default navigation (single-page apps) changes the page in
+    // place instead. Stop waiting once the document has visibly changed without a URL change.
+    const inPlace = (async () => {
+      for (let waited = 0; waited < 30000 && beforeDom !== null; waited += 500) {
+        await new Promise(r => setTimeout(r, 500));
+        if (page.url() !== before) return;
+        const now = await domSignature(page);
+        if (waited >= 1500 && now !== null && now !== beforeDom) { settledInPlace = true; return; }
+      }
+      await navigation;
+    })();
+    await Promise.race([navigation.catch(err => { if (!settledInPlace) throw err; }), inPlace]);
+    navigation.catch(() => {});
   }
 }
 

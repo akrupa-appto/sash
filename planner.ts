@@ -23,6 +23,7 @@ export type PlanContext = {
   maxSteps: number;
   tabs?: { id: number; title: string; url: string }[];
   currentTabId?: number;
+  warnings?: string[]; // from the agent loop: repeated actions and wait caps the next action must respect
 };
 
 const SYSTEM = `You supervise a browser agent for a user who sends tasks in a chat.
@@ -41,8 +42,12 @@ Rules:
 - For a request for the most, least, highest, or lowest item, use the site's sort/filter controls or compare the relevant values before choosing. Default order and the first visible item are not evidence of rank. Preserve that choice in later steps rather than repeating the search.
 - Elements marked (above/below the viewport) are off-screen but the executor can still click them directly: prefer clicking a listed element over scrolling. Scroll only when the element you need is not listed. Never scroll down when the page says it is at the bottom.
 - The element list is complete for the page (up to 180 entries); "the last item" means the last matching element in the list.
-- The history lists what was tried and whether the page changed. Never repeat an action that did not change the page; try another element or say blocked.
+- The history lists what was tried and whether the page changed. Never repeat an action that did not change the page; try another element or say blocked. If "warnings" is present, obey it before anything else: it names actions already repeated from this exact page state and wait limits. Choose something different.
+- Go through what the task names. If the task says to go through onboarding, setup, a wizard, or a form, complete each step for real: never take a "skip", "demo mode", "later", or sample-data shortcut around it unless the task asks for that. When the task allows making answers up, fill every required field with plausible invented values (names, emails, company names, choices) and continue.
+- Waiting is for an operation the page says is in progress. After a wait, read the page for the result instead of waiting again. Starting a run, job, analysis, or submission does not finish the task: the task is finished only once its result is visible on the page and you have read it.
+- For an open-ended "test the app", "try it out", or "explore" task, cover the app the way a tester would: visit each main section, fill and submit at least one form, open settings, and try one invalid or empty input to see the error handling. Say done only when that coverage is reached or the step budget is nearly used, and let "answer" list what was covered and what was not.
 - If the task asks a question, say done with the answer taken from the page text.
+- "answer" reports only what the history and page text show. Name items, tabs, runs, and results exactly as they appear on the page, and never mix up two similar items. Never state the outcome of an operation whose result you have not read: say it was started and its result was not observed. Never call a task done that was skipped or only partly done.
 - Cookie or consent banners are not blockers: click the accept/consent/close button and continue.
 - Say blocked only when the browser genuinely cannot go further: login walls, captchas, missing content, no sensible options left. Never say blocked just to ask a question. If earlier work in this chat already satisfies the task, say done and explain what was already done.`;
 
@@ -88,6 +93,7 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
       step: `${ctx.step} of ${ctx.maxSteps}`,
       history: ctx.history,
       result_of_previous_action: ctx.lastResult ?? "none, this is the first step",
+      ...(ctx.warnings?.length ? { warnings: ctx.warnings } : {}),
       page: ctx.page,
       ...(ctx.tabs ? { open_tabs: ctx.tabs, current_tab_id: ctx.currentTabId } : {}),
     },

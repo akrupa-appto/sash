@@ -62,3 +62,11 @@
 - User supplied result.mp4 (AgentMail task waits, cannot scroll, then clicks sidebar) and image.png (planner returns no JSON after one successful click). Empty/invalid/truncated planner output now gets one retry with a larger output budget and native JSON mode, preserving model and reasoning choices.
 - Extension snapshot and scroll now use the largest visible scrollable pane when the document does not scroll. The supplied recording cannot establish whether that alone resolves the AgentMail task; no claim of end-to-end success without a real run.
 - v0.2.0 is this update. Build and syntax checks only per no-QA instruction. Existing verification scripts updated for the new composer but not executed.
+
+## Onboarding run critique (2026-09-19)
+- Adam's extension run ("go through the onboarding, make stuff up, test the app") looped waits twice, took the demo skip, mixed up two PRs, and claimed 8/8 without reading the result. Fixes are in agent.ts, planner.ts, browser.ts on t3code/fix-onboarding-test-verification-1.
+- Repeated (page state, action) pairs are reported to the planner and jev as `warnings` at 2 and end the run at 4, naming the action. After 3 consecutive waits WAIT is withheld for one step and the planner must read the result. Waits back off 1.5s→12s.
+- Jev may not swap a skip/dismiss control for the control the planner quoted; a unique exact-name match wins. Planner rules forbid demo/skip shortcuts, require observed results before done, and require the answer to name items as shown.
+- Planner history keeps every step (older ones shortened) and each changed page adds a short "showing:" snippet of new text, so the final answer can quote what was actually read.
+- Same-page link clicks (fragment hrefs, prevented navigation) no longer wait 30s for a URL change.
+- Validation: gitignored runs/onboarding-lab fixture driven by the real planner (anthropic/claude-sonnet-5 via OpenRouter, local Chromium). Before: demo skip, 286s, answer claimed onboarding done. After: real onboarding with invented data, correct PR and 7/8 result quoted, 122s, $0.23. Known follow-up: elements re-rendered every second by a live page can go stale between snapshot and click (locator.evaluate timeout); the agent recovers on the next step.

@@ -1,16 +1,18 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-let state, decisions, plans, executed, lastQuestions, clickDestination = 'file-preview';
+let state, decisions, plans, executed, lastQuestions, planCalls = [], clickDestination = 'file-preview';
 const snap = () => ({
   url: `https://example.test/${state}`, title: state, text: state,
   fingerprint: state, scroll: { y: 0, max: 0 },
   elements: [{ id: 1, role: 'link', name: 'README.md', kind: 'click', inViewport: true }],
 });
+let snapFn = () => snap();
+let clickFn = async () => { executed++; state = clickDestination === 'progress' ? `record-${executed}` : clickDestination; };
 mock.module('./browser.ts', { namedExports: {
-  snapshot: async () => snap(), screenshot: async () => '', settle: async () => {},
+  snapshot: async () => snapFn(), screenshot: async () => '', settle: async () => {},
   describe: e => `[${e.id}] ${e.role} "${e.name}"`,
-  click: async () => { executed++; state = clickDestination === 'progress' ? `record-${executed}` : clickDestination; },
+  click: async (p, id) => clickFn(p, id),
   typeText: async () => {}, selectOption: async () => {}, scroll: async () => {},
 }});
 mock.module('./jev.ts', { namedExports: {
@@ -19,7 +21,7 @@ mock.module('./jev.ts', { namedExports: {
 }});
 mock.module('./planner.ts', { namedExports: {
   plannerModel: () => 'fixture',
-  plan: async () => ({ ...plans.shift(), ms: 1, cost_usd: 0 }),
+  plan: async (ctx) => { planCalls.push(ctx); return { ...plans.shift(), ms: 1, cost_usd: 0 }; },
 }});
 const { runTask } = await import('./agent.ts');
 const choice = (operation, achieved = 0) => ({
@@ -27,8 +29,8 @@ const choice = (operation, achieved = 0) => ({
   click_target: { choice: 'el_1' },
 });
 async function run(supervisor, maxSteps = 3) {
-  state = 'repository'; executed = 0;
-  const page = { url: () => snap().url, title: async () => state, context: () => ({ pages: () => [page] }) };
+  state = 'repository'; executed = 0; planCalls = [];
+  const page = { url: () => snap().url, title: async () => state, waitForTimeout: async () => {}, context: () => ({ pages: () => [page] }) };
   const events = [];
   await runTask(page, { goal: 'open the raw README.md', supervisor, ...(maxSteps === null ? {} : {maxSteps}) }, e => events.push(e), new AbortController().signal);
   return events.at(-1);
@@ -80,10 +82,114 @@ test('fast mode does not replace a requested action with an independent completi
 
 test('a repeated agent action reports a loop rather than blaming the website', async () => {
   clickDestination = 'repository';
-  decisions = [choice('CLICK'), choice('CLICK'), choice('CLICK')];
-  const result = await run(false);
+  decisions = Array.from({ length: 4 }, () => choice('CLICK'));
+  const result = await run(false, 6);
   assert.equal(result.status, 'blocked');
-  assert.match(result.message, /repeating the same action/);
+  assert.match(result.message, /repeating "CLICK/);
   assert.doesNotMatch(result.message, /page stopped responding/);
   clickDestination = 'file-preview';
+});
+
+test('a repeated action is reported to the planner and jev before the run stops, and the stop names it', async () => {
+  clickDestination = 'repository';
+  plans = Array.from({ length: 4 }, () => ({ status: 'continue', next: 'open README.md' }));
+  decisions = Array.from({ length: 4 }, () => choice('CLICK'));
+  const result = await run(true, 10);
+  assert.equal(planCalls[0].warnings, undefined);
+  assert.equal(planCalls[1].warnings, undefined);
+  assert.match(planCalls[2].warnings[0], /CLICK \[1\] link "README.md" \(done 2 times/);
+  assert.match(planCalls[3].warnings[0], /done 3 times/);
+  assert.equal(executed, 4);
+  assert.equal(result.status, 'blocked');
+  assert.match(result.message, /repeating "CLICK \[1\] link "README.md""/);
+  clickDestination = 'file-preview';
+});
+
+test('an action the models switch away from after the warning does not end the run', async () => {
+  clickDestination = 'repository';
+  plans = [
+    ...Array.from({ length: 2 }, () => ({ status: 'continue', next: 'open README.md' })),
+    { status: 'continue', next: 'scroll down' },
+    { status: 'done', answer: 'finished' },
+  ];
+  decisions = [choice('CLICK'), choice('CLICK'), choice('SCROLL_DOWN')];
+  const result = await run(true, 10);
+  assert.equal(result.status, 'done');
+  clickDestination = 'file-preview';
+});
+
+test('after three waits in a row the next step must inspect the page instead of waiting', async () => {
+  clickDestination = 'progress';
+  plans = [
+    ...Array.from({ length: 3 }, () => ({ status: 'continue', next: 'wait for the run to finish' })),
+    { status: 'continue', next: 'open the finished run' },
+    { status: 'done', answer: 'run result read' },
+  ];
+  decisions = [choice('WAIT'), choice('WAIT'), choice('WAIT'), choice('CLICK')];
+  const result = await run(true, 10);
+  assert.ok(!planCalls[2].warnings?.some(w => /waited .* in a row/.test(w)));
+  assert.ok(planCalls[3].warnings.some(w => /waited 3 times in a row/.test(w)));
+  assert.equal(lastQuestions.operation.criteria.WAIT, undefined, 'jev must not be offered WAIT on the capped step');
+  assert.equal(result.status, 'done');
+  clickDestination = 'file-preview';
+});
+
+test('jev cannot swap the control the planner named for a skip button', async () => {
+  const el = snap;
+  const twoButtons = () => ({ ...el(), elements: [
+    { id: 1, role: 'button', name: 'Continue', kind: 'click', inViewport: true },
+    { id: 2, role: 'button', name: 'Skip for now (demo mode)', kind: 'click', inViewport: true },
+  ] });
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let clicked = [];
+  snapFn = twoButtons;
+  clickFn = async (_p, id) => { clicked.push(id); state = 'ob2'; };
+  try {
+    plans = [{ status: 'continue', next: 'click the "Continue" button' }, { status: 'done', answer: 'ok' }];
+    decisions = [{ operation: { choice: 'CLICK' }, click_target: { choice: 'el_2' } }];
+    const result = await run(true, 5);
+    assert.deepEqual(clicked, [1]);
+    assert.equal(result.status, 'done');
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
+test('an exact-name match beats a pick that only contains the planner-quoted name', async () => {
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let clicked = [];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'button', name: 'Save as draft', kind: 'click', inViewport: true },
+    { id: 2, role: 'button', name: 'Save', kind: 'click', inViewport: true },
+  ] });
+  clickFn = async (_p, id) => { clicked.push(id); state = 'saved'; };
+  try {
+    plans = [{ status: 'continue', next: 'click the "Save" button' }, { status: 'done', answer: 'ok' }];
+    decisions = [{ operation: { choice: 'CLICK' }, click_target: { choice: 'el_1' } }];
+    await run(true, 5);
+    assert.deepEqual(clicked, [2]);
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
+test('the planner sees every step of a long run, older ones shortened', async () => {
+  clickDestination = 'progress';
+  plans = [...Array.from({ length: 30 }, () => ({ status: 'continue', next: 'x'.repeat(400) })), { status: 'done', answer: 'ok' }];
+  decisions = Array.from({ length: 30 }, () => choice('CLICK'));
+  try {
+    await run(true, 40);
+    const last = planCalls.at(-1).history;
+    assert.equal(last.length, 30);
+    assert.ok(last[0].length < 300 && last[0].endsWith('…'));
+    assert.ok(last.at(-1).length > 400);
+  } finally { clickDestination = 'file-preview'; }
+});
+
+test('history records what appeared on the page after an action, not only that it changed', async () => {
+  clickDestination = 'progress';
+  const orig = snapFn;
+  snapFn = () => ({ ...snap(), text: `Jev header ${state === 'repository' ? 'Runs list' : 'Run finished: 7/8 tests passed on "#42 feat: browser settings"'}` });
+  plans = [{ status: 'continue', next: 'open the run' }, { status: 'done', answer: 'ok' }];
+  decisions = [choice('CLICK')];
+  try {
+    await run(true, 5);
+    assert.match(planCalls[1].history[0], /showing: "Run finished: 7\/8 tests passed on "#42 feat: browser settings""/);
+  } finally { snapFn = orig; clickDestination = 'file-preview'; }
 });
