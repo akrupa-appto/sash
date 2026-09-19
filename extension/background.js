@@ -1,6 +1,7 @@
 import { runTask } from '../agent.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
+import { ensureOriginAccess } from './permissions.js';
 import { readSettings, validateSettings } from './settings.js';
 
 let active;
@@ -40,6 +41,11 @@ export function detachMessage({ reason, title, url }) {
       : 'open the tab you want me to use and say "go on" to continue.';
   return `browser control of ${where} ended: ${why}. ${next}`;
 }
+// The service worker has no UI, so the panel shows the question and sends back the answer.
+async function askForAccess(prompt) {
+  const reply = await chrome.runtime.sendMessage({ type: 'permission', prompt }).catch(() => undefined);
+  return reply?.allow === true;
+}
 async function stop() {
   const run = active;
   if (!run) return;
@@ -57,6 +63,7 @@ async function execute(run, message) {
     controller.signal.throwIfAborted();
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
+    await ensureOriginAccess(tab.url, askForAccess);
     let page = pages.find(p => p.tabId === id);
     if (!page) { page = new ChromePage(tab, controller.signal, pages); pages.push(page); }
     if (!page.attached) await page.attach();
@@ -75,7 +82,7 @@ async function execute(run, message) {
     run.attaching.add(tab.id);
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
-    const work = page.attach().then(() => {
+    const work = ensureOriginAccess(tab.url, askForAccess).then(() => page.attach()).then(() => {
       controller.signal.throwIfAborted();
       state.tabId = tab.id; state.tabTitle = tab.title || tab.url;
       return persist();
@@ -183,7 +190,7 @@ async function handle(message) {
   throw new Error('unknown request');
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || message?.type === 'state') return;
+  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || message?.type === 'state' || message?.type === 'permission') return;
   handle(message).then(reply, err => reply({ error: safeError(err) }));
   return true;
 });

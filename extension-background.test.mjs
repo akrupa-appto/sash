@@ -12,6 +12,9 @@ let activeSignal;
 let taskStarted = 0;
 let finishTask;
 let attachGate;
+const accessPrompts = [];
+const grantedOrigins = [];
+let allowAccess = true;
 
 globalThis.chrome = {
   storage: { local: {
@@ -20,9 +23,16 @@ globalThis.chrome = {
   } },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
     onMessage: events(), onInstalled: events(), openOptionsPage: async () => {},
-    sendMessage: async message => { messages.push(structuredClone(message)); },
+    sendMessage: async message => {
+      messages.push(structuredClone(message));
+      if (message.type === 'permission') { accessPrompts.push(message.prompt); return { allow: allowAccess }; }
+    },
   },
   tabs: { get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }), onCreated: events(), onUpdated: events() },
+  permissions: {
+    contains: async ({ origins }) => origins.every(o => grantedOrigins.includes(o)),
+    request: async ({ origins }) => { grantedOrigins.push(...origins); return true; },
+  },
   debugger: { onDetach: events() }, sidePanel: { setPanelBehavior: async () => {} },
 };
 mock.module('./extension/browser.js', { namedExports: {
@@ -136,4 +146,21 @@ test('a finished run keeps its actions on the reply it produced', async () => {
   assert.equal(reply.role, 'agent');
   assert.equal(reply.text, 'finished');
   assert.deepEqual(reply.steps.map(s => s.action), ['CLICK [5] button "upload"']);
+});
+
+
+test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const before = taskStarted;
+  await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+  await until(() => data.runState?.running === false);
+  assert.equal(accessPrompts.at(-1).title, 'allow checkto to access https://example.test?');
+  assert.equal(accessPrompts.at(-1).scope, 'origin');
+  assert.equal(taskStarted, before, 'no task may run before access is granted');
+  assert.equal(data.runState.status, 'error');
+  assert.match(data.runState.messages.at(-1).text, /needs your permission to use https:\/\/example\.test/);
+  allowAccess = true;
 });
