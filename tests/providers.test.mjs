@@ -1,6 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { chat, listModels, inferReasoning, geminiThinking, providerKey, providerLabel, _memo } from './providers.ts';
+import { chat, listModels, inferReasoning, geminiThinking, providerKey, providerLabel, _memo } from '../src/providers.ts';
 
 const withKeys = async (keys, fn) => {
   const saved = {};

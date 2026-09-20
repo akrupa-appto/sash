@@ -8,14 +8,14 @@ let snapshots = 0;
 let clicks = 0;
 let selected: number[] = [];
 let fingerprint = 'same';
-mock.module('../browser.ts', { namedExports: {
+mock.module('../src/browser.ts', { namedExports: {
   snapshot: async () => { snapshots++; return { url: 'https://example.org', title: 'test', text: '', elements, scroll: { y: 0, max: 0 }, fingerprint }; },
   screenshot: async () => '', settle: async () => {}, describe: (e: any) => `[${e.id}] ${e.name}`,
   click: async () => { clicks++; }, selectOption: async (_: any, id: number, idx: number) => { selected = [id, idx]; },
 } });
-mock.module('../jev.ts', { namedExports: { decide: (...args: any[]) => decideImpl(...args), writeText: async () => '' } });
-mock.module('../planner.ts', { namedExports: { plan: (...args: any[]) => planImpl(...args), plannerModel: () => 'test' } });
-const { runTask } = await import('../agent.ts');
+mock.module('../src/jev.ts', { namedExports: { decide: (...args: any[]) => decideImpl(...args), writeText: async () => '' } });
+mock.module('../src/planner.ts', { namedExports: { plan: (...args: any[]) => planImpl(...args), plannerModel: () => 'test' } });
+const { runTask } = await import('../src/agent.ts');
 const page: any = { url: () => 'https://example.org', title: async () => 'test', context: () => ({ pages: () => [page] }) };
 const response = (answers: any) => ({ answers, ms: 1, cost_usd: 0.01 });
 const choice = (choice: string) => ({ type: 'choice', choice });

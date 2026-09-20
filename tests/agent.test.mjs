@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { RequestType } from './extension/types.js';
-import { declineAll, pickBlocking } from './extension/requests.js';
+import { RequestType } from '../extension/types.js';
+import { declineAll, pickBlocking } from '../extension/requests.js';
 
 let state, decisions, plans, executed, lastQuestions, planCalls = [], clickDestination = 'file-preview';
 const snap = () => ({
@@ -12,17 +12,17 @@ const snap = () => ({
 let snapFn = () => snap();
 let clickFn = async () => { executed++; state = clickDestination === 'progress' ? `record-${executed}` : clickDestination; };
 let typeTextFn = async () => {};
-mock.module('./browser.ts', { namedExports: {
+mock.module('../src/browser.ts', { namedExports: {
   snapshot: async () => snapFn(), screenshot: async () => '', settle: async () => {},
   describe: e => `[${e.id}] ${e.role} "${e.name}"`,
   click: async (p, id) => clickFn(p, id),
   typeText: async (...a) => typeTextFn(...a), selectOption: async () => {}, scroll: async () => {},
 }});
-mock.module('./jev.ts', { namedExports: {
+mock.module('../src/jev.ts', { namedExports: {
   decide: async (_state, questions) => { lastQuestions = questions; return { answers: decisions.shift(), ms: 1, cost_usd: 0 }; },
   writeText: async () => '',
 }});
-mock.module('./planner.ts', { namedExports: {
+mock.module('../src/planner.ts', { namedExports: {
   plannerModel: () => 'fixture',
   plan: async (ctx) => { planCalls.push(ctx); return { ...plans.shift(), ms: 1, cost_usd: 0 }; },
 }});

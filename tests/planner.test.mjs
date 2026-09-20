@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { plan } from './planner.ts';
+import { plan } from '../src/planner.ts';
 
 const ctx = {
   task: 'read the heading', earlierTasks: [], history: [], step: 1, maxSteps: 20,

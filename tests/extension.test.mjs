@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { normalizeSettings, validateSettings, readSettings } from './extension/settings.js';
-import { configure, clearConfig, env } from './extension/config.js';
-import { ChromePage } from './extension/browser.js';
+import { normalizeSettings, validateSettings, readSettings } from '../extension/settings.js';
+import { configure, clearConfig, env } from '../extension/config.js';
+import { ChromePage } from '../extension/browser.js';
 
 const event = () => ({ addListener() {}, removeListener() {} });
 function chromeMock() {

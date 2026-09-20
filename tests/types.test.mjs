@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadgeState, RequestType, BlockedReason } from './extension/types.js';
+import { BadgeState, RequestType, BlockedReason } from '../extension/types.js';
 
 test('badge states and blocked reasons are the agreed values', () => {
   assert.deepEqual(BadgeState, {

@@ -62,7 +62,7 @@ globalThis.chrome = {
   commands: { onCommand: events() },
   contextMenus: { create: (opts, cb) => { menuCreated.push(opts); cb?.(); }, removeAll: cb => cb(), onClicked: events() },
 };
-mock.module('./extension/browser.js', { namedExports: {
+mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; pages.push(this); }
@@ -70,7 +70,7 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
+mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   taskStarted++;
   activeSignal = signal;
   lastInput = input;

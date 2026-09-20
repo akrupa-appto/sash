@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reasoningChoices, reasoningSummary, findCachedModel } from './public/model-picker.js';
+import { reasoningChoices, reasoningSummary, findCachedModel } from '../public/model-picker.js';
 
 test('reasoning choices follow the model metadata', () => {
   const values = meta => reasoningChoices(meta).map(c => c.value);

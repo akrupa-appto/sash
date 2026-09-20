@@ -1,4 +1,4 @@
-import { parseModel } from '../providers.ts';
+import { parseModel } from '../src/providers.ts';
 export const PROVIDER_KEYS = { openrouter: 'openrouterKey', openai: 'openaiKey', gemini: 'geminiKey', custom: 'customKey' };
 export const defaults = {
   provider: 'openrouter', openrouterKey: '', typesafeKey: '', openaiKey: '', geminiKey: '', customKey: '', customBaseUrl: '',

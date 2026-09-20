@@ -46,7 +46,7 @@ globalThis.chrome = {
   permissions: { contains: async () => true, request: async () => true },
   debugger: { onDetach: events() }, sidePanel: { setPanelBehavior: async () => {} },
 };
-mock.module('./extension/browser.js', { namedExports: {
+mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; }
@@ -54,7 +54,7 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
+mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   capturedSelect = input.browserTabs.select;
   await new Promise(resolve => {
     finishTask = resolve;

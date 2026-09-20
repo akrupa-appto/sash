@@ -12,18 +12,18 @@ let metadataFailure = false;
 let browsersClosed = 0;
 const closing: (() => void)[] = [];
 mock.method(http, 'createServer', (fn: any) => { handler = fn; return { listen() {} } as any; });
-mock.module('../recordings.ts', { namedExports: { readRecording: () => { if (metadataFailure) throw new Error('invalid recording metadata'); return undefined; }, saveRecording: () => {}, anchorRecording: async () => [] } });
-mock.module('../browser.ts', { namedExports: { launch: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) } });
-mock.module('../jev.ts', { namedExports: { jevVia: () => 'test' } });
-mock.module('../planner.ts', { namedExports: { plannerModel: () => 'test' } });
-mock.module('../agent.ts', { namedExports: { runTask: async (_: any, __: any, emit: any, signal: AbortSignal) => {
+mock.module('../src/recordings.ts', { namedExports: { readRecording: () => { if (metadataFailure) throw new Error('invalid recording metadata'); return undefined; }, saveRecording: () => {}, anchorRecording: async () => [] } });
+mock.module('../src/browser.ts', { namedExports: { launch: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) } });
+mock.module('../src/jev.ts', { namedExports: { jevVia: () => 'test' } });
+mock.module('../src/planner.ts', { namedExports: { plannerModel: () => 'test' } });
+mock.module('../src/agent.ts', { namedExports: { runTask: async (_: any, __: any, emit: any, signal: AbortSignal) => {
   activeSignal = signal;
   await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
   emit({ type: 'end', status: 'stopped' });
 } } });
 process.env.MAX_SESSIONS = '6';
 process.env.OPENROUTER_API_KEY ??= 'test-key'; // careful-mode tasks need a connected planner provider
-await import('../server.ts');
+await import('../src/server.ts');
 function browser() {
   return { context: { route: async () => {} }, page: { url: () => 'https://example.org' }, close: async () => { browsersClosed++; if (activeSignal && !activeSignal.aborted) closedWhileUnaborted = true; if (delayClose) await new Promise<void>(resolve => closing.push(resolve)); }, browser: { isConnected: () => true } };
 }

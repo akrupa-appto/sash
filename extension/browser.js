@@ -1,4 +1,4 @@
-import { collectSnapshot, pageReady } from '../snapshot.js';
+import { collectSnapshot, pageReady } from '../src/snapshot.js';
 
 export function supportedUrl(url) {
   return /^https?:\/\//i.test(url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)(?:\/|$)/i.test(url || '');

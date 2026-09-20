@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { collectSnapshot } from './snapshot.js';
+import { collectSnapshot } from '../src/snapshot.js';
 
 // Minimal DOM stand-in: collectSnapshot only needs querySelectorAll, computed
 // styles, rects and a couple of document/window globals.

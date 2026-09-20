@@ -1,4 +1,4 @@
-import { runTask } from '../agent.ts';
+import { runTask } from '../src/agent.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { ensureOriginAccess } from './permissions.js';

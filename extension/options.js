@@ -1,7 +1,7 @@
 import { defaults, normalizeSettings, readSettings, validateSettings, PROVIDER_KEYS, customOrigin } from './settings.js';
 import { createModelPicker } from '../public/model-picker.js';
-import { listModels, PROVIDERS, providerLabel } from '../providers.ts';
-import { configure, clearConfig } from '../env.ts';
+import { listModels, PROVIDERS, providerLabel } from '../src/providers.ts';
+import { configure, clearConfig } from '../src/env.ts';
 const form = document.querySelector('#settings');
 const status = document.querySelector('#status');
 function show(message, error = false) { status.textContent = message; status.classList.toggle('error', error); }
