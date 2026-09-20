@@ -12,6 +12,8 @@ let activeSignal;
 let taskStarted = 0;
 let finishTask;
 let attachGate;
+let nextOutcome; // set to make the fake run end straight away with that outcome
+let lastInput;
 
 globalThis.chrome = {
   storage: { local: {
@@ -33,10 +35,12 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, _input, emit, signal) => {
+mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   taskStarted++;
   activeSignal = signal;
+  lastInput = input;
   emit({ type: 'step', step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload', costUsd: 0 });
+  if (nextOutcome) { const outcome = nextOutcome; nextOutcome = undefined; emit({ type: 'end', totalCostUsd: 0, ...outcome }); return; }
   await new Promise(resolve => {
     finishTask = resolve;
     signal.addEventListener('abort', resolve, { once: true });
@@ -124,6 +128,24 @@ test('a failed popup attachment produces one terminal error message', async () =
   assert.equal(data.runState.status, 'error');
 });
 
+
+test('a question pauses the chat and the next message continues that run instead of starting a new one', async () => {
+  await send({ type: 'clear' });
+  const pending = { goal: 'open the readme', history: ['step 1: did CLICK [1] link "README.md"'], step: 1, question: 'which README do you mean?' };
+  nextOutcome = { status: 'question', message: pending.question, question: pending.question, pending };
+  await send({ type: 'run', tabId: 12, goal: 'open the readme', mode: 'careful' });
+  await until(() => data.runState?.running === false);
+  assert.equal(data.runState.status, 'question');
+  assert.equal(data.runState.messages.at(-1).text, 'which README do you mean?');
+  assert.deepEqual(data.runState.pending, pending);
+
+  nextOutcome = { status: 'done', message: 'finished', answer: 'opened the root readme' };
+  await send({ type: 'run', tabId: 12, goal: 'the root one', mode: 'careful' });
+  await until(() => data.runState?.status === 'done');
+  assert.deepEqual(lastInput.resume, pending, 'the answer carries the paused run back into the agent');
+  assert.equal(lastInput.goal, 'the root one');
+  assert.equal(data.runState.pending, undefined);
+});
 
 test('a finished run keeps its actions on the reply it produced', async () => {
   await send({ type: 'clear' });

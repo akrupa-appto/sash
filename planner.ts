@@ -5,12 +5,14 @@ import { chat, type Effort } from "./providers.ts";
 // the task is done or cannot be finished, and writes the one-line reply the user sees.
 
 export type Plan = {
-  status: "continue" | "done" | "blocked";
+  status: "continue" | "done" | "blocked" | "question";
   next?: string; // one single action, e.g. "click the last story link in the list"
   completes_task?: boolean; // true when this action, if it works, finishes the task
   text?: string; // exact text to type, when the action types
   why?: string;
   answer?: string; // final reply for the user when done/blocked
+  question?: string; // when status is "question": what to ask the user before going further
+  risk?: "low" | "high"; // how hard the proposed action is to undo; "high" pauses for the user
   tabId?: number; // extension only: switch to an existing tab before the next step
 };
 
@@ -31,8 +33,10 @@ const SYSTEM = `You supervise a browser agent for a user who sends tasks in a ch
 The executor can do exactly ONE primitive per step: click a listed element, type text into a listed field (optionally pressing Enter), pick a native dropdown option, scroll down or up, go back, or wait. It only sees the page's element list and your instruction, so name the element the way it appears in the list (its text or role), or say "scroll down".
 
 Reply with JSON only, no prose, shaped like:
-{"status":"continue"|"done"|"blocked","next":"one concrete action","completes_task":true|false,"text":"exact text to type, only if the action types","why":"one short sentence","answer":"when done: one sentence confirming the result or answering the user's question from the page; when blocked: what is missing. Use one sentence for a plain confirmation or single-fact answer. For a comparison or summary across multiple items, answer with one short line per item, newline-separated, no more than 10 lines."}
+{"status":"continue"|"done"|"blocked"|"question","next":"one concrete action","risk":"low"|"high","completes_task":true|false,"text":"exact text to type, only if the action types","why":"one short sentence","answer":"when done: one sentence confirming the result or answering the user's question from the page; when blocked: what is missing. Use one sentence for a plain confirmation or single-fact answer. For a comparison or summary across multiple items, answer with one short line per item, newline-separated, no more than 10 lines.","question":"when status is question: the one thing you need the user to tell you"}
 completes_task is true when this action, if it works, is the final thing the task needs (e.g. clicking the story the user asked to open). When completes_task is true, also fill "answer" with the one-line reply to show the user once it works.
+"risk" describes the action in "next": "high" when carrying it out would commit something the user cannot simply undo in the browser (money moving, a message or post going out, data or an account being deleted, an order or application submitted, an irreversible setting changed), "low" otherwise. Judge the actual consequence on this page, not the wording of the button. A high-risk action is not executed until the user confirms it, so keep "why" specific enough for them to answer.
+"question" ends the run and shows the user your question; the run continues from their reply with everything you have read so far. Use it when the task cannot be carried out correctly without something only the user knows (which account, which of two matching items, a value they never gave). Ask at most one thing, and only when guessing would be wrong rather than merely slower.
 
 Rules:
 - First check result_of_previous_action and the current page against every requirement in the task. "Expected to complete the task" is a prediction, not proof. A new page can be the wrong destination or an intermediate step. Say done only when the observed result satisfies the whole task.
@@ -46,11 +50,11 @@ Rules:
 - The history lists what was tried and whether the page changed. Never repeat an action that did not change the page; try another element or say blocked. If "warnings" is present, obey it before anything else: it names actions already repeated from this exact page state and wait limits. Choose something different.
 - Go through what the task names. If the task says to go through onboarding, setup, a wizard, or a form, complete each step for real: never take a "skip", "demo mode", "later", or sample-data shortcut around it unless the task asks for that. When the task allows making answers up, fill every required field with plausible invented values (names, emails, company names, choices) and continue.
 - Waiting is for an operation the page says is in progress. After a wait, read the page for the result instead of waiting again. Starting a run, job, analysis, or submission does not finish the task: the task is finished only once its result is visible on the page and you have read it.
-- For an open-ended "test the app", "try it out", or "explore" task, cover the app the way a tester would: visit each main section, fill and submit at least one form, open settings, and try one invalid or empty input to see the error handling. Say done only when that coverage is reached or the step budget is nearly used, and let "answer" list what was covered and what was not.
+- For an open-ended "test the app", "try it out", or "explore" task, cover the app the way a tester would: visit each main section, fill and submit at least one form, open settings, and try one invalid or empty input to see the error handling. Say done only when that coverage is reached or the step budget is nearly used, and let "answer" list what was covered and what was not. A "done" on such a task after only a navigation or two is refused by the runner and handed back to you as a warning, so keep exercising the app instead.
 - If the task asks a question, say done with the answer taken from the page text.
 - "answer" reports only what the history and page text show. Name items, tabs, runs, and results exactly as they appear on the page, and never mix up two similar items. Never state the outcome of an operation whose result you have not read: say it was started and its result was not observed. Never call a task done that was skipped or only partly done.
 - Cookie or consent banners are not blockers: click the accept/consent/close button and continue.
-- Say blocked only when the browser genuinely cannot go further: login walls, captchas, missing content, no sensible options left. Never say blocked just to ask a question. If earlier work in this chat already satisfies the task, say done and explain what was already done.`;
+- Say blocked only when the browser genuinely cannot go further: login walls, captchas, missing content, no sensible options left. Never say blocked just to ask a question: use status "question" for that. If earlier work in this chat already satisfies the task, say done and explain what was already done.`;
 
 // Take the first complete top-level {...} object, ignoring anything the model appends after it.
 function extractJson(s: string): any {
@@ -116,7 +120,9 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   try {
     if (reply.finish === 'length') throw new Error('output limit reached');
     p = extractJson(content) as Plan;
-    if (!p || !["continue", "done", "blocked"].includes(p.status)) throw new Error('invalid plan status');
+    if (!p || !["continue", "done", "blocked", "question"].includes(p.status)) throw new Error('invalid plan status');
+    if (p.status === 'question' && !(typeof p.question === 'string' && p.question.trim())) throw new Error('missing question');
+    if (p.risk !== 'high' && p.risk !== 'low') delete p.risk; // anything else is not a verdict, treat it as no verdict
     if (p.tabId == null) delete p.tabId;
     if (p.tabId != null && !Number.isInteger(p.tabId)) throw new Error('invalid tab ID');
     if (p.tabId !== undefined && !ctx.tabs?.some(tab => tab.id === p.tabId)) throw new Error('tab ID is not in the open tabs');

@@ -67,6 +67,16 @@ test('a finished run shows its answer after its own actions, not before them', {
   await page.close();
 });
 
+test('a run that stopped on a question shows it as waiting for an answer', { skip }, async () => {
+  const page = await panel({
+    running: false, status: 'question', steps: [],
+    messages: [{ role: 'user', text: 'open the readme' }, { role: 'agent', text: 'which README do you mean?', steps }],
+  });
+  assert.equal(await page.locator('#status-text').innerText(), 'waiting for an answer');
+  assert.equal(await page.locator('.message.agent.asking > div').last().innerText(), 'which README do you mean?');
+  await page.close();
+});
+
 test('the transcript keeps riding the real bottom when content settles late, instead of overscrolling past it', { skip }, async () => {
   // Enough messages (each with its own actions block) to make #content scroll — the bug only
   // shows up once scrollHeight actually exceeds clientHeight.
