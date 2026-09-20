@@ -444,8 +444,14 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // the page reaches the planner, so a planner-named origin could otherwise park a saved grant on
         // a site the user never approved. "*" stays as sent — that is the deliberate every-site scope,
         // and its card already confirms it twice.
-        if (p.status === "approve")
-          return ask(approvalRequest({ action: p.action ?? p.next, origin: p.origin === "*" ? "*" : originOf(snap.url), why: p.why }));
+        // An opaque page (about:blank, data:, a chrome error page) has no usable origin: originOf gives
+        // the literal "null" for all of them, which would key one grant for every such page. Keep the
+        // page's own origin when it has one, and fall back to its full url so the key stays distinct.
+        if (p.status === "approve") {
+          const pageOrigin = originOf(snap.url);
+          const grantOrigin = p.origin === "*" ? "*" : pageOrigin && pageOrigin !== "null" ? pageOrigin : snap.url;
+          return ask(approvalRequest({ action: p.action ?? p.next, origin: grantOrigin, why: p.why }));
+        }
         // A login wall: hand the page back as a typed form. Field labels and input types travel;
         // what the user types never comes back through here, and nothing is read off the page.
         if (p.status === "credential") {
