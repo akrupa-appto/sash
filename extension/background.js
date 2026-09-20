@@ -1,10 +1,13 @@
 import { runTask } from '../src/agent.ts';
+import { transcribeCapability } from '../src/transcribe.ts';
+import { PROVIDERS } from '../src/providers.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { ensureOriginAccess } from './permissions.js';
 import { readSettings, validateSettings } from './settings.js';
 import { BadgeState, RequestType } from './types.js';
 import { declineAll, denialKey, pickBlocking, RequestOutcome } from './requests.js';
+import { chunkMsFor, createDictationToggle, resolveVoiceMode, shouldAutoRun } from './voice.js';
 import * as lease from './lease.js';
 import { Disposition, endRun, groupTab, markTab, releaseAll, resumeHandoffIfPresent, setFaviconRestorer } from './tabs.js';
 
@@ -121,6 +124,77 @@ let saving = Promise.resolve();
 // Broadcasts can race (a stale in-flight 'run' broadcast landing after a later 'clear'),
 // so panel.js uses this to drop any broadcast older than the last one it applied.
 let seq = 0;
+
+// --- voice dictation: eagerness modes and the global shortcut's hands-free latch ---------------
+// transcribeCapability() reads its provider/key straight out of the shared `env` object that
+// configure()/clearConfig() (extension/config.js) also drive the active run's own planner and Jev
+// calls through (the esbuild alias in scripts/build-extension.mjs points transcribe.ts's "./env.ts"
+// import at this same extension/config.js). clearConfig() wipes every key in that object, so this
+// must never run while a run is mid-flight and depending on it staying configured — hence the
+// `active` check up front instead of bracketing every caller with its own guard.
+function voiceSpecFor(provider) {
+  return provider ? `${PROVIDERS[provider]?.prefix || ''}x` : undefined; // parseModel only needs the prefix
+}
+function voiceCapability(settings) {
+  if (active) return { canTranscribe: false, streaming: false, reason: 'a task is already running' };
+  configure(settings);
+  try { return transcribeCapability(voiceSpecFor(settings.voiceProvider)); }
+  finally { clearConfig(); }
+}
+// Set once a session has already triggered a run (eager mid-utterance, or prewarm/eager at speech
+// end), so a later partial or the final stop event for the same utterance can't trigger a second one.
+// Reset on every dictation:start.
+let dictationTriggered = false;
+// Decides whether the transcript collected so far (or the final one) should start a run, and does
+// it through the exact same 'run' message the composer's own submit uses (see the 'answer' handler
+// a bit further down for the same recursive-handle pattern) — so it goes through the identical
+// pending-request and already-running guards, and voice can never be a way around either.
+async function maybeAutoRunFromDictation({ text, isFinal }) {
+  const settings = await readSettings();
+  if (!settings.voiceEnabled) return;
+  const capability = voiceCapability(settings);
+  const eagerness = resolveVoiceMode(settings.voiceMode, capability);
+  if (!shouldAutoRun({ mode: eagerness, text, isFinal, running: !!active, blocked: !!pickBlocking(state.requests || []), alreadyTriggered: dictationTriggered })) return;
+  const goal = (text || '').trim();
+  if (!goal) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+  if (!tab || !Number.isInteger(tab.id)) return;
+  dictationTriggered = true;
+  try {
+    const reply = await handle({ type: 'run', tabId: tab.id, goal, mode: settings.mode });
+    if (!reply?.ok) { dictationTriggered = false; return; }
+    // The run starting ends hands-free listening, per the owner's spec, and the mic itself: nothing
+    // is left recording while a task is under way. teardownDictation() only stops an actually-live
+    // session (the "eager" mid-utterance case); the "prewarm"/"eager"-at-stop case already stopped
+    // recording as part of dictation:stop itself, so state.dictation is cleared here either way
+    // rather than left showing the transcript that just started this very run.
+    dictationToggle.endOnRunStart();
+    await teardownDictation();
+    state.dictation = undefined;
+    await persist();
+  } catch { dictationTriggered = false; } // already running, a request pending, or no usable tab: leave the session alone as a plain dictate fallback
+}
+// The global keyboard shortcut (extension/manifest.json "toggle-dictation"). chrome.commands only
+// ever fires one "pressed" event per press — there is no release event an extension can see — so
+// true hold-to-release lives in the panel document's own keydown/keyup instead (extension/panel.js).
+// This is the necessary compromise for a shortcut that works even when the panel isn't focused: one
+// press toggles listening on, a second press toggles it off, and a second press arriving quickly
+// right after the first latches hands-free instead (see voice.js createDictationToggle for the
+// exact timing rule, shared with the panel's own double-tap).
+const dictationToggle = createDictationToggle({
+  onStart: () => { void (async () => {
+    try {
+      const settings = await readSettings();
+      const eagerness = resolveVoiceMode(settings.voiceMode, voiceCapability(settings)) || 'dictate';
+      await handle({ type: 'dictation:start', chunkMs: chunkMsFor(eagerness) });
+    } catch { /* surfaced to the user as state.dictation.status === 'error' already */ }
+  })(); },
+  onStop: () => { void handle({ type: 'dictation:stop' }).catch(() => {}); },
+  onLatchOn: () => { state.dictation = { ...(state.dictation || {}), handsFree: true }; void persist(); },
+  onLatchOff: () => { if (state.dictation) { state.dictation = { ...state.dictation, handsFree: false }; void persist(); } },
+});
+chrome.commands?.onCommand.addListener(command => { if (command === 'toggle-dictation') dictationToggle.fire(); });
+
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   const saved = await chrome.storage.local.get(['runState', 'seq', 'feedbackByTab']);
@@ -412,7 +486,9 @@ async function handle(message) {
     const settings = await readSettings();
     let configured = true;
     try { validateSettings(settings); } catch { configured = false; }
-    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning, seq };
+    const capability = voiceCapability(settings);
+    const voice = { enabled: settings.voiceEnabled, mode: resolveVoiceMode(settings.voiceMode, capability), configuredMode: settings.voiceMode, provider: settings.voiceProvider, capability };
+    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning, seq, voice };
   }
   if (message.type === 'stop') {
     await stop();
@@ -518,6 +594,7 @@ async function handle(message) {
       await persist();
       return { ok: false, error: reply.error, needsPermissionTab };
     }
+    dictationTriggered = false; // a fresh session: eager/prewarm may auto-run again for it
     state.dictation = { status: 'listening', partialText: '' };
     await persist();
     return { ok: true };
@@ -534,12 +611,17 @@ async function handle(message) {
     }
     state.dictation = { status: 'idle', text: reply?.text || '' };
     await persist();
+    // "dictate" leaves this for the user to send; "prewarm" (and "eager" as a fallback, if it never
+    // crossed its mid-utterance word threshold) run with it now that speech has ended.
+    await maybeAutoRunFromDictation({ text: reply?.text || '', isFinal: true });
     return { ok: true, text: reply?.text || '' };
   }
   // Fire-and-forget events from the offscreen document while a session is live.
   if (message.type === 'dictation:partial') {
     state.dictation = { ...(state.dictation || {}), status: 'listening', partialText: message.text };
     await persist();
+    // "eager" only: a partial with enough words in it can start a run before speech even ends.
+    await maybeAutoRunFromDictation({ text: message.text, isFinal: false });
     return { ok: true };
   }
   if (message.type === 'dictation:error') {
