@@ -354,7 +354,12 @@ function render(state) {
   pendingRequest = running ? undefined : pickBlocking(state.requests || []);
   renderRequest(state, pendingRequest);
   controls();
-  if (pinnedToBottom) scrollToEnd();
+  // There is nothing to pin to the bottom of an empty conversation: the hero (and, unconfigured, the
+  // setup notice above it) can be taller than the panel, and scrolling to the bottom used to bury both
+  // off-screen the moment the panel first loaded. Only a real conversation (messages, or a run in
+  // flight) rides the bottom; the empty state always opens at its own top.
+  if (state.messages.length || running) { if (pinnedToBottom) scrollToEnd(); }
+  else contentEl.scrollTop = 0;
   // Re-tick every second while a run is live, so the duration divider can appear once a second has
   // passed. Only that one line is redrawn: a full render would collapse an open activity list and
   // throw away the scroll position under the user every second.
