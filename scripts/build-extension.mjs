@@ -20,7 +20,7 @@ await build({
 });
 await mkdir(path.join(output, 'fonts'), { recursive: true });
 for (const file of [
-  'manifest.json', 'panel.html', 'settings.html', 'offscreen.html', 'mic-permission.html', 'style.css',
+  'manifest.json', 'panel.html', 'settings.html', 'offscreen.html', 'mic-permission.html', 'style.css', 'settings.css',
   'fonts/archivo.woff2', 'fonts/ibm-plex-mono-400.woff2', 'fonts/ibm-plex-mono-500.woff2',
 ]) await copyFile(path.join(root, 'extension', file), path.join(output, file));
 console.log(`unpacked extension: ${output}`);
