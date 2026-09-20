@@ -440,10 +440,12 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // the planner asks "approve" instead of tagging "continue" with a risk level, so the same three-scope
         // UI and explicit button click gates it — a stray "maybe" in a text reply can never be read as a yes.
         // A saved grant is keyed by origin, so which site a stored permission covers is never whatever
-        // string the planner wrote: it is the origin of the page the action is about to run on. Text on
-        // the page reaches the planner, so a planner-named origin could otherwise park a saved grant on
-        // a site the user never approved. "*" stays as sent — that is the deliberate every-site scope,
-        // and its card already confirms it twice.
+        // string the planner wrote: it is the origin of the page the action is about to run on.
+        // `p.origin` is ignored entirely, including the literal "*". Text on the page reaches the
+        // planner, so a "*" sent back — injected or invented — would key an every-site grant for an
+        // action the user only ever saw on one page, and the card copy is not a substitute for the
+        // origin invariant. An every-site grant is created only by the user's own settings action,
+        // which asks Chrome for the host permission; this path never widens scope from planner input.
         // An opaque page (about:blank, data:, a chrome error page) has no usable origin: originOf gives
         // the literal "null" for all of them, which would key one grant for every such page. Keep the
         // page's own origin when it has one, and fall back to its full url so the key stays distinct.
@@ -451,7 +453,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // as an empty origin, which the request builder reads as "every site".
         if (p.status === "approve") {
           const pageOrigin = originOf(snap.url);
-          const grantOrigin = p.origin === "*" ? "*" : pageOrigin && pageOrigin !== "null" ? pageOrigin : (snap.url || snap.fingerprint || "unidentified page").slice(0, 512);
+          const grantOrigin = pageOrigin && pageOrigin !== "null" ? pageOrigin : (snap.url || snap.fingerprint || "unidentified page").slice(0, 512);
           return ask(approvalRequest({ action: p.action ?? p.next, origin: grantOrigin, why: p.why }));
         }
         // A login wall: hand the page back as a typed form. Field labels and input types travel;

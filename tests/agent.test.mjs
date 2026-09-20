@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { RequestType } from '../extension/types.js';
-import { declineAll, pickBlocking } from '../extension/requests.js';
+import { approvalRequest, declineAll, grantKey, pickBlocking } from '../extension/requests.js';
 
 let state, decisions, plans, executed, lastQuestions, planCalls = [], clickDestination = 'file-preview';
 const snap = () => ({
@@ -408,7 +408,7 @@ test('a mid-run question becomes a picker when the planner listed the choices', 
   assert.equal(open.request.options, undefined);
 });
 
-test('an approval offers three scopes, and only whole-internet access is confirmed twice', async () => {
+test('an approval offers three scopes, and a planner approval is never confirmed twice', async () => {
   plans = [{ status: 'approve', action: 'send the message', origin: 'https://example.test' }];
   decisions = [];
   const oneSite = await run(true);
@@ -416,9 +416,9 @@ test('an approval offers three scopes, and only whole-internet access is confirm
   assert.equal(oneSite.request.type, 'approval');
   assert.deepEqual(oneSite.request.scopes.map(s => s.id), ['once', 'conversation', 'always']);
   assert.equal(oneSite.request.scopes.at(-1).confirm, undefined);
-  plans = [{ status: 'approve', action: 'act on any site i open', origin: '*' }];
-  const everywhere = await run(true);
-  assert.match(everywhere.request.scopes.at(-1).confirm.warning, /any site/);
+  // The every-site double confirm still exists on the request builder; only the user's settings action
+  // asks for that scope, so no planner reply can reach it (see the "*" test below).
+  assert.match(approvalRequest({ action: 'act on any site i open', origin: '*' }).scopes.at(-1).confirm.warning, /any site/);
 });
 
 // A grant is keyed by origin and page text reaches the planner, so the site a saved permission
@@ -431,7 +431,25 @@ test('a saved approval is scoped to the page it runs on, not to the site the pla
 
   plans = [{ status: 'approve', action: 'act on any site i open', origin: '*' }];
   const everywhere = await run(true);
-  assert.equal(everywhere.request.origin, '*', 'the deliberate every-site scope is kept as it was asked for');
+  assert.equal(everywhere.request.origin, 'https://example.test', 'a planner "*" is page-scoped, not every-site');
+});
+
+// The planner sees page text, so it can be made to write any origin string, including the literal
+// "*". The worker stores "allow & save" under grantKey(request), which reads request.origin, so a
+// "*" left on the request would persist an every-site grant for an action the user only ever saw on
+// one page. This is the pre-fix hole: the fix removes agent.ts's `p.origin === "*" ? "*" : …` branch.
+// The only way to an every-site grant is the user's own settings action, which asks Chrome for the
+// host permission — never a field the planner or page content supplied.
+test('a planner origin of "*" under allow-and-save stores a grant for the page, never for every site', async () => {
+  plans = [{ status: 'approve', action: 'send the message', origin: '*' }];
+  decisions = [];
+  const result = await run(true);
+  assert.equal(result.status, 'needs_input');
+  assert.equal(result.request.origin, 'https://example.test', 'the open page decides which site the grant covers');
+  assert.equal(result.request.wholeInternet, false, 'a planner string cannot widen the approval to every site');
+  assert.equal(result.request.scopes.at(-1).confirm, undefined, 'a page-scoped grant skips the every-site confirm');
+  assert.equal(grantKey(result.request), 'approval:https://example.test:send the message', 'the stored grant key names the page');
+  assert.notEqual(grantKey(result.request), 'approval:*:send the message', 'allow & save must not store an every-site grant');
 });
 
 // An opaque page (about:blank, data:, a chrome error page) has no origin, and the URL parser answers

@@ -48,6 +48,10 @@ test('each approval mode reaches the planner as an instruction, and the default 
   // the real planner: with an approved line in the history it continues, without one it still asks.
   assert.match(approvalInstruction('every'), /paused → approved <action> \(<scope>\)/, 'the instruction says what an answered approval means');
   assert.match(approvalInstruction('every'), /Any other action still needs its own approval/, 'and that every other action is still asked about');
+  // The card's scope is the page, never a string the model supplied, so the instruction must not ask
+  // the planner for an origin to widen the grant with (AGENTS.md: a planner "*" must not save an
+  // every-site grant — that scope is only ever the user's own settings action).
+  assert.doesNotMatch(approvalInstruction('every'), /"origin"/, 'no origin field for the planner to widen the approval with');
   assert.match(approvalInstruction('none'), /never ask/);
   assert.equal(approvalInstruction('risky'), '', 'the middle setting is the prompt that shipped');
   assert.equal(approvalInstruction(undefined), '', 'a server with no extension settings keeps its own behaviour');
