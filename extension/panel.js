@@ -22,7 +22,7 @@ let voice = { enabled: false, mode: undefined, capability: { canTranscribe: fals
 let dictationSessionActive = false; // between a successful dictation:start and its matching stop
 let micBusy = false; // dictation:stop is in flight: recording has ended, the final transcription hasn't
 let micFilledComposer = false; // #goal's text was last written by dictation, not typed — see render()
-let voiceMayWriteComposer = false; // dictation currently owns the composer; cleared on user input
+let voiceMayWriteComposer = false; // dictation currently owns the composer; set when a session starts, cleared on user input or a failed start
 let dictationListening = false; // last render saw dictation.status === 'listening'
 const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
@@ -69,12 +69,16 @@ async function startDictation() {
   if (dictationSessionActive || micBusy || running || submitting || pendingRequest) return;
   if (!voice.enabled || !voice.capability?.canTranscribe || !voice.mode) return;
   dictationSessionActive = true;
+  // Ownership is claimed before the request, not after its reply: background.js writes and
+  // broadcasts the listening state before it answers dictation:start, so the first partial can be in
+  // the panel's hands before that reply is. Released again on both failure paths below — a start that
+  // never opened a mic must not leave dictation owning the composer.
+  voiceMayWriteComposer = true;
   renderMic();
   try {
     const reply = await request({ type: 'dictation:start', chunkMs: chunkMsFor(voice.mode) });
-    if (!reply.ok) { dictationSessionActive = false; showError(new Error(reply.error || 'could not start the mic')); }
-    else voiceMayWriteComposer = true;
-  } catch (err) { dictationSessionActive = false; showError(err); }
+    if (!reply.ok) { dictationSessionActive = false; voiceMayWriteComposer = false; showError(new Error(reply.error || 'could not start the mic')); }
+  } catch (err) { dictationSessionActive = false; voiceMayWriteComposer = false; showError(err); }
   renderMic();
 }
 async function stopDictation() {
@@ -436,10 +440,16 @@ function render(state) {
   if (running) ptt.endLatch();
   // Dictation reaching the composer: "dictate" only fills it once speech ends, so the user can still
   // edit before pressing send; "prewarm"/"eager" stream the interim transcript live. Ownership is
-  // `voiceMayWriteComposer` (set when a listening session starts, cleared on a keystroke); provenance
-  // of the current text is `micFilledComposer` and is not the same flag.
+  // `voiceMayWriteComposer` (claimed by the session's own start — see startDictation(), or, for a
+  // session this panel did not start, by the listening transition just below; cleared on a keystroke)
+  // and provenance of the current text is `micFilledComposer`, which is not the same flag.
   const nowListening = !!(voice.enabled && state.dictation && state.dictation.status === 'listening');
-  if (nowListening && !dictationListening) voiceMayWriteComposer = true;
+  // A listening session this panel did not start (the global shortcut, or its hands-free latch) is
+  // claimed here. One this panel started has already claimed ownership in startDictation(), and
+  // re-claiming it on every listening status would let a mid-session flicker — a chunk that fails to
+  // transcribe, then the next partial, with the mic still on (extension/offscreen.js handleChunk) —
+  // overwrite text the user typed over the transcript.
+  if (nowListening && !dictationListening && !dictationSessionActive) voiceMayWriteComposer = true;
   dictationListening = nowListening;
   if (voice.enabled && state.dictation && !running && voiceMayWriteComposer) {
     const goal = $('#goal');
