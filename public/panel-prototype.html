@@ -1,858 +1,1326 @@
-<!--
-  THROWAWAY PROTOTYPE — not production. Delete or fold into extension/panel.html
-  once a direction is picked; do not ship this file.
-
-  QUESTION: what should the Checkto side panel look like?
-  Checkto is a Chrome extension: type a task in plain language, an LLM agent
-  drives your OWN browser tabs to do it, reporting each action as it goes.
-  This is a trust/legibility surface for a technical operator, not a chat toy.
-
-  FIVE DIRECTIONS (?variant=a|b|c|d|e), by information hierarchy, not colour:
-    a — Operator console     log-first, dense, monospace, CI-log feel
-    b — Answer-first editorial the answer is the hero, mechanics collapse to one line
-    c — Task board            live status rows (running/done/failed), not a transcript
-    d — Instrument            device readouts: steps, elapsed, cost, tokens, tabular
-    e — Conversational minimal  almost no chrome, ephemeral inline agent text
-
-  Each variant renders the same six states so they compare like for like:
-    1 first run (empty)   2 run in flight   3 finished run (log+answer)
-    4 approval request    5 credential handoff   6 blocked by CAPTCHA
-
-  Switch variants via the URL (?variant=a) or the floating bar. Switch state
-  with the second row of the floating bar. Default stage: 400px wide,
-  ~820px tall; a toggle drops it to 320px.
--->
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Checkto panel — 5 directions</title>
+<title>checkto panel — direction comp</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Public+Sans:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@500;600;700&family=Libre+Franklin:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-      animation-duration: 0.001ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.001ms !important;
-      scroll-behavior: auto !important;
-    }
+  /* =========================================================================
+     TOKENS — lifted and extended from the Codex sidepanel build (see caption
+     for the anchoring reference). Spacing/radius/type/motion scale is real,
+     not invented: spacing base .25rem, radius scale x1.25, type 11/12/14/16/28/36,
+     motion .15s / .3s with the two Codex eases, .5px hairline borders.
+     ========================================================================= */
+  :root{
+    --spacing: .25rem;
+    --sp-1: calc(var(--spacing) * 1);   /* 4px */
+    --sp-2: calc(var(--spacing) * 2);   /* 8px */
+    --sp-3: calc(var(--spacing) * 3);   /* 12px */
+    --sp-4: calc(var(--spacing) * 4);   /* 16px */
+    --sp-5: calc(var(--spacing) * 5);   /* 20px */
+    --sp-6: calc(var(--spacing) * 6);   /* 24px */
+    --sp-8: calc(var(--spacing) * 8);   /* 32px */
+
+    --radius-scale: 1.25;
+    --r-2:  calc(2px  * var(--radius-scale));
+    --r-4:  calc(4px  * var(--radius-scale));
+    --r-6:  calc(6px  * var(--radius-scale));
+    --r-8:  calc(8px  * var(--radius-scale));
+    --r-10: calc(10px * var(--radius-scale));
+    --r-12: calc(12px * var(--radius-scale));
+    --r-16: calc(16px * var(--radius-scale));
+    --r-20: calc(20px * var(--radius-scale));
+    --r-24: calc(24px * var(--radius-scale));
+
+    --text-2xs: 11px;
+    --text-xs: 12px;
+    --text-sm: 14px;
+    --text-md: 16px;
+    --text-xl: 28px;
+    --text-2xl: 36px;
+
+    --dur-basic: .15s;
+    --dur-relaxed: .3s;
+    --ease-out: cubic-bezier(0, 0, .2, 1);
+    --ease-enter: cubic-bezier(.23, 1, .32, 1);
+    --hairline: .5px;
+
+    /* checkto neutral surfaces — near-black with a whisper of the old plum,
+       not the plum itself. see caption for why. */
+    --bg-page: #0f0e11;
+    --bg: #141317;
+    --surface-1: #1c1b20;
+    --surface-2: #232228;
+    --surface-3: #2b2a31;
+    --line: rgba(255,255,255,.08);
+    --line-strong: rgba(255,255,255,.14);
+
+    --text-1: #ece9e6;
+    --text-2: #a7a3ad;
+    --text-3: #726e79;
+
+    /* checkto's own accent: gold, not orange, not purple, not a status color. */
+    --accent: #e3a72e;
+    --accent-strong: #f2be49;
+    --accent-ink: #1c1406;
+
+    --status-success: #59d24e;
+    --status-danger: #f44a4c;
+    --status-warning: #f87915;
+    --status-info: #339cff;
+
+    --font-ui: "Archivo", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
   }
-  body {
+
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background: var(--bg-page);
+    font-family: var(--font-ui);
+    color: var(--text-1);
     min-height: 100vh;
-    background: #dcdfe3;
-    background-image:
-      linear-gradient(45deg, #cfd3d8 25%, transparent 25%),
-      linear-gradient(-45deg, #cfd3d8 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, #cfd3d8 75%),
-      linear-gradient(-45deg, transparent 75%, #cfd3d8 75%);
-    background-size: 20px 20px;
-    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-    font-family: -apple-system, "Segoe UI", sans-serif;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 28px 16px 140px;
+    padding: var(--sp-6) var(--sp-4) var(--sp-8);
   }
 
-  /* ---- meta chrome (not part of any variant's design) ---- */
-  #meta {
-    width: 100%;
-    max-width: 900px;
-    color: #33363b;
-    margin-bottom: 16px;
-    text-align: center;
+  /* ---- caption -------------------------------------------------------- */
+  .caption{
+    width: min(560px, 100%);
+    margin: 0 auto var(--sp-5);
+    font-size: var(--text-xs);
+    line-height: 1.55;
+    color: var(--text-2);
   }
-  #meta h1 { font-size: 15px; margin: 0 0 4px; font-weight: 700; letter-spacing: 0.01em; }
-  #meta p { font-size: 12px; margin: 0; opacity: 0.7; }
+  .caption b{ color: var(--text-1); font-weight: 600; }
+  .caption .design-name{
+    font-size: var(--text-md);
+    font-weight: 700;
+    color: var(--text-1);
+    margin: 0 0 var(--sp-2);
+    letter-spacing: -.01em;
+  }
+  .caption .axis-line{
+    margin-top: var(--sp-2);
+    color: var(--text-3);
+  }
 
-  #stage-outer {
-    background: #fff;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.22), 0 1px 0 rgba(0,0,0,0.05);
-    border-radius: 6px;
-    overflow: hidden;
+  /* ---- panel shell ------------------------------------------------------ */
+  .panel-frame{
     width: 400px;
-  }
-  #stage-outer.narrow { width: 320px; }
-  #stage {
     height: 820px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    position: relative;
-  }
-  #stage::-webkit-scrollbar { width: 8px; }
-  #stage::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 4px; }
-
-  .caption {
-    padding: 12px 14px 11px;
-    font: 11px/1.5 -apple-system, "Segoe UI", sans-serif;
-    border-bottom: 1px solid rgba(0,0,0,0.08);
-  }
-  .caption b { display: block; font-size: 12.5px; margin-bottom: 3px; }
-  .caption .row { opacity: 0.85; }
-  .caption .row strong { font-weight: 600; }
-
-  /* ---- floating control bar ---- */
-  #bar {
-    position: fixed;
-    left: 18px;
-    bottom: 18px;
-    max-width: 232px;
-    background: #14151a;
-    color: #f2f2f2;
-    border-radius: 999px;
-    padding: 10px 14px;
+    background: var(--bg);
+    border-radius: var(--r-20);
+    box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 24px 60px rgba(0,0,0,.55);
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-    z-index: 1000;
-    font-family: -apple-system, "Segoe UI", sans-serif;
-    max-width: 94vw;
+    position: relative;
   }
-  #bar .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
-  #bar button {
-    font: 600 11px/1 -apple-system, sans-serif;
-    background: rgba(255,255,255,0.08);
-    color: #f2f2f2;
-    border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 999px;
-    padding: 7px 11px;
-    cursor: pointer;
-  }
-  #bar button:hover { background: rgba(255,255,255,0.16); }
-  #bar button.active { background: #f2f2f2; color: #14151a; border-color: #f2f2f2; }
-  #bar .arrow { padding: 7px 10px; }
-  #bar .divider { width: 1px; align-self: stretch; background: rgba(255,255,255,0.16); margin: 0 2px; }
-  #bar .lbl { font-size: 10px; opacity: 0.55; padding: 0 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .panel-frame[data-width="320"]{ width: 320px; }
 
-  /* ============================================================
-     VARIANT A — OPERATOR CONSOLE
-     ============================================================ */
-  .stage-a {
-    background: oklch(0.16 0.01 260);
-    color: oklch(0.88 0.01 260);
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    min-height: 820px;
+  .panel-topbar{
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: var(--hairline) solid var(--line);
   }
-  .stage-a .caption { background: oklch(0.13 0.01 260); border-color: oklch(0.28 0.01 260); color: oklch(0.75 0.01 260); }
-  .stage-a .caption b { color: oklch(0.92 0.01 260); }
-  .a-head {
-    display: flex; justify-content: space-between; align-items: baseline;
-    padding: 8px 12px; border-bottom: 1px solid oklch(0.28 0.01 260);
-    font-size: 10.5px; color: oklch(0.55 0.01 260); letter-spacing: 0.02em;
+  .panel-brand{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-1);
   }
-  .a-body { padding: 10px 12px 100px; }
-  .a-task { font-size: 12px; color: oklch(0.9 0.01 260); margin-bottom: 10px; line-height: 1.5; }
-  .a-task .p { color: oklch(0.55 0.13 70); }
-  .a-log { border-top: 1px solid oklch(0.26 0.01 260); }
-  .a-row {
-    display: grid; grid-template-columns: 46px 14px 1fr; gap: 8px;
-    padding: 5px 0; border-bottom: 1px solid oklch(0.22 0.01 260);
-    font-size: 11.5px; line-height: 1.45; align-items: start;
+  .panel-brand .mark{
+    width: 16px; height: 16px;
+    border-radius: var(--r-4);
+    background: var(--accent);
+    flex: 0 0 auto;
   }
-  .a-row .t { color: oklch(0.5 0.01 260); }
-  .a-row .s { text-align: center; }
-  .a-row.done .s { color: oklch(0.65 0.13 145); }
-  .a-row.running .s { color: oklch(0.75 0.15 70); animation: a-pulse 1s infinite; }
-  .a-row.failed .s { color: oklch(0.6 0.18 25); }
-  @keyframes a-pulse { 50% { opacity: 0.3; } }
-  .a-row.running .txt { animation: a-shimmer 1.6s ease-in-out infinite; }
-  @keyframes a-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-  .a-answer {
-    margin-top: 12px; border: 1px solid oklch(0.32 0.01 260);
-    background: oklch(0.19 0.01 260); padding: 10px; font-size: 12px; line-height: 1.6;
+  .panel-topbar-meta{
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
   }
-  .a-answer .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: oklch(0.55 0.01 260); margin-bottom: 6px; }
-  .a-meta { display: flex; gap: 14px; margin-top: 8px; font-size: 10.5px; color: oklch(0.5 0.01 260); }
-  .a-card {
-    margin-top: 14px; border: 1px solid oklch(0.55 0.13 70); background: oklch(0.2 0.02 70);
-    padding: 10px 12px; font-size: 11.5px; line-height: 1.6;
-  }
-  .a-card.deny { border-color: oklch(0.6 0.18 25); background: oklch(0.2 0.03 25); }
-  .a-card .h { color: oklch(0.92 0.01 260); font-weight: 700; margin-bottom: 6px; }
-  .a-scopes { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-  .a-scopes button, .a-deny-btn, .a-retry {
-    font-family: inherit; font-size: 11px; text-align: left; padding: 6px 8px;
-    background: oklch(0.24 0.01 260); color: oklch(0.85 0.01 260); border: 1px solid oklch(0.34 0.01 260);
-    cursor: pointer;
-  }
-  .a-scopes button:hover, .a-retry:hover { background: oklch(0.3 0.01 260); }
-  .a-deny-btn { color: oklch(0.7 0.15 25); border-color: oklch(0.4 0.1 25); margin-top: 4px; }
-  .a-cred { margin-top: 12px; border: 1px solid oklch(0.4 0.01 260); padding: 10px; background: oklch(0.19 0.01 260); }
-  .a-cred label { display: block; font-size: 10px; color: oklch(0.55 0.01 260); margin: 8px 0 3px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .a-cred input {
-    width: 100%; background: oklch(0.13 0.01 260); border: 1px solid oklch(0.36 0.01 260);
-    color: oklch(0.9 0.01 260); font-family: inherit; font-size: 12px; padding: 6px 7px;
-  }
-  .a-cred .note { margin-top: 8px; font-size: 10.5px; color: oklch(0.55 0.13 70); }
-  .a-composer {
-    position: sticky; bottom: 0; border-top: 1px solid oklch(0.3 0.01 260);
-    background: oklch(0.13 0.01 260); padding: 10px 12px; display: flex; gap: 8px;
-  }
-  .a-composer input { flex: 1; background: oklch(0.19 0.01 260); border: 1px solid oklch(0.34 0.01 260); color: oklch(0.85 0.01 260); font-family: inherit; font-size: 12px; padding: 7px 8px; }
-  .a-composer button { background: oklch(0.55 0.13 70); color: oklch(0.15 0.02 70); border: none; font-family: inherit; font-weight: 700; font-size: 11px; padding: 0 12px; cursor: pointer; }
-  .a-composer input:disabled { opacity: 0.4; }
-  .a-run-btn { background: oklch(0.75 0.15 70); color: oklch(0.15 0.02 70); font-family: inherit; font-weight: 700; border: none; padding: 7px 12px; font-size: 11px; cursor: pointer; }
 
-  /* ============================================================
-     VARIANT B — ANSWER-FIRST EDITORIAL
-     ============================================================ */
-  .stage-b {
-    background: oklch(0.97 0.005 250);
-    color: oklch(0.22 0.02 260);
-    font-family: 'Public Sans', sans-serif;
-    min-height: 820px;
+  .panel-body{
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
   }
-  .stage-b .caption { background: oklch(0.94 0.006 250); border-color: oklch(0.86 0.006 250); }
-  .b-body { padding: 30px 26px 100px; }
-  .b-eyebrow { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: oklch(0.5 0.02 260); margin-bottom: 10px; }
-  .b-empty-h { font-family: 'Source Serif 4', serif; font-size: 27px; line-height: 1.25; font-weight: 600; margin: 0 0 14px; }
-  .b-empty-p { font-size: 14px; line-height: 1.6; color: oklch(0.42 0.02 260); max-width: 30ch; }
-  .b-task { font-size: 12.5px; color: oklch(0.45 0.02 260); margin-bottom: 8px; font-style: italic; }
-  .b-live { font-size: 13px; line-height: 1.7; color: oklch(0.35 0.02 260); }
-  .b-live .cur { color: oklch(0.55 0.16 35); font-weight: 600; }
-  .b-answer {
-    font-family: 'Source Serif 4', serif; font-size: 25px; line-height: 1.42;
-    font-weight: 600; margin: 4px 0 16px; letter-spacing: -0.005em;
-  }
-  .b-answer-list { font-family: 'Public Sans', sans-serif; font-size: 14px; line-height: 1.8; font-weight: 500; }
-  .b-trace {
-    margin-top: 18px; font-size: 12px; color: oklch(0.45 0.02 260);
-    cursor: pointer; user-select: none; border-top: 1px solid oklch(0.86 0.006 250); padding-top: 12px;
-  }
-  .b-trace .arrow { display: inline-block; margin-right: 6px; transition: transform 0.2s ease-out; }
-  .b-trace.open .arrow { transform: rotate(90deg); }
-  .b-log-wrap { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 0.24s ease-out, opacity 0.2s ease-out; }
-  .b-trace.open + .b-log-wrap { grid-template-rows: 1fr; opacity: 1; }
-  .b-log { overflow: hidden; margin-top: 10px; font-size: 12.5px; line-height: 1.9; color: oklch(0.4 0.02 260); min-height: 0; }
-  .b-log .t { color: oklch(0.6 0.02 260); margin-right: 8px; font-variant-numeric: tabular-nums; }
-  .b-card {
-    margin-top: 22px; border-left: 3px solid oklch(0.55 0.16 35); background: oklch(0.995 0.003 250);
-    padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-  }
-  .b-card .h { font-family: 'Source Serif 4', serif; font-size: 18px; font-weight: 600; margin-bottom: 8px; }
-  .b-card p { font-size: 13px; line-height: 1.6; color: oklch(0.4 0.02 260); margin: 0 0 12px; }
-  .b-scopes { display: flex; flex-direction: column; gap: 6px; }
-  .b-scopes button {
-    font-family: 'Public Sans', sans-serif; font-size: 12.5px; text-align: left; padding: 9px 11px;
-    background: oklch(0.97 0.005 250); border: 1px solid oklch(0.84 0.006 250); cursor: pointer; border-radius: 3px;
-  }
-  .b-scopes button.primary { background: oklch(0.55 0.16 35); color: white; border-color: oklch(0.55 0.16 35); font-weight: 600; }
-  .b-deny { margin-top: 8px; background: none; border: none; color: oklch(0.5 0.02 260); text-decoration: underline; font-size: 12px; cursor: pointer; font-family: inherit; }
-  .b-cred label { display: block; font-size: 11px; color: oklch(0.45 0.02 260); margin: 12px 0 4px; }
-  .b-cred input { width: 100%; border: 1px solid oklch(0.8 0.006 250); border-radius: 3px; padding: 8px 9px; font-size: 13px; font-family: inherit; }
-  .b-cred .note { margin-top: 10px; font-size: 12px; font-style: italic; color: oklch(0.5 0.02 260); }
-  .b-blocked-h { font-family: 'Source Serif 4', serif; font-size: 20px; font-weight: 600; color: oklch(0.5 0.15 30); }
-  .b-composer { position: sticky; bottom: 0; background: linear-gradient(oklch(0.97 0.005 250 / 0), oklch(0.97 0.005 250) 30%); padding: 18px 26px 0; }
-  .b-composer-inner { display: flex; gap: 8px; border-bottom: 1.5px solid oklch(0.3 0.02 260); padding-bottom: 8px; }
-  .b-composer input { flex: 1; border: none; background: none; font-family: 'Public Sans', sans-serif; font-size: 14px; outline: none; }
-  .b-composer button { background: none; border: none; color: oklch(0.55 0.16 35); font-weight: 700; font-size: 13px; cursor: pointer; font-family: inherit; }
 
-  /* ============================================================
-     VARIANT C — TASK BOARD
-     ============================================================ */
-  .stage-c {
-    background: oklch(0.95 0.005 240);
-    color: oklch(0.2 0.01 240);
-    font-family: 'Manrope', sans-serif;
-    min-height: 820px;
-    display: flex; flex-direction: column;
+  .transcript{
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--sp-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
   }
-  .stage-c .caption { background: oklch(0.99 0.002 240); border-color: oklch(0.87 0.005 240); }
-  .c-composer { padding: 10px 12px; background: oklch(0.99 0.002 240); border-bottom: 1px solid oklch(0.87 0.005 240); display: flex; gap: 6px; }
-  .c-composer input { flex: 1; border: 1px solid oklch(0.83 0.005 240); border-radius: 6px; padding: 8px 10px; font-family: inherit; font-size: 12.5px; }
-  .c-composer button { background: oklch(0.55 0.16 220); color: white; border: none; border-radius: 6px; padding: 0 12px; font-weight: 700; font-size: 11.5px; cursor: pointer; }
-  .c-empty { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 40px 20px; text-align: center; color: oklch(0.5 0.01 240); }
-  .c-empty .ic { width: 34px; height: 34px; border: 2px solid oklch(0.7 0.01 240); border-radius: 8px; margin-bottom: 14px; }
-  .c-empty p { font-size: 12.5px; line-height: 1.6; max-width: 26ch; margin: 0; }
-  .c-board { padding: 10px; flex: 1; }
-  .c-boardhead { display: flex; justify-content: space-between; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: oklch(0.5 0.01 240); padding: 4px 4px 8px; }
-  .c-row {
-    background: oklch(0.99 0.002 240); border: 1px solid oklch(0.88 0.005 240); border-radius: 8px;
-    padding: 10px 12px; margin-bottom: 7px; display: flex; align-items: center; gap: 10px;
-  }
-  .c-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .c-row.done .c-dot { background: oklch(0.6 0.14 150); }
-  .c-row.running .c-dot { background: oklch(0.75 0.15 75); animation: c-pulse 1.1s infinite; }
-  .c-row.failed .c-dot { background: oklch(0.58 0.19 25); }
-  @keyframes c-pulse { 50% { transform: scale(1.6); opacity: 0.5; } }
-  .c-row.running { position: relative; overflow: hidden; }
-  .c-row.running::before {
-    content: ''; position: absolute; inset: 0; border-radius: 8px; padding: 1.5px;
-    background: conic-gradient(from 0deg, transparent 0%, oklch(0.75 0.15 75) 12%, transparent 24%);
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor; mask-composite: exclude;
-    animation: c-trail 2.2s linear infinite;
-  }
-  @keyframes c-trail { to { transform: rotate(360deg); } }
-  .c-row .c-txt { flex: 1; font-size: 12.5px; font-weight: 600; }
-  .c-row .c-sub { font-size: 11px; color: oklch(0.5 0.01 240); font-weight: 500; margin-top: 2px; }
-  .c-row .c-time { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.5 0.01 240); flex-shrink: 0; }
-  .c-chip { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600; flex-shrink: 0; }
-  .c-chip.done { background: oklch(0.92 0.05 150); color: oklch(0.4 0.1 150); }
-  .c-chip.running { background: oklch(0.93 0.08 75); color: oklch(0.45 0.12 75); }
-  .c-chip.failed { background: oklch(0.92 0.08 25); color: oklch(0.45 0.15 25); }
-  .c-summary { display: flex; gap: 14px; padding: 10px 14px; font-size: 11px; color: oklch(0.45 0.01 240); font-family: 'IBM Plex Mono', monospace; }
-  .c-answer-card { margin: 6px 10px 10px; background: oklch(0.99 0.002 240); border: 1.5px solid oklch(0.55 0.16 220); border-radius: 8px; padding: 12px 14px; }
-  .c-answer-card .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: oklch(0.55 0.16 220); font-weight: 700; margin-bottom: 6px; }
-  .c-answer-card p { font-size: 12.5px; line-height: 1.6; margin: 0; }
-  .c-card { margin: 6px 10px 10px; background: oklch(0.99 0.002 240); border: 1.5px solid oklch(0.75 0.15 75); border-radius: 8px; padding: 12px 14px; }
-  .c-card.failed { border-color: oklch(0.58 0.19 25); }
-  .c-card .h { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
-  .c-card p { font-size: 12px; line-height: 1.55; color: oklch(0.4 0.01 240); margin: 0 0 10px; }
-  .c-scopes { display: flex; flex-direction: column; gap: 5px; }
-  .c-scopes button { font-family: inherit; font-size: 12px; text-align: left; padding: 8px 10px; border-radius: 6px; border: 1px solid oklch(0.83 0.005 240); background: oklch(0.97 0.003 240); cursor: pointer; font-weight: 600; }
-  .c-scopes button.primary { background: oklch(0.55 0.16 220); color: white; border-color: oklch(0.55 0.16 220); }
-  .c-deny { margin-top: 6px; width: 100%; background: none; border: 1px solid oklch(0.58 0.19 25); color: oklch(0.5 0.17 25); border-radius: 6px; padding: 8px 10px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
-  .c-cred label { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: oklch(0.5 0.01 240); margin: 10px 0 4px; font-weight: 700; }
-  .c-cred input { width: 100%; border: 1px solid oklch(0.83 0.005 240); border-radius: 6px; padding: 7px 9px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
-  .c-cred .note { margin-top: 10px; font-size: 11px; color: oklch(0.45 0.01 240); }
-  .c-retry { width: 100%; background: oklch(0.55 0.16 220); color: white; border: none; border-radius: 6px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer; }
+  .transcript::-webkit-scrollbar{ width: 8px; }
+  .transcript::-webkit-scrollbar-thumb{ background: var(--surface-3); border-radius: var(--r-8); }
 
-  /* ============================================================
-     VARIANT D — INSTRUMENT
-     ============================================================ */
-  .stage-d {
-    background: oklch(0.14 0 0);
-    color: oklch(0.95 0 0);
-    font-family: 'Barlow Condensed', sans-serif;
-    min-height: 820px;
+  /* ---- empty state ------------------------------------------------------ */
+  .empty-state{
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding: var(--sp-6);
+    gap: var(--sp-3);
   }
-  .stage-d .caption { background: oklch(0.1 0 0); border-color: oklch(0.32 0 0); color: oklch(0.75 0 0); }
-  .d-strip {
-    display: grid; grid-template-columns: repeat(5, 1fr);
-    border-bottom: 2px solid oklch(0.32 0 0); background: oklch(0.1 0 0);
+  .empty-state .empty-mark{
+    font-size: var(--text-xl);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    color: var(--text-1);
   }
-  .d-strip .cell { padding: 8px 6px; border-right: 1px solid oklch(0.28 0 0); text-align: center; }
-  .d-strip .cell:last-child { border-right: none; }
-  .d-strip .lbl { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.08em; color: oklch(0.55 0 0); font-weight: 600; }
-  .d-strip .val { font-family: 'Space Mono', monospace; font-size: 14px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
-  .d-strip .val.live { color: oklch(0.7 0.15 150); }
-  .d-strip .val.tick { animation: d-tick 0.22s ease-out; }
-  @keyframes d-tick { from { transform: translateY(-5px); opacity: 0.35; } to { transform: translateY(0); opacity: 1; } }
-  .d-body { padding: 14px; }
-  .d-task { font-size: 17px; font-weight: 600; line-height: 1.3; margin-bottom: 14px; border-left: 3px solid oklch(0.95 0 0); padding-left: 10px; }
-  .d-empty { text-align: center; padding: 60px 20px; color: oklch(0.55 0 0); }
-  .d-empty .glyph { font-family: 'Space Mono', monospace; font-size: 32px; margin-bottom: 12px; }
-  .d-empty p { font-size: 15px; }
-  .d-row { display: grid; grid-template-columns: 56px 1fr 20px; gap: 10px; border-bottom: 1px solid oklch(0.28 0 0); padding: 7px 0; align-items: start; }
-  .d-row .t { font-family: 'Space Mono', monospace; font-size: 11px; color: oklch(0.55 0 0); padding-top: 1px; }
-  .d-row .txt { font-size: 15.5px; line-height: 1.3; }
-  .d-row .led { width: 9px; height: 9px; margin-top: 4px; justify-self: center; }
-  .d-row.done .led { background: oklch(0.7 0.15 150); }
-  .d-row.running .led { background: oklch(0.75 0.16 75); animation: d-blink 0.9s infinite; }
-  .d-row.failed .led { background: oklch(0.6 0.2 25); }
-  @keyframes d-blink { 50% { opacity: 0.2; } }
-  .d-answer { margin-top: 16px; border: 2px solid oklch(0.95 0 0); padding: 12px; }
-  .d-answer .lbl { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: oklch(0.6 0 0); margin-bottom: 8px; }
-  .d-answer p { font-size: 16px; line-height: 1.45; margin: 0 0 6px; }
-  .d-card { margin-top: 16px; border: 2px solid oklch(0.75 0.16 75); padding: 12px; }
-  .d-card.deny { border-color: oklch(0.6 0.2 25); }
-  .d-card .h { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 0.08em; color: oklch(0.75 0.16 75); margin-bottom: 8px; text-transform: uppercase; }
-  .d-card p { font-size: 16px; line-height: 1.4; margin: 0 0 12px; }
-  .d-scopes button, .d-deny, .d-retry {
-    display: block; width: 100%; font-family: 'Space Mono', monospace; font-size: 11.5px; text-align: left;
-    background: oklch(0.14 0 0); color: oklch(0.9 0 0); border: 1px solid oklch(0.4 0 0); padding: 8px 9px; margin-bottom: 5px; cursor: pointer;
+  .empty-state .empty-sub{
+    font-size: var(--text-sm);
+    color: var(--text-2);
+    line-height: 1.5;
+    max-width: 30ch;
   }
-  .d-scopes button:hover { border-color: oklch(0.95 0 0); }
-  .d-deny { border-color: oklch(0.6 0.2 25); color: oklch(0.75 0.16 25); }
-  .d-cred label { display: block; font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: oklch(0.6 0 0); margin: 10px 0 4px; text-transform: uppercase; }
-  .d-cred input { width: 100%; background: oklch(0.1 0 0); border: 1px solid oklch(0.4 0 0); color: oklch(0.95 0 0); font-family: 'Space Mono', monospace; font-size: 13px; padding: 8px; }
-  .d-cred .note { margin-top: 10px; font-size: 13.5px; color: oklch(0.75 0.16 75); font-weight: 600; }
-  .d-composer { position: sticky; bottom: 0; border-top: 2px solid oklch(0.32 0 0); background: oklch(0.1 0 0); padding: 10px 14px; display: flex; gap: 8px; }
-  .d-composer input { flex: 1; background: oklch(0.14 0 0); border: 1px solid oklch(0.4 0 0); color: oklch(0.95 0 0); font-family: 'Barlow Condensed', sans-serif; font-size: 15px; padding: 7px 9px; }
-  .d-composer button { background: oklch(0.95 0 0); color: oklch(0.14 0 0); border: none; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 11px; padding: 0 12px; cursor: pointer; }
+  .empty-state .empty-suggest{
+    margin-top: var(--sp-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+  .suggest-row{
+    font-size: var(--text-xs);
+    color: var(--text-2);
+    background: var(--surface-1);
+    border-radius: var(--r-8);
+    padding: var(--sp-2) var(--sp-3);
+  }
 
-  /* ============================================================
-     VARIANT E — CONVERSATIONAL MINIMAL
-     ============================================================ */
-  .stage-e {
-    background: oklch(0.995 0 0);
-    color: oklch(0.18 0 0);
-    font-family: 'Libre Franklin', sans-serif;
-    min-height: 820px;
-    display: flex; flex-direction: column;
+  /* ---- user turn (shared across all four designs; not an axis) --------- */
+  .msg-user{
+    align-self: flex-end;
+    max-width: 84%;
+    background: var(--surface-2);
+    color: var(--text-1);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-16) var(--r-16) var(--r-4) var(--r-16);
   }
-  .stage-e .caption { border-color: oklch(0.9 0 0); }
-  .e-body { flex: 1; padding: 22px 18px 90px; }
-  .e-empty { height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; color: oklch(0.55 0 0); padding: 40px 0; }
-  .e-empty p { font-size: 14px; line-height: 1.6; max-width: 24ch; margin: 0; }
-  .e-msg-you { font-size: 14.5px; line-height: 1.55; margin-bottom: 14px; }
-  .e-msg-you .who { display: block; font-size: 10.5px; color: oklch(0.55 0 0); margin-bottom: 3px; }
-  .e-inline { font-size: 12.5px; color: oklch(0.55 0 0); line-height: 1.9; margin-bottom: 14px; }
-  .e-inline .cur { color: oklch(0.55 0.12 240); font-weight: 500; display: inline-block; transition: opacity 0.18s ease-out; }
-  .e-done-line { font-size: 12.5px; color: oklch(0.5 0 0); font-style: italic; margin-bottom: 6px; cursor: pointer; }
-  .e-answer { font-size: 15px; line-height: 1.65; margin: 0 0 18px; }
-  .e-answer-list { font-size: 14px; line-height: 1.85; margin: 6px 0 18px; }
-  .e-card { border-top: 1px solid oklch(0.9 0 0); border-bottom: 1px solid oklch(0.9 0 0); padding: 14px 0; margin: 10px 0 18px; }
-  .e-card .h { font-size: 14.5px; font-weight: 600; margin-bottom: 6px; }
-  .e-card p { font-size: 13px; line-height: 1.6; color: oklch(0.4 0 0); margin: 0 0 12px; }
-  .e-scopes { display: flex; flex-wrap: wrap; gap: 6px; }
-  .e-scopes button { font-family: inherit; font-size: 12.5px; padding: 7px 12px; border-radius: 999px; border: 1px solid oklch(0.8 0 0); background: none; cursor: pointer; }
-  .e-scopes button.primary { background: oklch(0.18 0 0); color: white; border-color: oklch(0.18 0 0); }
-  .e-deny { margin-top: 8px; background: none; border: none; color: oklch(0.5 0 0); text-decoration: underline; font-size: 12.5px; cursor: pointer; font-family: inherit; }
-  .e-cred label { display: block; font-size: 11.5px; color: oklch(0.5 0 0); margin: 10px 0 4px; }
-  .e-cred input { width: 100%; border: none; border-bottom: 1px solid oklch(0.75 0 0); padding: 6px 2px; font-size: 14px; font-family: inherit; }
-  .e-cred .note { margin-top: 10px; font-size: 12px; color: oklch(0.55 0.12 240); }
-  .e-blocked { font-size: 14px; line-height: 1.6; color: oklch(0.5 0.15 30); margin-bottom: 6px; }
-  .e-composer { position: sticky; bottom: 0; background: oklch(0.995 0 0); padding: 12px 18px 0; }
-  .e-composer-pill { display: flex; align-items: center; gap: 8px; border: 1px solid oklch(0.85 0 0); border-radius: 999px; padding: 9px 14px; }
-  .e-composer input { flex: 1; border: none; outline: none; font-family: inherit; font-size: 13.5px; background: none; }
-  .e-composer button { width: 24px; height: 24px; border-radius: 50%; background: oklch(0.18 0 0); color: white; border: none; font-size: 13px; cursor: pointer; }
 
-  @media (max-width: 340px) {
-    .caption { font-size: 10.5px; }
+  .msg-agent{
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
   }
+
+  /* ---- status glyph: spinner -> check, transform/opacity only ---------- */
+  .status-glyph{
+    position: relative;
+    width: 14px; height: 14px;
+    flex: 0 0 auto;
+    display: inline-grid;
+    place-items: center;
+  }
+  .status-glyph .ring{
+    position: absolute; inset: 0;
+    border-radius: var(--r-24);
+    border: 1.5px solid var(--line-strong);
+    border-top-color: var(--text-2);
+    opacity: 0;
+    transform: scale(.8);
+    transition: opacity var(--dur-basic) var(--ease-out), transform var(--dur-basic) var(--ease-out);
+    animation: spin 0.9s linear infinite;
+  }
+  .status-glyph .dot{
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+  }
+  .status-glyph .dot::before{
+    content:"";
+    width: 5px; height: 5px;
+    border-radius: var(--r-24);
+    background: var(--text-3);
+    opacity: 0;
+    transform: scale(.6);
+    transition: opacity var(--dur-basic) var(--ease-out), transform var(--dur-basic) var(--ease-out);
+  }
+  .status-glyph .check{
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    color: var(--status-success);
+    opacity: 0;
+    transform: scale(.6);
+    transition: opacity var(--dur-relaxed) var(--ease-enter), transform var(--dur-relaxed) var(--ease-enter);
+  }
+  .status-glyph .check svg{ width: 12px; height: 12px; }
+
+  .chev{
+    width: 10px; height: 10px;
+    flex: 0 0 auto;
+    color: var(--text-3);
+    transition: transform var(--dur-basic) var(--ease-out);
+  }
+  .status-glyph[data-state="active"] .ring{ opacity: 1; transform: scale(1); }
+  .status-glyph[data-state="pending"] .dot::before{ opacity: 1; transform: scale(1); }
+  .status-glyph[data-state="done"] .check{ opacity: 1; transform: scale(1); }
+
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+
+  /* ---- monospace tool-output panel, fades out instead of clipping ------ */
+  .tool-output{
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    line-height: 1.6;
+    color: var(--text-2);
+    background: var(--surface-1);
+    border-radius: var(--r-8);
+    padding: var(--sp-3);
+    max-height: 92px;
+    overflow: hidden;
+    position: relative;
+    -webkit-mask-image: linear-gradient(to bottom, black 55%, transparent 96%);
+    mask-image: linear-gradient(to bottom, black 55%, transparent 96%);
+  }
+  .tool-output .lang-tag{
+    display:block;
+    font-family: var(--font-ui);
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    margin-bottom: var(--sp-1);
+  }
+  .tool-output .dim{ color: var(--text-3); }
+
+  /* ---- pulsing dot: only for genuinely live streaming ------------------ */
+  .live-dot{
+    width: 6px; height: 6px;
+    border-radius: var(--r-24);
+    background: var(--status-info);
+    flex: 0 0 auto;
+    animation: live-pulse 1.6s var(--ease-in-out, ease-in-out) infinite;
+  }
+  @keyframes live-pulse{
+    0%,100%{ opacity: 1; }
+    50%{ opacity: .35; }
+  }
+
+  /* ---- shimmer for text still streaming --------------------------------- */
+  .shimmer-text{
+    color: var(--text-2);
+    -webkit-mask-image: linear-gradient(90deg, black 30%, rgba(0,0,0,.3) 50%, black 70%);
+    mask-image: linear-gradient(90deg, black 30%, rgba(0,0,0,.3) 50%, black 70%);
+    -webkit-mask-size: 220% 100%;
+    mask-size: 220% 100%;
+    animation: shimmer-sweep 2s linear infinite;
+  }
+  @keyframes shimmer-sweep{
+    0%{ -webkit-mask-position: 140% 0; mask-position: 140% 0; }
+    100%{ -webkit-mask-position: -20% 0; mask-position: -20% 0; }
+  }
+
+  /* ---- shared composer --------------------------------------------------- */
+  .composer{
+    flex: 0 0 auto;
+    padding: var(--sp-3) var(--sp-3) var(--sp-4);
+    border-top: var(--hairline) solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+  .composer-field{
+    background: var(--surface-1);
+    border-radius: var(--r-16);
+    padding: var(--sp-3);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  .composer-field .placeholder{
+    flex: 1 1 auto;
+    font-size: var(--text-sm);
+    color: var(--text-3);
+  }
+  .composer-actions{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .composer-left{ display: flex; align-items: center; gap: var(--sp-2); }
+  .icon-btn{
+    width: 26px; height: 26px;
+    border-radius: var(--r-8);
+    background: var(--surface-1);
+    color: var(--text-2);
+    display: grid;
+    place-items: center;
+    font-size: var(--text-sm);
+    border: none;
+  }
+  .model-pill{
+    font-size: var(--text-2xs);
+    color: var(--text-2);
+    background: var(--surface-1);
+    border-radius: var(--r-8);
+    padding: var(--sp-1) var(--sp-2);
+  }
+  .send-btn{
+    width: 28px; height: 28px;
+    border-radius: var(--r-24);
+    background: var(--accent);
+    display: grid;
+    place-items: center;
+    border: none;
+    flex: 0 0 auto;
+  }
+  .send-btn svg{ width: 14px; height: 14px; }
+  .send-btn path{ fill: var(--accent-ink); }
+
+  /* ---- answer separation, per design (axis D) --------------------------- */
+  .answer{
+    font-size: var(--text-sm);
+    line-height: 1.55;
+    color: var(--text-1);
+    padding: 0 var(--sp-1);
+  }
+  .answer.sep-bg{
+    background: var(--surface-1);
+    border-radius: var(--r-10);
+    padding: var(--sp-3);
+  }
+  .answer.sep-rule{
+    border-top: var(--hairline) solid var(--line-strong);
+    padding-top: var(--sp-3);
+    margin-top: var(--sp-1);
+  }
+  .answer.sep-weight{
+    font-size: var(--text-md);
+    font-weight: 500;
+    letter-spacing: -.005em;
+  }
+
+  /* ---- buttons ------------------------------------------------------- */
+  .btn{
+    font-family: var(--font-ui);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    border-radius: var(--r-8);
+    padding: var(--sp-2) var(--sp-3);
+    border: none;
+    cursor: default;
+    transition: transform var(--dur-basic) var(--ease-out), opacity var(--dur-basic) var(--ease-out);
+  }
+  .btn:active{ transform: scale(.97); }
+  .btn-primary{ background: var(--accent); color: var(--accent-ink); }
+  .btn-quiet{ background: var(--surface-2); color: var(--text-1); }
+  .btn-ghost{ background: transparent; color: var(--text-2); }
+  .btn-danger-text{ background: transparent; color: var(--status-danger); }
+
+  /* ---- approval card (state 4) ------------------------------------------ */
+  .approval{
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+  .approval-lede{
+    font-size: var(--text-sm);
+    color: var(--text-1);
+    line-height: 1.5;
+  }
+  .approval-lede .target{
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .approval-options{
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+  .approval-option{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-10);
+    background: var(--surface-1);
+  }
+  .approval-option .radio{
+    width: 14px; height: 14px;
+    border-radius: var(--r-24);
+    border: 1.5px solid var(--line-strong);
+    flex: 0 0 auto;
+  }
+  .approval-option.is-recommended .radio{ border-color: var(--accent); background: var(--accent); }
+  .approval-option-copy{ display: flex; flex-direction: column; gap: 2px; }
+  .approval-option-title{ font-size: var(--text-sm); color: var(--text-1); }
+  .approval-option-sub{ font-size: var(--text-2xs); color: var(--text-3); }
+  .approval-footer{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: var(--sp-1);
+  }
+
+  /* ---- credential handoff (state 5) ------------------------------------ */
+  .credential{
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+  .credential-lede{ font-size: var(--text-sm); color: var(--text-1); line-height: 1.5; }
+  .credential-form{
+    background: var(--surface-1);
+    border-radius: var(--r-12);
+    padding: var(--sp-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+  .field{ display: flex; flex-direction: column; gap: var(--sp-1); }
+  .field label{ font-size: var(--text-2xs); color: var(--text-3); }
+  .field .input{
+    background: var(--surface-2);
+    border-radius: var(--r-8);
+    padding: var(--sp-2) var(--sp-3);
+    font-size: var(--text-sm);
+    color: var(--text-1);
+  }
+  .field .input.is-masked{ letter-spacing: .2em; }
+  .credential-note{
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-2);
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    line-height: 1.5;
+  }
+  .credential-note svg{ flex: 0 0 auto; margin-top: 1px; }
+
+  /* ---- blocked (state 6) ------------------------------------------------ */
+  .blocked{
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    align-items: flex-start;
+  }
+  .blocked-glyph{
+    width: 32px; height: 32px;
+    border-radius: var(--r-10);
+    background: rgba(244,74,76,.12);
+    color: var(--status-danger);
+    display: grid;
+    place-items: center;
+  }
+  .blocked-title{ font-size: var(--text-sm); font-weight: 600; color: var(--text-1); }
+  .blocked-sub{ font-size: var(--text-xs); color: var(--text-2); line-height: 1.55; }
+  .blocked-actions{ display: flex; gap: var(--sp-2); }
+
+  .kbd{
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    background: var(--surface-2);
+    border-radius: var(--r-4);
+    padding: 1px 5px;
+    color: var(--text-2);
+  }
+
+  /* =========================================================================
+     DESIGN 1 — Quiet Ledger
+     Trace fully collapsed behind the duration header (closest to the Codex
+     structure). State lives inline in the transcript, nowhere else. Rows are
+     plain. Answer gets the lightest possible separation: a soft background
+     lift, nothing louder.
+     ========================================================================= */
+  .d1-run{ display: flex; flex-direction: column; gap: 0; }
+  .d1-header{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-1) 0;
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    cursor: default;
+  }
+  .d1-header .chev{
+    width: 10px; height: 10px;
+    color: var(--text-3);
+    transition: transform var(--dur-basic) var(--ease-out);
+    flex: 0 0 auto;
+  }
+  .d1-header[data-open="true"] .chev{ transform: rotate(90deg); }
+  .d1-collapse{
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--dur-relaxed) var(--ease-out);
+  }
+  .d1-collapse[data-open="true"]{ grid-template-rows: 1fr; }
+  .d1-collapse-inner{ overflow: hidden; }
+  .d1-steps{
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    padding: var(--sp-2) 0 var(--sp-3) var(--sp-1);
+  }
+  .d1-step{
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-2);
+    font-size: var(--text-xs);
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+  .d1-step .step-label{ flex: 1 1 auto; }
+  .d1-step-detail{ margin: var(--sp-1) 0 0 22px; }
+
+  /* =========================================================================
+     DESIGN 2 — Status Strip
+     A persistent strip stays docked under the topbar for the whole run,
+     independent of transcript scroll. At rest, only the last two steps peek
+     above a fade mask; older ones collapse behind a count. Actions render as
+     tool chips. The answer gets the one deliberate rule in the whole family.
+     ========================================================================= */
+  .d2-strip{
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-4);
+    background: var(--surface-1);
+    border-bottom: var(--hairline) solid var(--line);
+  }
+  .d2-strip .strip-phase{
+    flex: 1 1 auto;
+    font-size: var(--text-xs);
+    color: var(--text-1);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  .d2-strip .strip-time{
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .d2-strip .strip-track{
+    display: flex;
+    gap: 3px;
+  }
+  .d2-strip .strip-seg{
+    width: 12px; height: 3px;
+    border-radius: var(--r-2);
+    background: var(--surface-3);
+  }
+  .d2-strip .strip-seg.is-done{ background: var(--accent); }
+
+  .d2-peek{
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    position: relative;
+  }
+  .d2-older-toggle{
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    padding: var(--sp-1) 0;
+  }
+  .d2-older{
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--dur-relaxed) var(--ease-out);
+  }
+  .d2-older[data-open="true"]{ grid-template-rows: 1fr; }
+  .d2-older-inner{ overflow: hidden; }
+  .d2-older-list{ display: flex; flex-direction: column; gap: var(--sp-2); padding-top: var(--sp-2); }
+
+  .tool-chip{
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--text-xs);
+    color: var(--text-2);
+    background: var(--surface-1);
+    border-radius: var(--r-8);
+    padding: var(--sp-1) var(--sp-2);
+    max-width: 100%;
+  }
+  .tool-chip .chip-verb{ color: var(--text-3); }
+  .tool-chip .chip-target{
+    color: var(--text-1);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+  }
+  .d2-chip-row{ display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; }
+
+  /* =========================================================================
+     DESIGN 3 — Composer-Docked
+     The trace stays open while the run is live — no collapse chrome mid-run —
+     then condenses to a one-line ledger once finished. Live phase + elapsed
+     is docked directly above the composer, not in the transcript. Actions are
+     task rows with their own timers and result counts. Answer separates only
+     by stepping up a type size/weight.
+     ========================================================================= */
+  .d3-hud{
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-2) var(--sp-3);
+    margin: 0 var(--sp-3);
+    background: var(--surface-1);
+    border-radius: var(--r-10) var(--r-10) 0 0;
+  }
+  .d3-hud .hud-phase{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--text-xs);
+    color: var(--text-1);
+  }
+  .d3-hud .hud-time{
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .composer.has-hud{ padding-top: 0; }
+  .composer.has-hud .composer-field{ border-radius: 0 0 var(--r-16) var(--r-16); margin: 0 var(--sp-3); }
+
+  .d3-ledger-line{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: var(--text-xs);
+    color: var(--text-3);
+    padding: var(--sp-1) 0;
+  }
+  .d3-tasks{ display: flex; flex-direction: column; gap: var(--sp-3); }
+  .task-row{
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--surface-1);
+    border-radius: var(--r-10);
+  }
+  .task-row-top{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  .task-row-label{ flex: 1 1 auto; font-size: var(--text-xs); color: var(--text-1); }
+  .task-row-time{ font-size: var(--text-2xs); color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .task-row-result{ font-size: var(--text-2xs); color: var(--text-3); padding-left: 22px; }
+
+  /* =========================================================================
+     DESIGN 4 — Marked Rows
+     Trace collapses to a ledger identical in spirit to design 1 but carries a
+     segmented tick track that fills in as steps land — the checking-off
+     motion checkto is named for. A quiet elapsed indicator mirrors in the
+     topbar while live. Rows are plain but each resolves to checkto's gold
+     tick, not a generic checkmark. Answer gets a background lift like design
+     1, but slightly deeper, marking it as the confirmed output.
+     ========================================================================= */
+  .d4-header{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-2) 0;
+    cursor: default;
+  }
+  .d4-header .ticks{ display: flex; gap: 3px; }
+  .d4-header .tick{
+    width: 8px; height: 8px;
+    border-radius: var(--r-2);
+    background: var(--surface-3);
+    transform: scale(1);
+    transition: background-color var(--dur-relaxed) var(--ease-out), transform var(--dur-basic) var(--ease-enter);
+  }
+  .d4-header .tick.is-done{ background: var(--accent); }
+  .d4-header .tick.is-landing{ transform: scale(1.25); }
+  .d4-header-label{ font-size: var(--text-xs); color: var(--text-3); flex: 1 1 auto; }
+  .d4-header .chev{
+    width: 10px; height: 10px;
+    color: var(--text-3);
+    transition: transform var(--dur-basic) var(--ease-out);
+  }
+  .d4-header[data-open="true"] .chev{ transform: rotate(90deg); }
+  .d4-collapse{
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--dur-relaxed) var(--ease-out);
+  }
+  .d4-collapse[data-open="true"]{ grid-template-rows: 1fr; }
+  .d4-collapse-inner{ overflow: hidden; }
+  .d4-steps{ display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-2) 0 var(--sp-3) 0; }
+  .d4-step{ display: flex; align-items: flex-start; gap: var(--sp-2); font-size: var(--text-xs); color: var(--text-2); line-height: 1.5; }
+  .answer.sep-bg-deep{ background: var(--surface-2); border-radius: var(--r-12); padding: var(--sp-3); }
+  .topbar-live{
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    font-size: var(--text-2xs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .status-glyph .ring{ animation: none; }
+    .status-glyph[data-state="active"] .ring{ opacity: .8; animation: reduced-pulse 1.6s ease-in-out infinite; }
+    .live-dot{ animation: none; opacity: .7; }
+    .shimmer-text{ animation: none; -webkit-mask-image: none; mask-image: none; color: var(--text-1); }
+    .d1-collapse, .d2-older, .d4-collapse, .panel-frame{ transition: none; }
+  }
+  @keyframes reduced-pulse{ 0%,100%{ opacity:.8; } 50%{ opacity:.35; } }
+
+  /* =========================================================================
+     PAGE CHROME — control dock, not part of the design under review.
+     ========================================================================= */
+  .dock{
+    /* In normal flow, pinned to the left, below the panel — never a fixed
+       overlay, so it can never sit on top of the panel being judged even
+       when the viewport is exactly the panel's own width (400 or 320). */
+    align-self: flex-start;
+    margin-top: var(--sp-5);
+    background: rgba(20,19,23,.92);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: var(--r-12);
+    padding: var(--sp-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    box-shadow: 0 12px 30px rgba(0,0,0,.5);
+    font-family: var(--font-ui);
+    backdrop-filter: blur(6px);
+  }
+  .dock-row{ display: flex; align-items: center; gap: 4px; }
+  .dock-label{ font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #6f6c78; width: 40px; flex: 0 0 auto; }
+  .dock-btn{
+    width: 22px; height: 22px;
+    border-radius: var(--r-6);
+    background: #232228;
+    color: #a7a3ad;
+    font-size: 10px;
+    border: none;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+  }
+  .dock-btn.is-active{ background: var(--accent); color: var(--accent-ink); }
+  .dock-btn.wide{ width: auto; padding: 0 8px; font-family: var(--font-ui); font-size: 10px; }
+  .dock-sep{ height: 1px; background: rgba(255,255,255,.08); margin: 2px 0; }
 </style>
 </head>
 <body>
-  <div id="meta">
-    <h1>Checkto side panel — five directions</h1>
-    <p id="meta-sub"></p>
-  </div>
 
-  <div id="stage-outer">
-    <div id="stage"></div>
+<div class="caption" id="caption"></div>
+<div class="panel-frame" id="panelFrame" data-width="400">
+  <div class="panel-topbar">
+    <div class="panel-brand"><span class="mark"></span>checkto</div>
+    <div class="panel-topbar-meta" id="topbarMeta"></div>
   </div>
+  <div class="panel-body" id="panelBody"></div>
+</div>
 
-  <div id="bar">
-    <div class="row" id="variant-row"></div>
-    <div class="row" id="state-row"></div>
-  </div>
+<div class="dock" id="dock"></div>
 
 <script>
-/* ---------------- shared content ---------------- */
-const TASK1 = 'upload the quarterly report and confirm it went through';
-const ACTIONS1 = [
-  { t: '0:02', label: 'Opened tab: ~/upload', s: 'done' },
-  { t: '0:05', label: 'Clicked the "upload" button', s: 'done' },
-  { t: '0:09', label: 'Typed "me@pcstyle.dev" into the "recipient" field', s: 'done' },
-  { t: '0:13', label: 'Read the confirmation banner', s: 'done' },
-];
-const ANSWER1 = 'uploaded it; the confirmation banner shows 3 files processed.';
-const DURATION1 = '14s';
+(function(){
+  "use strict";
 
-const TASK2 = 'compare the pricing pages for vercel, netlify and fly and tell me which is cheapest for a hobby project';
-const ACTIONS2 = [
-  { t: '0:03', label: 'Opened tab: vercel.com/pricing', s: 'done' },
-  { t: '0:11', label: 'Opened tab: netlify.com/pricing', s: 'done' },
-  { t: '0:19', label: 'Opened tab: fly.io/pricing', s: 'running' },
-];
-const ANSWER2_LINES = [
-  'Netlify is cheapest for a hobby project.',
-  'Vercel Hobby: free, but commercial use needs Pro ($20/mo)',
-  'Netlify Free: 100GB bandwidth, no card required',
-  'Fly.io: pay-as-you-go, ~$1.94/mo minimum even at low usage',
-  "Netlify's free tier has the most headroom before you hit a paywall.",
-];
+  /* ------------------------------------------------------------------ */
+  /* content — real, fixed across all designs                            */
+  /* ------------------------------------------------------------------ */
+  var TASK = "upload the quarterly report and confirm it went through";
+  var STEPS = [
+    { label: "Opened tab: ~/upload", time: 0.4, detail: null },
+    { label: "Clicked the “upload” button", time: 1.1, detail: null },
+    { label: "Typed “me@pcstyle.dev” into the “recipient” field", time: 0.8,
+      detail: "The following is a diff from the previous\naccessibility tree for Window: “Upload / QRT” with ~ and\n+ representing changed and added elements.\n~ field[recipient] value=“me@pcstyle.dev”\n+ button[confirm] enabled=true" },
+    { label: "Read the confirmation banner", time: 1.9, detail: null }
+  ];
+  var ANSWER = "uploaded it; the confirmation banner shows 3 files processed.";
+  var APPROVAL_ACTION = "submit the $89.00 order";
+  var BLOCKED_SITE = "vendorportal.io";
 
-const APPROVAL_ACTION = 'submit the $89.00 order';
-const BLOCKED_REASON = "the checkout page's CAPTCHA failed twice; the site is refusing another attempt.";
-const CRED_NOTE_A = 'you are typing directly into the page — the agent cannot see what you type here.';
+  var TOTAL_RUN_SECONDS = 28;
 
-const VARIANTS = [
-  { key: 'a', name: 'Operator console' },
-  { key: 'b', name: 'Answer-first editorial' },
-  { key: 'c', name: 'Task board' },
-  { key: 'd', name: 'Instrument' },
-  { key: 'e', name: 'Conversational minimal' },
-];
-const STATES = [
-  { n: 1, name: 'Empty' },
-  { n: 2, name: 'In flight' },
-  { n: 3, name: 'Finished' },
-  { n: 4, name: 'Approval' },
-  { n: 5, name: 'Credential' },
-  { n: 6, name: 'Blocked' },
-];
+  /* ------------------------------------------------------------------ */
+  /* icons                                                                */
+  /* ------------------------------------------------------------------ */
+  var ICON_CHEV = '<svg class="chev" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_CHECK = '<svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_LOCK = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" stroke-width="1.2"/></svg>';
+  var ICON_BLOCK = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.4"/><path d="M4.2 4.2l7.6 7.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+  var ICON_SEND = '<svg viewBox="0 0 16 16"><path d="M3 8h9M8.5 4l4.5 4-4.5 4"/></svg>'.replace('<path d="M3 8h9M8.5 4l4.5 4-4.5 4"/>', '<path d="M3.5 8h8.2M8.2 4.3L12 8l-3.8 3.7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="currentColor"/>');
 
-const CAPTIONS = {
-  a: { title: 'A — Operator console', body: '<span class="row"><strong>Type:</strong> JetBrains Mono, structural — used for labels, timestamps and body text, not decoration. <strong>Palette:</strong> near-black neutral with amber-for-running / green-for-done semantic signal only. <strong>Signature:</strong> the log never collapses; the answer is just the final block in the same monospace stream.</span>' },
-  b: { title: 'B — Answer-first editorial', body: '<span class="row"><strong>Type:</strong> Source Serif 4 for the answer headline, Public Sans for chrome — serif-for-hero/sans-for-meta contrast. <strong>Palette:</strong> cool paper white, ink text, one brick-red accent (no cream, no sage). <strong>Signature:</strong> the answer renders as a headline first; the whole action log hides behind one line that expands.</span>' },
-  c: { title: 'C — Task board', body: '<span class="row"><strong>Type:</strong> Manrope for labels, IBM Plex Mono for counters/time — a SaaS-status pairing. <strong>Palette:</strong> cool light gray surface, blue (hue 220, outside the indigo band) plus red/amber/green status chips. <strong>Signature:</strong> the run is three task rows with live status dots and elapsed time — no transcript at all.</span>' },
-  d: { title: 'D — Instrument', body: '<span class="row"><strong>Type:</strong> Space Mono for tabular numeric readouts, Barlow Condensed for labels — a hardware-panel pairing. <strong>Palette:</strong> true near-black/near-white, zero color except red/green status LEDs. <strong>Signature:</strong> a fixed readout strip (steps / elapsed / cost / tokens / tab) runs across every state like instrumentation.</span>' },
-  e: { title: 'E — Conversational minimal', body: '<span class="row"><strong>Type:</strong> Libre Franklin only, one face, deliberate restraint. <strong>Palette:</strong> plain white, near-black ink, a single small blue-gray accent dot. <strong>Signature:</strong> the agent\'s work is grey inline text woven into the conversation, then one quiet italic line when done — no card ever appears for it.</span>' },
-};
+  function statusGlyph(state){
+    return '<span class="status-glyph" data-state="' + state + '">' +
+      '<span class="ring"></span><span class="dot"></span>' +
+      '<span class="check">' + ICON_CHECK + '</span></span>';
+  }
 
-/* ---------------- state ---------------- */
-const params = new URLSearchParams(location.search);
-let curVariant = VARIANTS.some(v => v.key === params.get('variant')) ? params.get('variant') : 'a';
-let curState = STATES.some(s => String(s.n) === params.get('state')) ? Number(params.get('state')) : 1;
-let narrow = params.get('narrow') === '1';
-let tickHandle = null;
-const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* ------------------------------------------------------------------ */
+  /* shared blocks                                                       */
+  /* ------------------------------------------------------------------ */
+  function userTurn(){
+    return '<div class="msg-user">' + TASK + '</div>';
+  }
 
-function startTickers(){
-  if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
-  if (curVariant === 'd' && curState === 2) {
-    let sec = 21, cost = 0.02, tok = 4100;
-    tickHandle = setInterval(() => {
-      sec += 1; cost += 0.002; tok += 90;
-      const elapsedEl = document.getElementById('d-elapsed');
-      const costEl = document.getElementById('d-cost');
-      const tokEl = document.getElementById('d-tokens');
-      if (!elapsedEl) { clearInterval(tickHandle); tickHandle = null; return; }
-      const m = Math.floor(sec / 60), s = sec % 60;
-      elapsedEl.textContent = `${m}:${String(s).padStart(2, '0')}`;
-      costEl.textContent = `$${cost.toFixed(2)}`;
-      tokEl.textContent = `${(tok / 1000).toFixed(1)}K`;
-      if (!reduceMotion) {
-        [elapsedEl, costEl, tokEl].forEach(el => { el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); });
+  function composer(opts){
+    opts = opts || {};
+    var hud = opts.hud ? opts.hud : "";
+    return '<div class="composer' + (hud ? ' has-hud' : '') + '">' +
+      hud +
+      '<div class="composer-field"><span class="placeholder">Do anything</span></div>' +
+      '<div class="composer-actions">' +
+        '<div class="composer-left">' +
+          '<button class="icon-btn">+</button>' +
+          '<span class="model-pill">checkto‑1</span>' +
+        '</div>' +
+        '<button class="send-btn">' + ICON_SEND + '</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function emptyState(){
+    return '<div class="empty-state">' +
+      '<div class="empty-mark">checkto</div>' +
+      '<div class="empty-sub">Tell it what to do on a page and it will drive the browser for you, step by step.</div>' +
+      '<div class="empty-suggest">' +
+        '<div class="suggest-row">upload the quarterly report and confirm it went through</div>' +
+        '<div class="suggest-row">check every open invoice for a matching PO number</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function toolOutput(detail){
+    if (!detail) return "";
+    return '<div class="tool-output"><span class="lang-tag">plaintext</span>' +
+      detail.split("\n").map(function(l){ return l.replace(/^~/,'<span class="dim">~</span>').replace(/^\+/,'<span class="dim">+</span>'); }).join("\n") +
+      '</div>';
+  }
+
+  function approvalCard(designNum){
+    var chipStyle = designNum === 2;
+    var deepBg = designNum === 4;
+    var options = [
+      { title: "Allow once", sub: "Just this order", rec: true },
+      { title: "Allow for this conversation", sub: "Any order in this task" },
+      { title: "Always allow", sub: "Every order on this vendor" }
+    ];
+    var optRows = options.map(function(o){
+      return '<div class="approval-option' + (o.rec ? ' is-recommended' : '') + '">' +
+        '<span class="radio"></span>' +
+        '<div class="approval-option-copy"><span class="approval-option-title">' + o.title + '</span>' +
+        '<span class="approval-option-sub">' + o.sub + '</span></div></div>';
+    }).join("");
+    return '<div class="approval' + (deepBg ? ' answer sep-bg-deep' : (designNum !== 3 ? ' answer sep-bg' : '')) + '">' +
+      '<div class="approval-lede">Before it goes further — okay to <span class="target">' + APPROVAL_ACTION + '</span>?</div>' +
+      '<div class="approval-options">' + optRows + '</div>' +
+      '<div class="approval-footer">' +
+        '<button class="btn btn-danger-text">Deny</button>' +
+        '<button class="btn btn-primary">Allow once</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function credentialCard(designNum){
+    var deepBg = designNum === 4;
+    return '<div class="credential' + (deepBg ? ' answer sep-bg-deep' : (designNum !== 3 ? ' answer sep-bg' : '')) + '">' +
+      '<div class="credential-lede">It needs you to sign in to <b>' + BLOCKED_SITE + '</b> to continue.</div>' +
+      '<div class="credential-form">' +
+        '<div class="field"><label>Email</label><div class="input">me@pcstyle.dev</div></div>' +
+        '<div class="field"><label>Password</label><div class="input is-masked">••••••••••</div></div>' +
+        '<button class="btn btn-primary">Continue</button>' +
+      '</div>' +
+      '<div class="credential-note">' + ICON_LOCK + '<span>Typed directly into the site. checkto cannot see or store what you type here.</span></div>' +
+    '</div>';
+  }
+
+  function blockedCard(designNum){
+    var deepBg = designNum === 4;
+    return '<div class="blocked' + (deepBg ? ' answer sep-bg-deep' : (designNum !== 3 ? ' answer sep-bg' : '')) + '">' +
+      '<div class="blocked-glyph">' + ICON_BLOCK + '</div>' +
+      '<div class="blocked-title">Stopped at ' + BLOCKED_SITE + '</div>' +
+      '<div class="blocked-sub">The CAPTCHA challenge failed twice on the upload form. Automated retries risk a longer lockout, so it stopped rather than keep guessing.</div>' +
+      '<div class="blocked-actions">' +
+        '<button class="btn btn-quiet">Open the tab</button>' +
+        '<button class="btn btn-primary">Try again</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* design 1 — quiet ledger                                             */
+  /* ------------------------------------------------------------------ */
+  function d1Steps(includeDetail){
+    return STEPS.map(function(s, i){
+      return '<div class="d1-step">' + statusGlyph("done") +
+        '<span class="step-label">' + s.label + '</span></div>' +
+        (includeDetail && s.detail ? '<div class="d1-step-detail">' + toolOutput(s.detail) + '</div>' : "");
+    }).join("");
+  }
+
+  function design1(state, elapsed){
+    if (state === 1) return emptyState() + composer();
+    var body = '<div class="transcript">' + userTurn();
+
+    if (state === 2){
+      body += '<div class="msg-agent"><div class="d1-run">' +
+        '<div class="d1-header" data-open="true">' + statusGlyph("active") +
+        '<span class="d1-live-label">Working — ' + elapsed + 's</span></div>' +
+        '<div class="d1-collapse" data-open="true"><div class="d1-collapse-inner"><div class="d1-steps">' +
+          d1Steps(false) +
+          '<div class="d1-step">' + statusGlyph("active") + '<span class="step-label shimmer-text">Reading the confirmation banner…</span></div>' +
+        '</div></div></div>' +
+      '</div></div>';
+    } else if (state === 3){
+      body += '<div class="msg-agent"><div class="d1-run">' +
+        '<div class="d1-header" data-open="false" id="d1toggle">' + ICON_CHEV +
+        '<span>Worked for ' + TOTAL_RUN_SECONDS + 's</span></div>' +
+        '<div class="d1-collapse" data-open="false" id="d1collapse"><div class="d1-collapse-inner"><div class="d1-steps">' +
+          d1Steps(true) +
+        '</div></div></div>' +
+        '<div class="answer sep-bg">' + ANSWER + '</div>' +
+      '</div></div>';
+    } else if (state === 4){
+      body += '<div class="msg-agent">' + approvalCard(1) + '</div>';
+    } else if (state === 5){
+      body += '<div class="msg-agent">' + credentialCard(1) + '</div>';
+    } else if (state === 6){
+      body += '<div class="msg-agent">' + blockedCard(1) + '</div>';
+    }
+    body += '</div>' + composer();
+    return body;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* design 2 — status strip                                             */
+  /* ------------------------------------------------------------------ */
+  function d2Chip(s, done){
+    return '<div class="tool-chip">' + statusGlyph(done ? "done" : "active") +
+      '<span class="chip-verb">' + (done ? "Ran" : "Running") + '</span>' +
+      '<span class="chip-target">' + s.label + '</span></div>';
+  }
+
+  function d2Strip(phaseLabel, elapsed, doneCount, total){
+    var segs = "";
+    for (var i = 0; i < total; i++){
+      segs += '<div class="strip-seg' + (i < doneCount ? ' is-done' : '') + '"></div>';
+    }
+    return '<div class="d2-strip"><div class="strip-phase">' +
+      (elapsed !== null ? '<span class="live-dot"></span>' : "") +
+      '<span>' + phaseLabel + '</span></div>' +
+      '<div class="strip-track">' + segs + '</div>' +
+      (elapsed !== null ? '<span class="strip-time">' + elapsed + 's</span>' : "") +
+    '</div>';
+  }
+
+  function design2(state, elapsed){
+    if (state === 1) return emptyState() + composer();
+    var strip = "";
+    if (state === 2) strip = d2Strip("Working on the upload", elapsed, 2, STEPS.length);
+    var body = strip + '<div class="transcript">' + userTurn();
+
+    if (state === 2){
+      var recent = STEPS.slice(0, 2);
+      var older = STEPS.slice(2);
+      body += '<div class="msg-agent"><div class="d2-peek">' +
+        '<div class="d2-chip-row">' + recent.map(function(s){ return d2Chip(s, true); }).join("") + '</div>' +
+        '<div class="d2-chip-row">' + d2Chip({label:"Reading the confirmation banner"}, false) + '</div>' +
+      '</div></div>';
+    } else if (state === 3){
+      body += '<div class="msg-agent"><div class="d2-peek">' +
+        '<div class="d2-older-toggle" id="d2toggle">+ 2 earlier steps</div>' +
+        '<div class="d2-older" data-open="false" id="d2older"><div class="d2-older-inner"><div class="d2-older-list">' +
+          STEPS.slice(0,2).map(function(s){ return d2Chip(s, true); }).join("") +
+        '</div></div></div>' +
+        '<div class="d2-chip-row">' + STEPS.slice(2).map(function(s){ return d2Chip(s, true); }).join("") + '</div>' +
+        (STEPS[2].detail ? toolOutput(STEPS[2].detail) : "") +
+        '<div class="answer sep-rule">' + ANSWER + '</div>' +
+      '</div></div>';
+    } else if (state === 4){
+      body += '<div class="msg-agent">' + approvalCard(2) + '</div>';
+    } else if (state === 5){
+      body += '<div class="msg-agent">' + credentialCard(2) + '</div>';
+    } else if (state === 6){
+      body += '<div class="msg-agent">' + blockedCard(2) + '</div>';
+    }
+    body += '</div>' + composer();
+    return body;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* design 3 — composer-docked                                          */
+  /* ------------------------------------------------------------------ */
+  function d3TaskRow(s, state){
+    return '<div class="task-row"><div class="task-row-top">' + statusGlyph(state) +
+      '<span class="task-row-label">' + s.label + '</span>' +
+      (state === "done" ? '<span class="task-row-time">' + s.time + 's</span>' : "") +
+    '</div></div>';
+  }
+
+  function design3(state, elapsed){
+    var hud = "";
+    if (state === 2){
+      hud = '<div class="d3-hud"><span class="hud-phase"><span class="live-dot"></span>Working — reading the confirmation banner</span><span class="hud-time">' + elapsed + 's</span></div>';
+    }
+    if (state === 1) return emptyState() + composer();
+    var body = '<div class="transcript">' + userTurn();
+
+    if (state === 2){
+      body += '<div class="msg-agent"><div class="d3-tasks">' +
+        STEPS.map(function(s){ return d3TaskRow(s, "done"); }).join("") +
+        d3TaskRow({label:"Reading the confirmation banner"}, "active") +
+      '</div></div>';
+    } else if (state === 3){
+      body += '<div class="msg-agent">' +
+        '<div class="d3-ledger-line" id="d3toggle">' + ICON_CHEV + '<span>' + STEPS.length + ' steps · ' + TOTAL_RUN_SECONDS + 's</span></div>' +
+        '<div class="d1-collapse" data-open="false" id="d3collapse"><div class="d1-collapse-inner"><div class="d3-tasks" style="padding-top:8px;">' +
+          STEPS.map(function(s){ return d3TaskRow(s, "done") + (s.detail ? '<div class="task-row-result">' + toolOutput(s.detail) + '</div>' : ""); }).join("") +
+        '</div></div></div>' +
+        '<div class="answer sep-weight">' + ANSWER + '</div>' +
+      '</div>';
+    } else if (state === 4){
+      body += '<div class="msg-agent">' + approvalCard(3) + '</div>';
+    } else if (state === 5){
+      body += '<div class="msg-agent">' + credentialCard(3) + '</div>';
+    } else if (state === 6){
+      body += '<div class="msg-agent">' + blockedCard(3) + '</div>';
+    }
+    body += '</div>' + composer({ hud: hud });
+    return body;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* design 4 — marked rows                                              */
+  /* ------------------------------------------------------------------ */
+  function d4Ticks(doneCount, total, landing){
+    var out = "";
+    for (var i = 0; i < total; i++){
+      out += '<span class="tick' + (i < doneCount ? ' is-done' : '') + (landing === i ? ' is-landing' : '') + '"></span>';
+    }
+    return '<span class="ticks">' + out + '</span>';
+  }
+
+  function design4(state, elapsed, tickPhase){
+    if (state === 1) return emptyState() + composer();
+    var body = '<div class="transcript">' + userTurn();
+
+    if (state === 2){
+      var doneCount = Math.min(STEPS.length, Math.floor((tickPhase || 0)));
+      body += '<div class="msg-agent"><div class="d1-run">' +
+        '<div class="d4-header">' + d4Ticks(doneCount, STEPS.length, doneCount) +
+        '<span class="d4-header-label">Working — ' + elapsed + 's</span></div>' +
+        '<div class="d4-steps">' +
+          STEPS.slice(0, doneCount).map(function(s){ return '<div class="d4-step">' + statusGlyph("done") + '<span>' + s.label + '</span></div>'; }).join("") +
+          (doneCount < STEPS.length ? '<div class="d4-step">' + statusGlyph("active") + '<span class="shimmer-text">' + STEPS[doneCount].label + '</span></div>' : "") +
+        '</div>' +
+      '</div></div>';
+    } else if (state === 3){
+      body += '<div class="msg-agent"><div class="d1-run">' +
+        '<div class="d4-header" data-open="false" id="d4toggle">' + d4Ticks(STEPS.length, STEPS.length) +
+        '<span class="d4-header-label">Worked for ' + TOTAL_RUN_SECONDS + 's</span>' + ICON_CHEV + '</div>' +
+        '<div class="d4-collapse" data-open="false" id="d4collapse"><div class="d4-collapse-inner"><div class="d4-steps">' +
+          STEPS.map(function(s){ return '<div class="d4-step">' + statusGlyph("done") + '<span>' + s.label + '</span></div>' + (s.detail ? toolOutput(s.detail) : ""); }).join("") +
+        '</div></div></div>' +
+        '<div class="answer sep-bg-deep">' + ANSWER + '</div>' +
+      '</div></div>';
+    } else if (state === 4){
+      body += '<div class="msg-agent">' + approvalCard(4) + '</div>';
+    } else if (state === 5){
+      body += '<div class="msg-agent">' + credentialCard(4) + '</div>';
+    } else if (state === 6){
+      body += '<div class="msg-agent">' + blockedCard(4) + '</div>';
+    }
+    body += '</div>' + composer();
+    return body;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* captions                                                             */
+  /* ------------------------------------------------------------------ */
+  var CAPTIONS = {
+    1: {
+      name: "Design 1 — Quiet Ledger",
+      body: "Archivo for interface text, IBM Plex Mono reserved for genuine tool output — a deliberate technical pairing, not Inter and not a serif default. " +
+        "Palette: near-black neutral with a single gold accent for anything interactive. Signature move: the run collapses fully behind a plain “Worked for Ns” line, exactly the Codex structure, transposed into checkto's own type and gold.",
+      axis: "Axis choices: trace collapsed at rest · state lives inline in the transcript · plain status rows · answer separated by the lightest background lift."
+    },
+    2: {
+      name: "Design 2 — Status Strip",
+      body: "Same Archivo/Plex Mono pairing and gold-on-near-black palette as the rest of the family. Signature move: a persistent strip docked under the topbar tracks the run independent of scroll, with a segmented progress track instead of prose.",
+      axis: "Axis choices: last two steps peek, older ones collapse behind a count · run state lives in a strip, not inline · actions render as tool chips · answer gets the family's one deliberate rule."
+    },
+    3: {
+      name: "Design 3 — Composer-Docked",
+      body: "Same family type and palette. Signature move: the live phase and elapsed time dock directly above the composer, so watching the agent work and telling it what to do next share one spot.",
+      axis: "Axis choices: trace stays fully open while live, then condenses to a one-line ledger · state lives on the composer, not the transcript · actions are task rows with their own elapsed time · answer separates only by stepping up in type weight."
+    },
+    4: {
+      name: "Design 4 — Marked Rows",
+      body: "Same family type and palette. Signature move: a segmented tick track fills in as each step lands — the literal checking-off checkto is named for — sitting inside the same collapsed header structure as design 1 but reading completely differently while it runs.",
+      axis: "Axis choices: trace collapsed at rest, but the header carries live tick progress · state lives inline · plain rows resolve to checkto's gold tick · answer gets the deepest background lift, marking it as the confirmed output."
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* render / state                                                       */
+  /* ------------------------------------------------------------------ */
+  var RENDERERS = { 1: design1, 2: design2, 3: design3, 4: design4 };
+  var liveTimer = null;
+  var tickTimer = null;
+
+  function clearTimers(){
+    if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  }
+
+  function params(){
+    var p = new URLSearchParams(location.search);
+    var d = parseInt(p.get("design"), 10);
+    var s = parseInt(p.get("state"), 10);
+    var w = p.get("width");
+    if (!(d >= 1 && d <= 4)) d = 1;
+    if (!(s >= 1 && s <= 6)) s = 3;
+    if (w !== "320") w = "400";
+    return { design: d, state: s, width: w };
+  }
+
+  function setParams(next, replace){
+    var cur = params();
+    var merged = Object.assign({}, cur, next);
+    var url = new URL(location.href);
+    url.searchParams.set("design", merged.design);
+    url.searchParams.set("state", merged.state);
+    url.searchParams.set("width", merged.width);
+    history[replace ? "replaceState" : "pushState"]({}, "", url);
+    render();
+  }
+
+  function render(){
+    clearTimers();
+    var st = params();
+    document.getElementById("panelFrame").setAttribute("data-width", st.width);
+
+    var cap = CAPTIONS[st.design];
+    document.getElementById("caption").innerHTML =
+      '<div class="design-name">' + cap.name + '</div><div>' + cap.body + '</div>' +
+      '<div class="axis-line">' + cap.axis + '</div>';
+
+    var elapsed = 12;
+    document.getElementById("panelBody").innerHTML = RENDERERS[st.design](st.state, elapsed);
+    document.getElementById("topbarMeta").textContent = st.state === 2 ? "live" : "";
+
+    wireInteractions(st);
+
+    if (st.state === 2){
+      var startedAt = Date.now();
+      var base = 12;
+      liveTimer = setInterval(function(){
+        var secs = base + Math.floor((Date.now() - startedAt) / 1000);
+        var el = document.querySelectorAll("[data-live-elapsed]");
+        el.forEach(function(node){ node.textContent = secs + "s"; });
+        var strip = document.querySelector(".d2-strip .strip-time");
+        if (strip) strip.textContent = secs + "s";
+        var hud = document.querySelector(".d3-hud .hud-time");
+        if (hud) hud.textContent = secs + "s";
+        var d4label = document.querySelector(".d4-header-label");
+        if (d4label && st.design === 4) d4label.textContent = "Working — " + secs + "s";
+        var d1label = document.querySelector(".d1-live-label");
+        if (d1label && st.design === 1) d1label.textContent = "Working — " + secs + "s";
+      }, 1000);
+
+      if (st.design === 4){
+        var phase = 0;
+        tickTimer = setInterval(function(){
+          phase = Math.min(STEPS.length, phase + 1);
+          document.getElementById("panelBody").innerHTML = design4(2, 12, phase);
+          wireInteractions(st);
+          if (phase >= STEPS.length) clearInterval(tickTimer);
+        }, 1400);
       }
-    }, 1000);
-  } else if (curVariant === 'e' && curState === 2) {
-    const phrases = ['opened vercel.com/pricing', 'opened netlify.com/pricing', 'now reading fly.io/pricing'];
-    let i = 0;
-    tickHandle = setInterval(() => {
-      const el = document.getElementById('e-loop');
-      if (!el) { clearInterval(tickHandle); tickHandle = null; return; }
-      i = (i + 1) % phrases.length;
-      el.style.opacity = '0';
-      setTimeout(() => {
-        const el2 = document.getElementById('e-loop');
-        if (el2) { el2.textContent = phrases[i]; el2.style.opacity = '1'; }
-      }, reduceMotion ? 0 : 180);
-    }, 1800);
+    }
   }
-}
 
-function cap(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
-
-/* ---------------- renderers ---------------- */
-function actionRowsHtml(cls, actions, timeCol){
-  return actions.map(a => `<div class="${cls} ${a.s}"><div class="t">${a.t}</div><div class="s">${a.s==='done'?'✓':a.s==='running'?'…':'✗'}</div><div class="txt">${a.label}</div></div>`).join('');
-}
-
-function renderA(state){
-  let body = '';
-  if (state === 1) {
-    body = `<div class="a-task">$ checkto <span class="p">&gt;</span> <span style="opacity:.4">awaiting instruction_</span></div>`;
-  } else if (state === 2) {
-    body = `<div class="a-task">task &gt; ${TASK2}</div>
-      <div class="a-log">${actionRowsHtml('a-row', ACTIONS2)}</div>
-      <div class="a-meta"><span>elapsed 0:21</span><span>step 3/~5</span><span>tab: fly.io/pricing</span></div>`;
-  } else if (state === 3) {
-    body = `<div class="a-task">task &gt; ${TASK1}</div>
-      <div class="a-log">${actionRowsHtml('a-row', ACTIONS1)}</div>
-      <div class="a-answer"><div class="lbl">result</div>${ANSWER1}</div>
-      <div class="a-meta"><span>duration ${DURATION1}</span><span>4 actions</span><span>exit 0</span></div>`;
-  } else if (state === 4) {
-    body = `<div class="a-task">task &gt; buy the cheapest hobby plan (netlify)</div>
-      <div class="a-log">${actionRowsHtml('a-row', ACTIONS2.map(x=>({...x,s:'done'})))}</div>
-      <div class="a-card"><div class="h">⚠ approval required</div>
-        about to ${APPROVAL_ACTION}. this action cannot be undone.
-        <div class="a-scopes">
-          <button>[1] allow once</button>
-          <button>[2] allow for this conversation</button>
-          <button>[3] always allow this action</button>
-        </div>
-        <button class="a-deny-btn">[esc] deny</button>
-      </div>`;
-  } else if (state === 5) {
-    body = `<div class="a-task">task &gt; ${TASK1}</div>
-      <div class="a-log">${actionRowsHtml('a-row', ACTIONS1.slice(0,1))}</div>
-      <div class="a-cred">
-        <div class="lbl" style="text-transform:uppercase;font-size:10px;color:oklch(0.55 0.01 260)">sign-in required — handed to you</div>
-        <label>username</label><input placeholder="you@company.com">
-        <label>password</label><input type="password" placeholder="••••••••">
-        <div class="note">${CRED_NOTE_A}</div>
-      </div>`;
-  } else if (state === 6) {
-    body = `<div class="a-task">task &gt; buy the cheapest hobby plan (netlify)</div>
-      <div class="a-log">${actionRowsHtml('a-row', [
-        {t:'0:04',label:'Opened tab: netlify.com/checkout',s:'done'},
-        {t:'0:08',label:'Filled billing details',s:'done'},
-        {t:'0:15',label:'Failed CAPTCHA challenge (attempt 1)',s:'failed'},
-        {t:'0:22',label:'Failed CAPTCHA challenge (attempt 2)',s:'failed'},
-      ])}</div>
-      <div class="a-card deny"><div class="h">✗ blocked by site</div>${BLOCKED_REASON}
-        <button class="a-retry" style="margin-top:8px">retake it yourself in this tab</button></div>`;
+  function toggle(id, headerSel){
+    var el = document.getElementById(id);
+    if (!el) return;
+    var open = el.getAttribute("data-open") === "true";
+    el.setAttribute("data-open", open ? "false" : "true");
+    var header = document.querySelector(headerSel);
+    if (header) header.setAttribute("data-open", open ? "false" : "true");
   }
-  const composerDisabled = state === 4 || state === 5;
-  return `<div class="a-head"><span>checkto://session</span><span>${state===2?'● running':state===3?'○ idle':state===6?'○ blocked':state===4?'○ paused':'○ idle'}</span></div>
-    <div class="a-body">${body}</div>
-    <div class="a-composer"><input ${composerDisabled?'disabled':''} placeholder="ask checkto to do something..."><button class="a-run-btn">run</button></div>`;
-}
 
-function renderB(state){
-  let body = '';
-  if (state === 1) {
-    body = `<div class="b-eyebrow">checkto</div>
-      <div class="b-empty-h">What should I do in your browser?</div>
-      <div class="b-empty-p">Tell it in plain language. It drives your own tabs and reports back what it did.</div>`;
-  } else if (state === 2) {
-    body = `<div class="b-task">${TASK2}</div>
-      <div class="b-live">Opened vercel.com/pricing, then netlify.com/pricing. Now reading <span class="cur">fly.io/pricing…</span></div>`;
-  } else if (state === 3) {
-    body = `<div class="b-eyebrow">Answer</div>
-      <div class="b-answer">${ANSWER1}</div>
-      <div class="b-trace"><span class="arrow">›</span>traced via 4 actions · ${DURATION1}</div>
-      <div class="b-log-wrap"><div class="b-log">${ACTIONS1.map(a=>`<div><span class="t">${a.t}</span>${a.label}</div>`).join('')}</div></div>`;
-  } else if (state === 4) {
-    body = `<div class="b-eyebrow">Before it continues</div>
-      <div class="b-card"><div class="h">Approve this action?</div>
-        <p>The agent wants to ${APPROVAL_ACTION}. This cannot be undone once sent.</p>
-        <div class="b-scopes">
-          <button class="primary">Allow once</button>
-          <button>Allow for this conversation</button>
-          <button>Always allow this action</button>
-        </div>
-        <button class="b-deny">Deny</button>
-      </div>`;
-  } else if (state === 5) {
-    body = `<div class="b-eyebrow">Your turn</div>
-      <div class="b-card"><div class="h">Sign in to continue</div>
-        <p>Checkto hit a sign-in wall and handed the form back to you.</p>
-        <div class="b-cred">
-          <label>Username</label><input placeholder="you@company.com">
-          <label>Password</label><input type="password" placeholder="••••••••">
-          <div class="note">${cap(CRED_NOTE_A)}</div>
-        </div>
-      </div>`;
-  } else if (state === 6) {
-    body = `<div class="b-eyebrow">Stopped</div>
-      <div class="b-blocked-h">The site blocked this one.</div>
-      <p style="font-size:13px;color:oklch(0.42 0.02 260);line-height:1.6;max-width:32ch;margin-top:8px">${cap(BLOCKED_REASON)}</p>
-      <div class="b-trace open" style="margin-top:14px"><span class="arrow">›</span>traced via 4 actions · 0:22</div>
-      <div class="b-log-wrap"><div class="b-log">${[
-        {t:'0:04',l:'Opened tab: netlify.com/checkout'},
-        {t:'0:08',l:'Filled billing details'},
-        {t:'0:15',l:'Failed CAPTCHA challenge (attempt 1)'},
-        {t:'0:22',l:'Failed CAPTCHA challenge (attempt 2)'},
-      ].map(a=>`<div><span class="t">${a.t}</span>${a.l}</div>`).join('')}</div></div>`;
+  function wireInteractions(st){
+    if (st.design === 1 && st.state === 3){
+      var h = document.getElementById("d1toggle");
+      if (h) h.addEventListener("click", function(){ toggle("d1collapse"); h.setAttribute("data-open", h.getAttribute("data-open") === "true" ? "false" : "true"); });
+    }
+    if (st.design === 2 && st.state === 3){
+      var h2 = document.getElementById("d2toggle");
+      if (h2) h2.addEventListener("click", function(){ toggle("d2older"); });
+    }
+    if (st.design === 3 && st.state === 3){
+      var h3 = document.getElementById("d3toggle");
+      if (h3) h3.addEventListener("click", function(){ toggle("d3collapse"); });
+    }
+    if (st.design === 4 && st.state === 3){
+      var h4 = document.getElementById("d4toggle");
+      if (h4) h4.addEventListener("click", function(){ toggle("d4collapse", "#d4toggle"); });
+    }
   }
-  return `<div class="b-body">${body}</div>
-    <div class="b-composer"><div class="b-composer-inner"><input placeholder="What should checkto do?"><button>Go</button></div></div>`;
-}
 
-function renderC(state){
-  let composer = `<div class="c-composer"><input placeholder="ask checkto..."><button>Run</button></div>`;
-  let content = '';
-  if (state === 1) {
-    content = `<div class="c-empty"><div class="ic"></div><p>No task running. Type one below and it shows up here as a task row.</p></div>`;
-  } else if (state === 2) {
-    content = `<div class="c-board">
-      <div class="c-boardhead"><span>${TASK2.slice(0,42)}…</span><span>0:21</span></div>
-      ${ACTIONS2.map(a=>`<div class="c-row ${a.s}"><div class="c-dot"></div><div><div class="c-txt">${a.label}</div><div class="c-sub">${a.s==='running'?'reading page content':'tab opened'}</div></div><div class="c-chip ${a.s}">${a.s}</div></div>`).join('')}
-      <div class="c-summary"><span>2 done</span><span>1 running</span><span>0 failed</span></div>
-    </div>`;
-  } else if (state === 3) {
-    content = `<div class="c-board">
-      <div class="c-boardhead"><span>${TASK1}</span><span>${DURATION1}</span></div>
-      ${ACTIONS1.map(a=>`<div class="c-row done"><div class="c-dot"></div><div class="c-txt">${a.label}</div><div class="c-chip done">done</div></div>`).join('')}
-      <div class="c-summary"><span>4 done</span><span>0 running</span><span>0 failed</span></div>
-      <div class="c-answer-card"><div class="lbl">answer</div><p>${ANSWER1}</p></div>
-    </div>`;
-  } else if (state === 4) {
-    content = `<div class="c-board">
-      <div class="c-boardhead"><span>buy the cheapest hobby plan</span><span>0:26</span></div>
-      ${ACTIONS2.map(a=>`<div class="c-row done"><div class="c-dot"></div><div class="c-txt">${a.label}</div><div class="c-chip done">done</div></div>`).join('')}
-      <div class="c-card"><div class="h">Approval needed</div><p>Ready to ${APPROVAL_ACTION}. Irreversible once sent.</p>
-        <div class="c-scopes">
-          <button class="primary">Allow once</button>
-          <button>Allow for this conversation</button>
-          <button>Always allow</button>
-        </div>
-        <button class="c-deny">Deny</button>
-      </div>
-    </div>`;
-  } else if (state === 5) {
-    content = `<div class="c-board">
-      <div class="c-boardhead"><span>${TASK1}</span><span>0:06</span></div>
-      <div class="c-row running"><div class="c-dot"></div><div class="c-txt">Waiting on sign-in</div><div class="c-chip running">paused</div></div>
-      <div class="c-card"><div class="h">Sign in</div>
-        <div class="c-cred"><label>Username</label><input placeholder="you@company.com">
-        <label>Password</label><input type="password" placeholder="••••••••">
-        <div class="note">${cap(CRED_NOTE_A)}</div></div>
-      </div>
-    </div>`;
-  } else if (state === 6) {
-    content = `<div class="c-board">
-      <div class="c-boardhead"><span>buy the cheapest hobby plan</span><span>0:22</span></div>
-      ${[
-        {label:'Opened tab: netlify.com/checkout',s:'done'},
-        {label:'Filled billing details',s:'done'},
-        {label:'CAPTCHA challenge',s:'failed'},
-      ].map(a=>`<div class="c-row ${a.s}"><div class="c-dot"></div><div class="c-txt">${a.label}</div><div class="c-chip ${a.s}">${a.s}</div></div>`).join('')}
-      <div class="c-card failed"><div class="h">Blocked by site</div><p>${cap(BLOCKED_REASON)}</p>
-        <button class="c-retry">Take over this tab</button></div>
-    </div>`;
+  /* ------------------------------------------------------------------ */
+  /* dock                                                                 */
+  /* ------------------------------------------------------------------ */
+  function buildDock(){
+    var st = params();
+    var html = "";
+    html += '<div class="dock-row"><span class="dock-label">design</span>';
+    for (var d = 1; d <= 4; d++){
+      html += '<button class="dock-btn' + (st.design === d ? ' is-active' : '') + '" data-design="' + d + '">' + d + '</button>';
+    }
+    html += '</div>';
+    html += '<div class="dock-row"><span class="dock-label">state</span>';
+    for (var s = 1; s <= 6; s++){
+      html += '<button class="dock-btn' + (st.state === s ? ' is-active' : '') + '" data-state="' + s + '">' + s + '</button>';
+    }
+    html += '</div>';
+    html += '<div class="dock-sep"></div>';
+    html += '<div class="dock-row">' +
+      '<button class="dock-btn wide' + (st.width === "400" ? ' is-active' : '') + '" data-width="400">400px</button>' +
+      '<button class="dock-btn wide' + (st.width === "320" ? ' is-active' : '') + '" data-width="320">320px</button>' +
+    '</div>';
+    var dock = document.getElementById("dock");
+    dock.innerHTML = html;
+    dock.querySelectorAll("[data-design]").forEach(function(btn){
+      btn.addEventListener("click", function(){ setParams({ design: parseInt(btn.dataset.design, 10) }); buildDock(); });
+    });
+    dock.querySelectorAll("[data-state]").forEach(function(btn){
+      btn.addEventListener("click", function(){ setParams({ state: parseInt(btn.dataset.state, 10) }); buildDock(); });
+    });
+    dock.querySelectorAll("[data-width]").forEach(function(btn){
+      btn.addEventListener("click", function(){ setParams({ width: btn.dataset.width }); buildDock(); });
+    });
   }
-  if (state === 4 || state === 5) composer = `<div class="c-composer"><input disabled placeholder="waiting on you..."><button disabled>Run</button></div>`;
-  return `${composer}${content}`;
-}
 
-function renderD(state){
-  const strip = (steps, elapsed, cost, tokens, tab) => `<div class="d-strip">
-    <div class="cell"><div class="lbl">steps</div><div class="val">${steps}</div></div>
-    <div class="cell"><div class="lbl">elapsed</div><div class="val ${state===2?'live':''}" ${state===2?'id="d-elapsed"':''}>${elapsed}</div></div>
-    <div class="cell"><div class="lbl">cost</div><div class="val" ${state===2?'id="d-cost"':''}>${cost}</div></div>
-    <div class="cell"><div class="lbl">tokens</div><div class="val" ${state===2?'id="d-tokens"':''}>${tokens}</div></div>
-    <div class="cell"><div class="lbl">tab</div><div class="val" style="font-size:10px">${tab}</div></div>
-  </div>`;
-  let body = '';
-  if (state === 1) {
-    body = strip('000', '0:00', '$0.00', '0', '—') + `<div class="d-empty"><div class="glyph">▢</div><p>Standing by.</p></div>`;
-  } else if (state === 2) {
-    body = strip('003', '0:21', '$0.02', '4.1K', 'fly.io') + `<div class="d-body">
-      <div class="d-task">${TASK2}</div>
-      ${ACTIONS2.map(a=>`<div class="d-row ${a.s}"><div class="t">${a.t}</div><div class="txt">${a.label}</div><div class="led"></div></div>`).join('')}
-    </div>`;
-  } else if (state === 3) {
-    body = strip('004', DURATION1, '$0.01', '2.3K', 'closed') + `<div class="d-body">
-      <div class="d-task">${TASK1}</div>
-      ${ACTIONS1.map(a=>`<div class="d-row done"><div class="t">${a.t}</div><div class="txt">${a.label}</div><div class="led"></div></div>`).join('')}
-      <div class="d-answer"><div class="lbl">OUTPUT</div><p>${ANSWER1}</p></div>
-    </div>`;
-  } else if (state === 4) {
-    body = strip('003', '0:26', '$0.04', '5.0K', 'netlify') + `<div class="d-body">
-      <div class="d-task">buy the cheapest hobby plan</div>
-      <div class="d-card"><div class="h">hold — approval required</div>
-        <p>${cap(APPROVAL_ACTION)}. irreversible.</p>
-        <div class="d-scopes">
-          <button>[ 1 ] allow once</button>
-          <button>[ 2 ] allow this conversation</button>
-          <button>[ 3 ] always allow</button>
-        </div>
-        <button class="d-deny">[ esc ] deny</button>
-      </div>
-    </div>`;
-  } else if (state === 5) {
-    body = strip('001', '0:06', '$0.00', '900', 'sign-in') + `<div class="d-body">
-      <div class="d-task">${TASK1}</div>
-      <div class="d-cred">
-        <label>username</label><input placeholder="you@company.com">
-        <label>password</label><input type="password" placeholder="••••••••">
-        <div class="note">${CRED_NOTE_A}</div>
-      </div>
-    </div>`;
-  } else if (state === 6) {
-    body = strip('004', '0:22', '$0.03', '3.8K', 'checkout') + `<div class="d-body">
-      <div class="d-task">buy the cheapest hobby plan</div>
-      ${[
-        {t:'0:04',label:'Opened tab: netlify.com/checkout',s:'done'},
-        {t:'0:15',label:'Failed CAPTCHA challenge (attempt 1)',s:'failed'},
-        {t:'0:22',label:'Failed CAPTCHA challenge (attempt 2)',s:'failed'},
-      ].map(a=>`<div class="d-row ${a.s}"><div class="t">${a.t}</div><div class="txt">${a.label}</div><div class="led"></div></div>`).join('')}
-      <div class="d-card deny"><div class="h">stopped</div><p>${cap(BLOCKED_REASON)}</p>
-        <button class="d-retry">take the tab yourself</button></div>
-    </div>`;
-  }
-  const disabled = state === 4 || state === 5;
-  return `${body}<div class="d-composer"><input ${disabled?'disabled':''} placeholder="TASK ›"><button>RUN</button></div>`;
-}
+  window.addEventListener("popstate", function(){ render(); buildDock(); });
 
-function renderE(state){
-  let body = '';
-  if (state === 1) {
-    body = `<div class="e-empty"><p>Tell it what to do. It'll work in your tabs and check back in.</p></div>`;
-  } else if (state === 2) {
-    body = `<div class="e-msg-you"><span class="who">you</span>${TASK2}</div>
-      <div class="e-inline"><span id="e-loop" class="cur">opened vercel.com/pricing</span></div>`;
-  } else if (state === 3) {
-    body = `<div class="e-msg-you"><span class="who">you</span>${TASK1}</div>
-      <div class="e-done-line">worked for ${DURATION1} · 4 actions — tap to expand</div>
-      <div class="e-answer">${ANSWER1}</div>`;
-  } else if (state === 4) {
-    body = `<div class="e-msg-you"><span class="who">you</span>buy the cheapest hobby plan</div>
-      <div class="e-inline">compared vercel, netlify and fly — netlify wins on price</div>
-      <div class="e-card"><div class="h">One more thing</div>
-        <p>Before it can ${APPROVAL_ACTION}, it needs your go-ahead. Can't be undone.</p>
-        <div class="e-scopes">
-          <button class="primary">Allow once</button>
-          <button>This conversation</button>
-          <button>Always</button>
-        </div>
-        <button class="e-deny">Deny</button>
-      </div>`;
-  } else if (state === 5) {
-    body = `<div class="e-msg-you"><span class="who">you</span>${TASK1}</div>
-      <div class="e-inline">hit a sign-in page and stopped there</div>
-      <div class="e-card"><div class="h">Sign in</div>
-        <div class="e-cred"><label>Username</label><input placeholder="you@company.com">
-        <label>Password</label><input type="password" placeholder="••••••••">
-        <div class="note">${CRED_NOTE_A}</div></div>
-      </div>`;
-  } else if (state === 6) {
-    body = `<div class="e-msg-you"><span class="who">you</span>buy the cheapest hobby plan</div>
-      <div class="e-inline">opened checkout, filled billing details</div>
-      <div class="e-blocked">Stopped — ${BLOCKED_REASON}</div>
-      <div class="e-scopes" style="margin-top:10px"><button class="primary">Take over this tab</button></div>`;
-  }
-  return `<div class="e-body">${body}</div>
-    <div class="e-composer"><div class="e-composer-pill"><input placeholder="Message checkto"><button>↑</button></div></div>`;
-}
-
-const RENDERERS = { a: renderA, b: renderB, c: renderC, d: renderD, e: renderE };
-
-/* ---------------- shell / bar / render ---------------- */
-function renderBar(){
-  const vrow = document.getElementById('variant-row');
-  vrow.innerHTML = `<button class="arrow" id="v-prev">←</button>` +
-    VARIANTS.map(v => `<button data-v="${v.key}" class="${v.key===curVariant?'active':''}">${v.key.toUpperCase()} · ${v.name}</button>`).join('') +
-    `<button class="arrow" id="v-next">→</button>` +
-    `<span class="divider"></span>` +
-    `<button id="width-toggle">${narrow ? '320px → 400px' : '400px → 320px'}</button>`;
-  const srow = document.getElementById('state-row');
-  srow.innerHTML = `<span class="lbl">state</span>` + STATES.map(s => `<button data-s="${s.n}" class="${s.n===curState?'active':''}">${s.n} ${s.name}</button>`).join('');
-
-  vrow.querySelectorAll('button[data-v]').forEach(b => b.addEventListener('click', () => setVariant(b.dataset.v)));
-  srow.querySelectorAll('button[data-s]').forEach(b => b.addEventListener('click', () => setState(Number(b.dataset.s))));
-  document.getElementById('v-prev').addEventListener('click', () => cycleVariant(-1));
-  document.getElementById('v-next').addEventListener('click', () => cycleVariant(1));
-  document.getElementById('width-toggle').addEventListener('click', toggleWidth);
-}
-
-function cycleVariant(dir){
-  const idx = VARIANTS.findIndex(v => v.key === curVariant);
-  const next = VARIANTS[(idx + dir + VARIANTS.length) % VARIANTS.length];
-  setVariant(next.key);
-}
-function setVariant(key){ curVariant = key; syncUrl(); render(); }
-function setState(n){ curState = n; syncUrl(); render(); }
-function toggleWidth(){
-  narrow = !narrow;
-  document.getElementById('stage-outer').classList.toggle('narrow', narrow);
-  syncUrl();
-  renderBar();
-}
-function syncUrl(){
-  const p = new URLSearchParams();
-  p.set('variant', curVariant);
-  p.set('state', String(curState));
-  if (narrow) p.set('narrow', '1');
-  history.replaceState(null, '', '?' + p.toString());
-}
-
-function render(){
-  const stage = document.getElementById('stage');
-  stage.className = 'stage-' + curVariant;
-  const c = CAPTIONS[curVariant];
-  const captionHtml = `<div class="caption"><b>${c.title}</b>${c.body}</div>`;
-  stage.innerHTML = captionHtml + RENDERERS[curVariant](curState);
-  stage.scrollTop = 0;
-  stage.querySelectorAll('.b-trace').forEach(el => el.addEventListener('click', () => el.classList.toggle('open')));
-  startTickers();
-  document.getElementById('stage-outer').classList.toggle('narrow', narrow);
-  document.getElementById('meta-sub').textContent =
-    `variant ${curVariant.toUpperCase()} (${VARIANTS.find(v=>v.key===curVariant).name}) · state ${curState} (${STATES.find(s=>s.n===curState).name}) · ${narrow?'320px':'400px'} wide`;
-  renderBar();
-}
-
-document.addEventListener('keydown', (e) => {
-  const active = document.activeElement;
-  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
-  if (e.key === 'ArrowLeft') cycleVariant(-1);
-  if (e.key === 'ArrowRight') cycleVariant(1);
-});
-
-syncUrl();
-render();
+  render();
+  buildDock();
+})();
 </script>
 </body>
 </html>
