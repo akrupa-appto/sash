@@ -50,6 +50,13 @@
         "mac": "Command+Shift+Period"
       },
       "description": "Open the checkto panel"
+    },
+    "toggle-dictation": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Comma",
+        "mac": "Command+Shift+Comma"
+      },
+      "description": "Voice dictation: press to talk, press again to stop, or press twice quickly to latch hands-free"
     }
   },
   "options_ui": {
