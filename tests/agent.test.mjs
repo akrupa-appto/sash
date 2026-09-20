@@ -574,6 +574,47 @@ test('a type that failed is accepted as done once the snapshot shows the intende
   } finally { snapFn = origSnap; typeTextFn = origType; }
 });
 
+test('a look-alike control holding the value does not settle a failed type', async () => {
+  const [origSnap, origType] = [snapFn, typeTextFn];
+  // Both controls share the key the failure was recorded under (role + name); the second is the one
+  // the action was aimed at, so the first one's value is not evidence about it.
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Search', kind: 'type', inViewport: true, value: 'hello' },
+    { id: 2, role: 'textbox', name: 'Search', kind: 'type', inViewport: true, value: '' },
+  ] });
+  typeTextFn = async () => { throw new Error('the control is covered or not visible'); };
+  try {
+    plans = [
+      { status: 'continue', next: 'type hello into the second search box' },
+      { status: 'done', answer: 'typed hello' },
+      { status: 'done', answer: 'typed hello' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_2' }, type_value: { choice: 'text_0' } }];
+    const result = await run(true, 6, { values: ['hello'] });
+    assert.equal(result.status, 'blocked', 'the value on another control is not proof this one took the text');
+  } finally { snapFn = origSnap; typeTextFn = origType; }
+});
+
+test('a failed type-and-enter is not accepted as done just because the field holds the text', async () => {
+  const [origSnap, origType] = [snapFn, typeTextFn];
+  let present = '';
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Search', kind: 'type', inViewport: true, value: present },
+  ] });
+  // The text lands, but the action also claims to have pressed Enter: the value cannot vouch for that.
+  typeTextFn = async () => { present = 'hello'; throw new Error('the control is covered or not visible'); };
+  try {
+    plans = [
+      { status: 'continue', next: 'search for hello' },
+      { status: 'done', answer: 'searched for hello' },
+      { status: 'done', answer: 'searched for hello' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_AND_ENTER' }, type_target: { choice: 'el_1' }, type_value: { choice: 'text_0' } }];
+    const result = await run(true, 6, { values: ['hello'] });
+    assert.equal(result.status, 'blocked', 'the text landing does not prove the Enter submitted');
+  } finally { snapFn = origSnap; typeTextFn = origType; }
+});
+
 test('a click that failed still blocks done even if a later snapshot shows the page changed', async () => {
   const [origSnap, origClick] = [snapFn, clickFn];
   let clicks = 0;

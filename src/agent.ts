@@ -249,12 +249,17 @@ function resolutionHistoryLine(step: number, resolution: ResumeResolution | unde
 // A type/select that threw is still confirmed if a later snapshot shows that same control holding
 // the intended value. Clicks stay conservative: a later page change is not proof the click landed.
 function evidenceClearsFailure(failure: PendingFailure, elements: { role: string; name: string; value?: string }[]): boolean {
-  if (failure.op !== "TYPE_TEXT" && failure.op !== "TYPE_AND_ENTER" && failure.op !== "SELECT") return false;
+  // TYPE_AND_ENTER is deliberately absent: the field's value proves the typing landed, not that the
+  // Enter submitted anything, and a run may not report a submission it never observed.
+  if (failure.op !== "TYPE_TEXT" && failure.op !== "SELECT") return false;
   if (failure.elementKey === undefined || failure.intended === undefined) return false;
   const wanted = snapshotClean(failure.intended);
   if (!wanted) return false;
-  const match = elements.find((e) => elementKey(e) === failure.elementKey);
-  return match !== undefined && snapshotClean(match.value ?? "") === wanted;
+  // role+name is not an identity: two "Email" boxes or two rows of the same form share a key, and the
+  // first one is not necessarily the control that threw. Only exactly one match proves anything —
+  // otherwise a look-alike holding the value would settle a failure the run never actually resolved.
+  const matches = elements.filter((e) => elementKey(e) === failure.elementKey);
+  return matches.length === 1 && snapshotClean(matches[0].value ?? "") === wanted;
 }
 
 // A final "done" answer that names something the run never actually saw (a PR/run/file number, a quoted
