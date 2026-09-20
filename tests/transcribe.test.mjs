@@ -14,6 +14,22 @@ const withKeys = async (keys, fn) => {
 };
 const clip = { audio: new Uint8Array([1, 2, 3, 4]), mimeType: 'audio/webm;codecs=opus' };
 const ok = (body, init) => new Response(JSON.stringify(body), init);
+const tick = (ms = 1) => new Promise(resolve => setTimeout(resolve, ms));
+// Waits for one of these in-memory mock requests to have been sent, so a test can then assert on
+// something that is deliberately still in flight. Nothing here needs more than a few milliseconds.
+const until = async (predicate, ms = 500) => {
+  const deadline = Date.now() + ms;
+  while (!predicate() && Date.now() < deadline) await tick();
+  return predicate();
+};
+// console.warn is this module's surface for a cleanup that failed but that must not fail the
+// dictation (see src/transcribe.ts); capture it so a test can require that it was used.
+const captureWarnings = () => {
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  return { warnings, restore: () => { console.warn = realWarn; } };
+};
 
 test('provider-only voice choices resolve to stock transcription model specs', () => {
   assert.equal(defaultTranscriptionSpec('openrouter'), 'openai/gpt-transcribe');
@@ -188,6 +204,125 @@ test('a reply naming a file but no uri deletes that file before reporting the fa
     const cleanup = calls.find(c => c.init.method === 'DELETE');
     assert.equal(cleanup?.url, 'https://generativelanguage.googleapis.com/v1beta/files/abc', 'the audio it just uploaded is deleted, not left for 48 hours');
   } finally { globalThis.fetch = realFetch; }
+});
+
+// The offscreen document that runs transcribe() is closed as soon as transcribe() resolves, and
+// closing it aborts every request it still has in flight — so a cleanup that was merely kicked off is
+// the same as one never sent. This DELETE is held open on purpose: transcribe() may not settle while
+// it is still in flight.
+test('the success path awaits the Gemini file delete, rather than leaving it in flight for the offscreen document to abort', async () => {
+  const realFetch = globalThis.fetch;
+  const events = [];
+  let releaseDelete;
+  const deleteGate = new Promise(resolve => { releaseDelete = resolve; });
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url) === 'https://upload.example.test/session') return uploadOk();
+    if (init.method === 'DELETE') {
+      events.push('delete started');
+      await deleteGate;
+      events.push('delete finished');
+      return new Response('{}', { status: 200 });
+    }
+    return ok({ output_text: 'buy oat milk' });
+  };
+  try {
+    let settled = false;
+    const result = withKeys({ GEMINI_API_KEY: 'g-key' }, () => transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }))
+      .then(value => { settled = true; return value; });
+    assert.ok(await until(() => events.includes('delete started')), 'the uploaded clip is deleted');
+    await tick(20); // long enough for any un-awaited promise chain to have resolved transcribe()
+    assert.equal(settled, false, 'transcribe() must still be pending while the DELETE is in flight, or the caller tears the offscreen document down and aborts it');
+    releaseDelete();
+    const value = await result;
+    assert.equal(value.text, 'buy oat milk');
+    assert.deepEqual(events, ['delete started', 'delete finished'], 'the delete completed before transcribe() returned');
+  } finally { releaseDelete(); globalThis.fetch = realFetch; }
+});
+
+// Privacy, not correctness: a delete that fails must not fail the dictation, but it must not vanish
+// either — the clip is the user's own microphone audio and it stays in Google's store for 48 hours.
+test('a delete that fails is reported instead of vanishing, and does not turn a successful dictation into an error', async () => {
+  const realFetch = globalThis.fetch;
+  for (const failure of [
+    { name: 'an HTTP failure', reply: () => new Response('nope', { status: 500 }) },
+    { name: 'a network error', reply: () => Promise.reject(new Error('socket closed')) },
+  ]) {
+    const { warnings, restore } = captureWarnings();
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+      if (String(url) === 'https://upload.example.test/session') return uploadOk();
+      if (init.method === 'DELETE') return failure.reply();
+      return ok({ output_text: 'buy oat milk' });
+    };
+    try {
+      const result = await withKeys({ GEMINI_API_KEY: 'g-key' }, () => transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }));
+      assert.equal(result.text, 'buy oat milk', `${failure.name}: the transcript is still returned`);
+      assert.equal(warnings.length, 1, `${failure.name}: the failed cleanup is reported, not swallowed`);
+      assert.match(warnings[0], /cleanup failed/, `${failure.name}: the report says the cleanup failed`);
+      assert.match(warnings[0], /files\/abc/, `${failure.name}: the report names the clip that may still be in Google's store`);
+    } finally { restore(); globalThis.fetch = realFetch; }
+  }
+});
+
+// Every way the upload itself can fail leaves an open session behind, and an open session holds the
+// clip. Each has to be cancelled to completion before the failure surfaces; the cancel is held open
+// here so the test can see whether transcribe() settled while it was still in flight.
+const cancelScenarios = [
+  { name: 'the upload request rejects', upload: () => Promise.reject(new Error('network down')), surfaces: /network down/ },
+  { name: 'the upload answers 500', upload: () => new Response('nope', { status: 500 }), surfaces: /Gemini transcription failed \(500\)/ },
+  { name: 'the finalize reply cannot be read', upload: () => new Response('<html>gateway timed out</html>', { status: 200 }), surfaces: /./ },
+];
+
+test('every failed-upload path awaits its session cancel before the failure surfaces', async () => {
+  const realFetch = globalThis.fetch;
+  for (const scenario of cancelScenarios) {
+    const events = [];
+    let releaseCancel;
+    const cancelGate = new Promise(resolve => { releaseCancel = resolve; });
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+      if (init.headers?.['X-Goog-Upload-Command'] === 'cancel') {
+        events.push('cancel started');
+        await cancelGate;
+        events.push('cancel finished');
+        return new Response('{}', { status: 200 });
+      }
+      return scenario.upload();
+    };
+    let settled = false;
+    const outcome = withKeys({ GEMINI_API_KEY: 'g-key' }, () => transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }))
+      .then(value => ({ failure: undefined, value }), failure => ({ failure, value: undefined }))
+      .then(result => { settled = true; return result; });
+    try {
+      assert.ok(await until(() => events.includes('cancel started')), `${scenario.name}: the open session is cancelled`);
+      await tick(20);
+      assert.equal(settled, false, `${scenario.name}: transcribe() must not settle while the cancel is still in flight`);
+      releaseCancel();
+      const { failure } = await outcome;
+      assert.ok(failure, `${scenario.name}: the upload failure still surfaces`);
+      assert.match(failure.message, scenario.surfaces);
+      assert.deepEqual(events, ['cancel started', 'cancel finished'], `${scenario.name}: the cancel completed before the failure surfaced`);
+    } finally { releaseCancel(); globalThis.fetch = realFetch; }
+  }
+});
+
+// A cancel that itself fails is the same kind of non-fatal problem as a failed delete: reported, and
+// it must not replace the upload failure the caller actually needs to see.
+test('a cancel that itself fails is reported, and the upload failure is still the one that surfaces', async () => {
+  const realFetch = globalThis.fetch;
+  const { warnings, restore } = captureWarnings();
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (init.headers?.['X-Goog-Upload-Command'] === 'cancel') return new Response('gone', { status: 500 });
+    return new Response('nope', { status: 500 });
+  };
+  try {
+    await withKeys({ GEMINI_API_KEY: 'g-key' }, () =>
+      assert.rejects(transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }), /Gemini transcription failed \(500\)/));
+    assert.equal(warnings.length, 1, 'the failed cancel is reported, not swallowed');
+    assert.match(warnings[0], /cleanup failed/);
+  } finally { restore(); globalThis.fetch = realFetch; }
 });
 
 test('a custom server without the transcription endpoint produces a clear, actionable error', async () => {

@@ -31,7 +31,7 @@ function makeChrome(data) {
       sendMessage: async message => (message.type === 'permission' ? { allow: true } : undefined),
     },
     tabs: {
-      get: async id => ({ id, url: 'https://shop.test', title: 'Shop' }),
+      get: async id => ({ id, url: tabUrl, title: 'Shop' }),
       create: async opts => ({ id: 999, ...opts }),
       query: async () => [{ id: 12, windowId: 1, url: 'https://shop.test', active: true }],
       // A run that switches tabs mid-flight keeps more than one page attached at once, which walks
@@ -52,12 +52,16 @@ function makeChrome(data) {
 }
 
 const data = { settings: { openrouterKey: 'private-test-key', model: 'fixture/model' } };
+// The page the fixture's tab is on. A test that cares where the tab actually is (an approval card
+// answered after it navigated) moves this; everything else leaves it where the requests are about.
+let tabUrl = 'https://shop.test';
 globalThis.chrome = makeChrome(data);
 
 let taskStarted = 0;
 let nextOutcome; // a single 'end' event for the next runTask call
 let nextOutcomes = []; // a queue of 'end' events, for a chain of runTask calls inside one execute()
 let capturedPages = []; // tabId the `page` argument carried into each runTask call, in order
+let capturedInputs = [];
 let switchToTabId; // if set, the next runTask call switches tabs via browserTabs.select first
 
 mock.module('../extension/browser.js', { namedExports: {
@@ -72,6 +76,7 @@ mock.module('../extension/browser.js', { namedExports: {
 mock.module('../src/agent.ts', { namedExports: { runTask: async (page, input, emit) => {
   taskStarted++;
   capturedPages.push(page.tabId);
+  capturedInputs.push(input);
   if (switchToTabId !== undefined) { const target = switchToTabId; switchToTabId = undefined; await input.browserTabs.select(target); }
   emit({ type: 'step', step: 1, action: 'CLICK [5] button "submit"', plan: 'submit', costUsd: 0 });
   const outcome = nextOutcomes.length ? nextOutcomes.shift() : nextOutcome;
@@ -131,6 +136,12 @@ test('conversation: repeating the same action does not prompt, and clear makes i
   await until(() => data.runState?.status === 'done' && taskStarted === before + 2);
   assert.deepEqual(data.runState.requests, [], 'the stored grant covered the repeat: no card was shown');
   assert.equal(data.runState.messages.at(-1).text, 'done again');
+  const auto = capturedInputs.at(-1);
+  assert.equal(auto.goal.startsWith('submit the order once more'), true);
+  assert.notEqual(auto.goal, 'go on');
+  assert.equal(auto.resume?.resolution?.kind, 'approved');
+  assert.equal(auto.resume?.resolution?.action, 'submit the $89.00 order');
+  assert.equal(auto.resume?.resolution?.scope, 'conversation');
 
   await send({ type: 'clear' });
   assert.deepEqual(data.runState.grants ?? {}, {}, 'clear wipes conversation-scoped grants');
@@ -269,6 +280,62 @@ test('a tab switch mid-run is carried into a grant-covered auto-resume, not the 
   await send({ type: 'run', tabId: 12, goal: 'submit the order on the new tab', mode: 'fast' });
   await until(() => data.runState?.status === 'done' && capturedPages.length === 2);
   assert.deepEqual(capturedPages, [12, 77], 'the auto-resumed call used the tab the agent switched to, not the tab the run started on');
+  await resetGrants();
+});
+
+// An approval is for a page, not just for an action. The card sits open while the user decides, and the
+// tab behind it can navigate: the same action wording on whatever it landed on is a different control
+// on a different site. Answering then stores no grant and resumes nothing -- otherwise the approval
+// (and, with a stored grant, every later repeat of it) is carried onto the site nobody looked at.
+test('an approval answered after the tab navigated is refused: nothing stored, nothing resumed', async () => {
+  await send({ type: 'clear' });
+  await resetGrants();
+  nextOutcome = paused(approval('moved-1'));
+  await send({ type: 'run', tabId: 12, goal: 'submit the order', mode: 'fast' });
+  await until(() => data.runState?.status === 'needs_input');
+
+  // The card is still on screen; the tab is not on the site it is about any more.
+  tabUrl = 'https://other.test/checkout';
+  const before = taskStarted;
+  const messagesBefore = data.runState.messages.length;
+  const reply = await send({ type: 'answer', id: 'moved-1', outcome: 'submitted', scope: 'always' });
+  assert.match(reply.error, /moved to a different site/);
+  assert.equal(taskStarted, before, 'nothing resumed onto the site the user never approved');
+  assert.deepEqual(data.grants ?? {}, {}, 'no grant was stored for a page the user did not look at');
+  assert.deepEqual(data.runState.grants ?? {}, {}, 'and none on the conversation either');
+  assert.deepEqual(data.runState.requests.map(r => r.id), ['moved-1'], 'the question is still the question');
+  assert.equal(data.runState.messages.length, messagesBefore, 'a refusal is not a reply from checkto');
+
+  // Back on the page the user answered about, the same card answers normally: the refusal is not a dead end.
+  tabUrl = 'https://shop.test';
+  nextOutcome = { status: 'done', message: 'done' };
+  await send({ type: 'answer', id: 'moved-1', outcome: 'submitted', scope: 'once' });
+  await until(() => data.runState?.status === 'done');
+  await resetGrants();
+});
+
+// The other resume path: a stored grant answers a repeat ask with no card at all. It covers that action
+// on the site it was given for, so when the run is somewhere else it must not be used -- the card goes
+// up for a real answer instead of the action landing on a site the user never allowed.
+test('a stored grant does not auto-resume when the run is on another site', async () => {
+  await send({ type: 'clear' });
+  await resetGrants();
+  nextOutcome = paused(approval('granted-1'));
+  await send({ type: 'run', tabId: 12, goal: 'submit the order', mode: 'fast' });
+  await until(() => data.runState?.status === 'needs_input');
+  nextOutcome = { status: 'done', message: 'done' };
+  await send({ type: 'answer', id: 'granted-1', outcome: 'submitted', scope: 'always' });
+  await until(() => data.runState?.status === 'done');
+
+  tabUrl = 'https://other.test';
+  const before = taskStarted;
+  nextOutcome = paused(approval('granted-2'));
+  await send({ type: 'run', tabId: 12, goal: 'submit the order again', mode: 'fast' });
+  await until(() => data.runState?.status === 'needs_input');
+  assert.equal(taskStarted, before + 1, 'the grant did not carry the action onto another site');
+  assert.deepEqual(data.runState.requests.map(r => r.id), ['granted-2'], 'the card is shown for a real answer');
+  tabUrl = 'https://shop.test';
+  await send({ type: 'answer', id: 'granted-2', outcome: 'declined' });
   await resetGrants();
 });
 

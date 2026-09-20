@@ -73,13 +73,6 @@ export async function groupTab(tabId) {
   return work;
 }
 
-/** Rename the group to the task. Never collapses it: the user has to be able to see what is running. */
-export async function renameGroup(title) {
-  const id = await knownGroupId();
-  if (id === undefined || typeof title !== 'string' || !title.trim()) return false;
-  return await safe(() => chrome.tabGroups.update(id, { title: title.trim().slice(0, 60), collapsed: false })) !== undefined;
-}
-
 /** The agent says how it is leaving a tab. Anything it does not mark counts as unmarked. */
 export function markTab(tabId, disposition) {
   if (disposition !== Disposition.DELIVERABLE && disposition !== Disposition.HANDOFF) return undefined;

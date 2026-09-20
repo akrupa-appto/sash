@@ -22,6 +22,8 @@ let voice = { enabled: false, mode: undefined, capability: { canTranscribe: fals
 let dictationSessionActive = false; // between a successful dictation:start and its matching stop
 let micBusy = false; // dictation:stop is in flight: recording has ended, the final transcription hasn't
 let micFilledComposer = false; // #goal's text was last written by dictation, not typed — see render()
+let voiceMayWriteComposer = false; // dictation currently owns the composer; set when a session starts, cleared on user input or a failed start
+let claimedDictationSession = null; // the session whose transcript owns the composer; null = none yet
 const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
 const request = async message => {
@@ -67,11 +69,23 @@ async function startDictation() {
   if (dictationSessionActive || micBusy || running || submitting || pendingRequest) return;
   if (!voice.enabled || !voice.capability?.canTranscribe || !voice.mode) return;
   dictationSessionActive = true;
+  // Ownership is claimed before the request, not after its reply: background.js writes and
+  // broadcasts the listening state before it answers dictation:start, so the first partial can be in
+  // the panel's hands before that reply is. A failed start gives back only the claim this press
+  // actually took (`tookOwnership`): a session this panel did not start — the global shortcut, or its
+  // hands-free latch, claimed by the listening transition in render() — is still listening on its own,
+  // and dropping its ownership would cut off the partials and final text still coming from it.
+  const tookOwnership = !voiceMayWriteComposer;
+  voiceMayWriteComposer = true;
   renderMic();
+  const startFailed = () => {
+    dictationSessionActive = false;
+    if (tookOwnership) voiceMayWriteComposer = false;
+  };
   try {
     const reply = await request({ type: 'dictation:start', chunkMs: chunkMsFor(voice.mode) });
-    if (!reply.ok) { dictationSessionActive = false; showError(new Error(reply.error || 'could not start the mic')); }
-  } catch (err) { dictationSessionActive = false; showError(err); }
+    if (!reply.ok) { startFailed(); showError(new Error(reply.error || 'could not start the mic')); }
+  } catch (err) { startFailed(); showError(err); }
   renderMic();
 }
 async function stopDictation() {
@@ -470,10 +484,25 @@ function render(state) {
   // the same way, independently, since it can't see this panel's local ptt state).
   if (running) ptt.endLatch();
   // Dictation reaching the composer: "dictate" only fills it once speech ends, so the user can still
-  // edit before pressing send; "prewarm"/"eager" stream the interim transcript live. Never touches
-  // the textarea once a run is under way (running clears anything voice last wrote there) or after
-  // the user has started typing their own message over it (see the #goal 'input' listener below).
-  if (voice.enabled && state.dictation && !running) {
+  // edit before pressing send; "prewarm"/"eager" stream the interim transcript live. Ownership is
+  // `voiceMayWriteComposer` (claimed by the session's own start — see startDictation(), or, for a
+  // session this panel did not start, by that session's first listening state just below; cleared on
+  // a keystroke) and provenance of the current text is `micFilledComposer`, which is not the same flag.
+  const nowListening = !!(voice.enabled && state.dictation && state.dictation.status === 'listening');
+  // A session this panel did not start (the global shortcut, or its hands-free latch) takes the
+  // composer once, when it starts, and holds it for as long as that session lives. A session is live
+  // right through a chunk that fails to transcribe: the mic stays on and the status flickers
+  // 'listening' → 'error' → 'listening' (extension/offscreen.js handleChunk), which is not a new
+  // session — the user may have typed over the transcript during the flicker, and the next partial
+  // must not land on top of their text. background.js gives every session its own id, so a genuinely
+  // new one claims again; a session this panel started has already claimed in startDictation().
+  const dictationLive = !!(state.dictation && state.dictation.status !== 'idle');
+  if (!dictationLive) claimedDictationSession = null;
+  else if (nowListening && !dictationSessionActive) {
+    const session = state.dictation.sessionId ?? '';
+    if (claimedDictationSession !== session) { claimedDictationSession = session; voiceMayWriteComposer = true; }
+  }
+  if (voice.enabled && state.dictation && !running && voiceMayWriteComposer) {
     const goal = $('#goal');
     if (voice.mode !== 'dictate' && state.dictation.status === 'listening' && typeof state.dictation.partialText === 'string') {
       goal.value = state.dictation.partialText; micFilledComposer = true; updateMultiline(); controls();
@@ -635,15 +664,28 @@ chrome.tabs.onCreated.addListener(scheduleRefresh); chrome.tabs.onRemoved.addLis
 // replaces a message it does not understand.
 // Both shapes this codebase actually throws are matched: providers.ts's `Label 401: body` for a
 // run, and transcribe.ts's `Label transcription failed (401): body` for dictation.
+// A status is only a cause when it is the status the provider sent back. 401 is the one that means
+// the key itself was refused; 403 is a valid key that the account, plan, model or a provider policy
+// did not authorise, so it says that and never "invalid key" — the old wording told people to
+// paste a new key for something a new key does not fix, and the provider's own words are on the
+// title either way.
 const PROVIDER_ERROR = /^([A-Za-z][^:]{0,39}?)\s(?:\((\d{3})\)|(\d{3})):\s*([\s\S]+)$/;
 const PROVIDER_SUFFIX = /\s*(?:transcription|request|chat|completion|generation)?\s*failed$/i;
-const NETWORK_ERROR = /failed to fetch|fetch failed|network ?error|network request failed|load failed|socket hang up|econnrefused|enotfound|err_(?:name_not_resolved|connection|timed_out)/i;
+// A connection failure is only rewritten for the exact exception text a dead connection produces:
+// Node's `fetch failed` (undici), Chromium's `Failed to fetch`, Safari's `Load failed`, Firefox's
+// NetworkError, and Node's socket/syscall codes. Every alternative is anchored to the whole
+// message — optionally behind an error class name — because the unanchored list matched ordinary
+// provider prose: "file upload failed validation" contains "load failed", and an unrecognised
+// error was being reported as a connection failure the provider never mentioned. Anything that is
+// not one of these shapes stays verbatim.
+const NETWORK_ERROR = /^(?:[A-Za-z_$]*Error:\s*)?(?:failed to fetch|fetch failed|load failed|network ?error when attempting to fetch resource\.?|network request failed|the operation was aborted due to timeout|the network connection was lost\.?|a server with the specified hostname could not be found\.?|socket hang up|(?:connect|read|write|getaddrinfo|querya|querysrv) (?:econnrefused|econnreset|econnaborted|etimedout|ehostunreach|enetunreach|enotfound|eai_again)\b[^\n]*|(?:net::)?(?:econnrefused|econnreset|etimedout|enotfound|eai_again|err_name_not_resolved|err_connection_refused|err_connection_timed_out|err_connection_reset|err_internet_disconnected|err_network_changed))\s*$/i;
 function humanError(message) {
   const raw = String(message ?? '').trim();
   const match = raw.match(PROVIDER_ERROR);
   const provider = match ? match[1].replace(PROVIDER_SUFFIX, '').trim() : '';
   const status = match ? Number(match[2] || match[3]) : undefined;
-  if (status === 401 || status === 403) return `${provider} rejected the api key: it is invalid, expired or revoked. open settings and paste a current one.`;
+  if (status === 401) return `${provider} rejected the api key: it is invalid, expired or revoked. open settings and paste a current one.`;
+  if (status === 403) return `${provider} refused this request (403): the key or account is not permitted to do that — open settings to change the key or model, or hover this line for the provider's own message.`;
   if (status === 429) return `${provider} is rate-limiting this key, or its quota is used up. wait a moment and try again.`;
   if (status >= 500) return `${provider} failed at its own end (${status}). that one is theirs, not yours — try again in a moment.`;
   if (NETWORK_ERROR.test(raw)) return 'checkto could not reach the model provider: the connection failed. check this machine is online, then try again.';
@@ -703,7 +745,11 @@ $('#task-form').addEventListener('submit', async event => {
   } catch (err) { showError(err); }
   finally { submitting = false; controls(); }
 });
-$('#goal').addEventListener('input', () => { updateMention(); updateMultiline(); controls(); });
+$('#goal').addEventListener('input', () => {
+  voiceMayWriteComposer = false;
+  micFilledComposer = false;
+  updateMention(); updateMultiline(); controls();
+});
 $('#goal').addEventListener('click', updateMention);
 $('#goal').addEventListener('keydown', event => {
   if (mention) {
