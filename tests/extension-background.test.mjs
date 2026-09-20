@@ -28,11 +28,16 @@ let lastInput;
 let offscreenDocs = 0;
 let offscreenStartResult = { ok: true };
 let offscreenStopResult = { text: 'hello from the mic' };
+let storageFails = false; // proves a failed settings read can never strand a hot mic
 const tabsCreated = [];
 
 globalThis.chrome = {
   storage: { local: {
-    setAccessLevel: async () => {}, get: async key => ({ [key]: structuredClone(data[key]) }),
+    setAccessLevel: async () => {},
+    get: async key => {
+      if (storageFails) throw new Error('storage read failed');
+      return { [key]: structuredClone(data[key]) };
+    },
     set: async values => Object.assign(data, structuredClone(values)),
   } },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
@@ -470,6 +475,22 @@ test('stopping dictation tears the offscreen document down and returns the trans
   assert.equal(offscreenDocs, 0, 'the offscreen document is closed once the session ends');
   assert.equal(data.runState.dictation.status, 'idle');
   assert.equal(data.runState.dictation.text, 'buy oat milk');
+});
+
+test('a failed settings read cannot skip the teardown: stopping dictation always releases the mic', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  offscreenStopResult = { text: 'buy oat milk' };
+  await send({ type: 'dictation:start' });
+  assert.equal(offscreenDocs, 1);
+  storageFails = true;
+  try {
+    const reply = await send({ type: 'dictation:stop' });
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    assert.equal(offscreenDocs, 0, 'the offscreen document is closed even when settings could not be read');
+  } finally {
+    storageFails = false;
+  }
 });
 
 test('a mic permission failure on start opens the one-time full-tab grant page and tears the document down', async () => {

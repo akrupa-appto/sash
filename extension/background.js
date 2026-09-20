@@ -153,8 +153,10 @@ let dictationTriggered = false;
 // a bit further down for the same recursive-handle pattern) — so it goes through the identical
 // pending-request and already-running guards, and voice can never be a way around either.
 async function maybeAutoRunFromDictation({ text, isFinal }) {
-  const settings = await readSettings();
-  if (!settings.voiceEnabled) return;
+  // A settings read that fails cannot say whether voice is on, so it means the same thing as voice
+  // being off: leave the transcript as plain dictation. It must not fail the stop that produced it.
+  const settings = await readSettings().catch(() => undefined);
+  if (!settings?.voiceEnabled) return;
   const capability = voiceCapability(settings);
   const eagerness = resolveVoiceMode(settings.voiceMode, capability);
   if (!shouldAutoRun({ mode: eagerness, text, isFinal, running: !!active, blocked: !!pickBlocking(state.requests || []), alreadyTriggered: dictationTriggered })) return;
@@ -716,9 +718,15 @@ async function handle(message) {
   // Stop capture, transcribe whatever is left, then always tear the offscreen document down —
   // whether or not the offscreen side reported an error — so nothing keeps a hot mic.
   if (message.type === 'dictation:stop') {
-    const settings = await readSettings();
-    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(err => ({ error: safeError(err, settings) }));
-    await closeOffscreen();
+    // Settings are only needed to redact an error here, so a storage read that fails must not be
+    // able to skip the teardown below: the mic is released no matter what.
+    const settings = await readSettings().catch(() => ({}));
+    let reply;
+    try {
+      reply = await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(err => ({ error: safeError(err, settings) }));
+    } finally {
+      await closeOffscreen();
+    }
     if (reply?.error) {
       const error = safeError(reply.error, settings);
       state.dictation = { status: 'error', error };
@@ -741,7 +749,7 @@ async function handle(message) {
     return { ok: true };
   }
   if (message.type === 'dictation:error') {
-    state.dictation = { ...(state.dictation || {}), status: 'error', error: safeError(message.error, await readSettings()) };
+    state.dictation = { ...(state.dictation || {}), status: 'error', error: safeError(message.error, await readSettings().catch(() => ({}))) };
     await persist();
     // A single failed partial transcription is not fatal to the session; a MediaRecorder error is —
     // it has already stopped itself and released the mic in offscreen.js, so close the document too.
