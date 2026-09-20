@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>d6 — Shell Prompt · checkto panel directions</title>
+<link rel="stylesheet" href="designs.css">
+</head>
+<body class="doc" data-design="d6">
+
+<header class="comp-head">
+  <p class="comp-kicker">checkto · chrome side panel · direction 6 of 9</p>
+  <h1>d6 — Shell Prompt</h1>
+  <p class="comp-rationale">IBM Plex Mono for labels and content: the composer is a shell prompt with a block caret, the run is a timestamped log with › markers and [x] ticks, and status is read off the left column.</p>
+  <p class="comp-palette">palette — low-chroma slate neutrals with a faint blue cast: bg oklch(0.155 0.008 250) → surface oklch(0.295 0.012 250), text 0.93/0.74/0.61, one pale cyan oklch(0.82 0.07 195) for the prompt and caret, green oklch(0.80 0.09 150) for ticks · mono 13px · radii 1–4px, no fills</p>
+</header>
+
+<div class="shot-row">
+
+  <!-- 1 · first run -->
+  <section class="frame-slot" data-state="first">
+    <h2 class="frame-label">1 · first run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d6">
+        <p class="d6-banner">checkto 0.4.16 <b>· browser agent</b></p>
+        <p class="d6-line d6-asked"><span class="d6-ps1">$</span><span class="d6-entered">what should i do in this tab?</span></p>
+        <div class="d6-box">
+          <span class="d6-corner tl" aria-hidden="true">+</span>
+          <span class="d6-corner tr" aria-hidden="true">+</span>
+          <span class="d6-corner bl" aria-hidden="true">+</span>
+          <span class="d6-corner br" aria-hidden="true">+</span>
+          <p class="d6-box-line"><span class="d6-key">tab</span><span class="d6-val">Example</span></p>
+          <p class="d6-box-line"><span class="d6-key">also</span><span class="d6-val dim">type @ for another</span></p>
+        </div>
+        <p class="d6-banner"># try</p>
+        <button class="d6-suggest" type="button"><span class="d6-mark">›</span><span>fill this form</span><span class="d6-hint">[enter]</span></button>
+        <button class="d6-suggest" type="button"><span class="d6-mark">›</span><span>find the cheapest option</span><span class="d6-hint">[enter]</span></button>
+      </main>
+      <form class="composer">
+        <div class="composer-field d6-prompt-row">
+          <span class="d6-ps1" aria-hidden="true">$</span>
+          <span class="d6-caret" aria-hidden="true"></span>
+          <textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea>
+        </div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">⏎</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 2 · live run -->
+  <section class="frame-slot" data-state="live">
+    <h2 class="frame-label">2 · live run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d6">
+        <p class="d6-line d6-asked"><span class="d6-ps1">$</span><span class="d6-entered">file the expense report in this tab</span></p>
+        <div class="d6-run-head">
+          <span class="ticks" aria-hidden="true"><span class="tick is-done">[x]</span><span class="tick is-done">[x]</span><span class="tick is-done">[x]</span><span class="tick is-done">[x]</span></span>
+          <span class="d6-label">run 4471 · working · 4 steps · 12s</span>
+          <span class="d6-caret" aria-hidden="true"></span>
+        </div>
+        <p class="d6-line"><span class="d6-time">12:04:01</span><span class="d6-mark" aria-hidden="true">›</span><span>opened the reports page</span></p>
+        <p class="d6-line"><span class="d6-time">12:04:03</span><span class="d6-mark" aria-hidden="true">›</span><span>filled the amount field</span></p>
+        <p class="d6-line"><span class="d6-time">12:04:05</span><span class="d6-mark" aria-hidden="true">›</span><span>attached the receipt</span></p>
+        <p class="d6-line"><span class="d6-time">12:04:06</span><span class="d6-mark" aria-hidden="true">›</span><span>clicked submit</span></p>
+        <p class="d6-line d6-reply"><span class="d6-time">12:04:07</span><span class="d6-mark" aria-hidden="true">✓</span><span>filed. reference 4471.</span></p>
+      </main>
+      <form class="composer">
+        <div class="composer-field d6-prompt-row">
+          <span class="d6-ps1" aria-hidden="true">$</span>
+          <span class="d6-caret" aria-hidden="true"></span>
+          <textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea>
+        </div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">⏎</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 3 · waiting on you -->
+  <section class="frame-slot" data-state="waiting">
+    <h2 class="frame-label">3 · waiting on you</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d6">
+        <p class="d6-line d6-asked"><span class="d6-ps1">$</span><span class="d6-entered">file the expense report in this tab</span></p>
+        <div class="d6-run-head">
+          <span class="ticks" aria-hidden="true"><span class="tick is-done">[x]</span><span class="tick is-done">[x]</span><span class="tick is-done">[x]</span><span class="tick is-done">[x]</span></span>
+          <span class="d6-label">run 4471 · paused · waiting on you</span>
+        </div>
+        <p class="d6-line"><span class="d6-time">12:04:01</span><span class="d6-mark" aria-hidden="true">›</span><span>opened the reports page</span></p>
+        <p class="d6-line"><span class="d6-time">12:04:03</span><span class="d6-mark" aria-hidden="true">›</span><span>filled the amount field</span></p>
+        <p class="d6-line"><span class="d6-time">12:04:05</span><span class="d6-mark" aria-hidden="true">›</span><span>attached the receipt</span></p>
+        <p class="d6-line"><span class="d6-time">12:04:06</span><span class="d6-mark" aria-hidden="true">›</span><span>clicked submit</span></p>
+      </main>
+      <form class="composer">
+        <div class="request-card d6-request" data-blocking="true">
+          <p class="request-flag">! needs your answer</p>
+          <p class="request-question">let me <span class="request-target">submit the $89.00 order</span>?</p>
+          <div class="request-actions request-scopes">
+            <button class="btn primary" type="button">allow once</button>
+            <button class="btn secondary" type="button">allow &amp; save</button>
+          </div>
+          <div class="d6-cancel-row"><button class="text-button" type="button">cancel</button></div>
+        </div>
+        <div class="composer-field d6-prompt-row">
+          <span class="d6-ps1" aria-hidden="true">$</span>
+          <span class="d6-caret" aria-hidden="true"></span>
+          <textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea>
+        </div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">⏎</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+</div>
+
+<script src="designs.js" defer></script>
+</body>
+</html>

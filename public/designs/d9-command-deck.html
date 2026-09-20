@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>d9 — Command Deck · checkto panel directions</title>
+<link rel="stylesheet" href="designs.css">
+</head>
+<body class="doc" data-design="d9">
+
+<header class="comp-head">
+  <p class="comp-kicker">checkto · chrome side panel · direction 9 of 9</p>
+  <h1>d9 — Command Deck</h1>
+  <p class="comp-rationale">A command palette with a run attached: the input dominates the top, suggestions and run output are stacked rows carrying their key hints, and a compact status bar is pinned at the bottom. The whole panel is drivable from the keyboard.</p>
+  <p class="comp-palette">palette — cool blue-grey neutrals: bg oklch(0.155 0.012 250) → surface oklch(0.30 0.016 252), text 0.94/0.74/0.62, exactly one cool accent oklch(0.72 0.13 235) — sky at hue 235, deliberately not the 270–290 assistant indigo — used only as the fill of the focused row · radii 3–18px</p>
+</header>
+
+<div class="shot-row">
+
+  <!-- 1 · first run -->
+  <section class="frame-slot" data-state="first">
+    <h2 class="frame-label">1 · first run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <form class="composer d9-command">
+        <h1 class="d9-headline">what should i do in this tab?</h1>
+        <div class="d9-input-row is-active">
+          <span class="d9-caret" aria-hidden="true">›</span>
+          <textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea>
+          <button class="send-button" type="submit" aria-label="send">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M8 3.5 3.5 8M8 3.5 12.5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="d9-meta">
+          <span class="model-pill">claude-sonnet-4.5 · high</span>
+          <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+        </div>
+      </form>
+      <main class="content d9">
+        <p class="d9-group">suggested</p>
+        <div class="d9-row is-focused">
+          <span class="d9-row-mark" aria-hidden="true">E</span>
+          <span class="d9-row-label">Example</span>
+          <span class="d9-row-sub">tab</span>
+          <span class="d9-key">@</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-row-label">fill this form</span>
+          <span class="d9-key">⏎</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-row-label">find the cheapest option</span>
+          <span class="d9-key">⏎</span>
+        </div>
+      </main>
+      <footer class="d9-status">
+        <span>ready · 1 tab</span>
+        <span class="d9-status-c">0 steps · $0.0000</span>
+        <span class="d9-key">⌘K</span>
+      </footer>
+    </div>
+  </section>
+
+  <!-- 2 · live run -->
+  <section class="frame-slot" data-state="live">
+    <h2 class="frame-label">2 · live run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <form class="composer d9-command">
+        <div class="d9-input-row">
+          <span class="d9-caret" aria-hidden="true">›</span>
+          <span class="d9-entered">file the expense report in this tab</span>
+          <button class="send-button" type="submit" aria-label="send">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M8 3.5 3.5 8M8 3.5 12.5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="d9-meta">
+          <span class="model-pill">claude-sonnet-4.5 · high</span>
+          <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+        </div>
+      </form>
+      <main class="content d9">
+        <p class="d9-group">
+          <span>run 4471 · working</span>
+          <span class="d9-group-meta">4 of 4 · 12s</span>
+        </p>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">opened the reports page</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">filled the amount field</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">attached the receipt</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">clicked submit</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-row is-focused is-reply">
+          <span class="d9-row-label">filed. reference 4471.</span>
+          <span class="d9-key">⏎</span>
+        </div>
+      </main>
+      <footer class="d9-status">
+        <span>running · 4 steps</span>
+        <span class="d9-status-c">$0.0021 · careful</span>
+        <span class="d9-key">⌘K</span>
+      </footer>
+    </div>
+  </section>
+
+  <!-- 3 · waiting on you -->
+  <section class="frame-slot" data-state="waiting">
+    <h2 class="frame-label">3 · waiting on you</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <form class="composer d9-command">
+        <div class="d9-input-row">
+          <span class="d9-caret" aria-hidden="true">›</span>
+          <span class="d9-entered">file the expense report in this tab</span>
+          <button class="send-button" type="submit" aria-label="send">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M8 3.5 3.5 8M8 3.5 12.5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="d9-meta">
+          <span class="model-pill">claude-sonnet-4.5 · high</span>
+          <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+        </div>
+      </form>
+      <main class="content d9">
+        <p class="d9-group">
+          <span>run 4471 · paused</span>
+          <span class="d9-group-meta">4 of 4 · 12s</span>
+        </p>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">opened the reports page</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">filled the amount field</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">attached the receipt</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-row">
+          <span class="d9-dot is-done" aria-hidden="true"></span>
+          <span class="d9-row-label">clicked submit</span>
+          <span class="d9-key">⌘K</span>
+        </div>
+        <div class="d9-approval">
+          <p class="d9-approval-q">let me <span class="request-target">submit the $89.00 order</span>?</p>
+          <div class="request-actions request-scopes">
+            <button class="is-focused" type="button"><span>allow once</span><span class="d9-key">⏎</span></button>
+            <button type="button"><span>allow &amp; save</span><span class="d9-key">⌘⏎</span></button>
+          </div>
+          <button class="d9-cancel" type="button"><span>cancel</span><span class="d9-key">esc</span></button>
+        </div>
+      </main>
+      <footer class="d9-status">
+        <span>paused · waiting on you</span>
+        <span class="d9-status-c">$0.0021 · careful</span>
+        <span class="d9-key">⌘K</span>
+      </footer>
+    </div>
+  </section>
+
+</div>
+
+<script src="designs.js" defer></script>
+</body>
+</html>

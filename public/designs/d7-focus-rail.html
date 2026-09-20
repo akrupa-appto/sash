@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>d7 — Focus Rail · checkto panel directions</title>
+<link rel="stylesheet" href="designs.css">
+</head>
+<body class="doc" data-design="d7">
+
+<header class="comp-head">
+  <p class="comp-kicker">checkto · chrome side panel · direction 7 of 9</p>
+  <h1>d7 — Focus Rail</h1>
+  <p class="comp-rationale">One big now, everything else is a rail: a left timeline of dots joined by a line carries the completed steps at 12px, while the action happening right now is a 28px headline with air around it.</p>
+  <p class="comp-palette">palette — warm neutrals: bg oklch(0.165 0.006 60) → surface oklch(0.305 0.01 62), text 0.945/0.75/0.64, one muted gold oklch(0.80 0.10 70) that always means “now” · type scale pushed up: 16px body, 28px now-headline · radii 4–28px</p>
+</header>
+
+<div class="shot-row">
+
+  <!-- 1 · first run -->
+  <section class="frame-slot" data-state="first">
+    <h2 class="frame-label">1 · first run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d7">
+        <div>
+          <p class="d7-kicker">start here</p>
+          <h1 class="d7-now">what should i do in this tab?</h1>
+        </div>
+        <div class="tab-card">
+          <div class="tab-card-shot"><span class="tab-card-mark" aria-hidden="true">E</span></div>
+          <div class="tab-card-foot">
+            <span>Example</span>
+            <span class="dim">or type @ for another</span>
+          </div>
+        </div>
+        <div class="examples">
+          <button class="chip" type="button">fill this form</button>
+          <button class="chip" type="button">find the cheapest option</button>
+        </div>
+      </main>
+      <form class="composer">
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit" aria-label="send">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M8 3.5 3.5 8M8 3.5 12.5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 2 · live run -->
+  <section class="frame-slot" data-state="live">
+    <h2 class="frame-label">2 · live run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d7">
+        <div class="message user"><div>file the expense report in this tab</div></div>
+        <div>
+          <p class="d7-kicker"><span class="d7-pulse" aria-hidden="true"></span> now</p>
+          <h2 class="d7-now">clicked submit</h2>
+          <p class="d7-meta">working · 4 steps · 12s</p>
+        </div>
+        <ol class="d7-rail">
+          <li class="d7-rail-item is-done">opened the reports page</li>
+          <li class="d7-rail-item is-done">filled the amount field</li>
+          <li class="d7-rail-item is-done">attached the receipt</li>
+          <li class="d7-rail-item is-now"><span class="sr-only">clicked submit</span></li>
+        </ol>
+        <div>
+          <p class="d7-reply-kicker d7-kicker">done</p>
+          <p class="d7-reply">filed. reference 4471.</p>
+        </div>
+      </main>
+      <form class="composer">
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit" aria-label="send">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M8 3.5 3.5 8M8 3.5 12.5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 3 · waiting on you -->
+  <section class="frame-slot" data-state="waiting">
+    <h2 class="frame-label">3 · waiting on you</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d7">
+        <div class="message user"><div>file the expense report in this tab</div></div>
+        <ol class="d7-rail">
+          <li class="d7-rail-item is-done">opened the reports page</li>
+          <li class="d7-rail-item is-done">filled the amount field</li>
+          <li class="d7-rail-item is-done">attached the receipt</li>
+          <li class="d7-rail-item is-now"><span class="sr-only">clicked submit</span></li>
+        </ol>
+      </main>
+      <form class="composer">
+        <div class="request-card d7-request" data-blocking="true">
+          <p class="d7-kicker"><span class="d7-pulse" aria-hidden="true"></span> waiting on you · run paused</p>
+          <h2 class="request-question">let me <span class="request-target">submit the $89.00 order</span>?</h2>
+          <div class="request-actions request-scopes">
+            <button class="btn primary" type="button">allow once</button>
+            <button class="btn secondary" type="button">allow &amp; save</button>
+          </div>
+          <div class="d7-cancel-row"><button class="text-button" type="button">cancel</button></div>
+        </div>
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit" aria-label="send">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M8 3.5 3.5 8M8 3.5 12.5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+</div>
+
+<script src="designs.js" defer></script>
+</body>
+</html>

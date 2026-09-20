@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>d8 — Paper Ledger · checkto panel directions</title>
+<link rel="stylesheet" href="designs.css">
+</head>
+<body class="doc" data-design="d8">
+
+<header class="comp-head">
+  <p class="comp-kicker">checkto · chrome side panel · direction 8 of 9</p>
+  <h1>d8 — Paper Ledger</h1>
+  <p class="comp-rationale">A printed form you fill in: warm stock, ink, a ruled left margin line running the full height of the sheet, ticked boxes for steps, and an approval that reads as a stamped box. The one light direction.</p>
+  <p class="comp-palette">palette — warm off-white stock oklch(0.965 0.008 85) with inset wells 0.935/0.905, ink oklch(0.24 0.012 55), text 0.24/0.39/0.47, one brick printer’s rule oklch(0.60 0.10 28) for the margin and the stamp · serif document voice (system stack), Archivo for controls · tight-but-roomy 1.4 line-height · radii 1–2px</p>
+</header>
+
+<div class="shot-row">
+
+  <!-- 1 · first run -->
+  <section class="frame-slot" data-state="first">
+    <h2 class="frame-label">1 · first run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d8">
+        <p class="d8-folio">form 01 · new run</p>
+        <h1 class="d8-title">what should i do in this tab?</h1>
+        <div class="d8-field">
+          <span class="d8-field-label">tab</span>
+          <span class="d8-field-value">Example</span>
+        </div>
+        <div class="d8-field">
+          <span class="d8-field-label">also</span>
+          <span class="d8-field-value dim">or type @ for another</span>
+        </div>
+        <p class="d8-folio">try one</p>
+        <div class="d8-rules">
+          <button class="d8-rule-row" type="button"><span class="d8-checkbox" aria-hidden="true"></span><span>fill this form</span><span class="d8-index">01</span></button>
+          <button class="d8-rule-row" type="button"><span class="d8-checkbox" aria-hidden="true"></span><span>find the cheapest option</span><span class="d8-index">02</span></button>
+        </div>
+      </main>
+      <form class="composer">
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">send</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 2 · live run -->
+  <section class="frame-slot" data-state="live">
+    <h2 class="frame-label">2 · live run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d8">
+        <div class="message user"><div>file the expense report in this tab</div></div>
+        <div class="d8-run-head">
+          <span class="d8-run-title">run 4471 · working</span>
+          <span class="d8-run-count">step 4 of 4 · 12s</span>
+        </div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>opened the reports page</span><span class="d8-step-time">12:04:01</span></div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>filled the amount field</span><span class="d8-step-time">12:04:03</span></div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>attached the receipt</span><span class="d8-step-time">12:04:05</span></div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>clicked submit</span><span class="d8-step-time">12:04:06</span></div>
+        <p class="d8-answer">filed. reference 4471.</p>
+      </main>
+      <form class="composer">
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">send</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 3 · waiting on you -->
+  <section class="frame-slot" data-state="waiting">
+    <h2 class="frame-label">3 · waiting on you</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d8">
+        <div class="message user"><div>file the expense report in this tab</div></div>
+        <div class="d8-run-head">
+          <span class="d8-run-title">run 4471 · paused</span>
+          <span class="d8-run-count">step 4 of 4 · 12s</span>
+        </div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>opened the reports page</span><span class="d8-step-time">12:04:01</span></div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>filled the amount field</span><span class="d8-step-time">12:04:03</span></div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>attached the receipt</span><span class="d8-step-time">12:04:05</span></div>
+        <div class="d8-step"><span class="d8-ticksq" aria-hidden="true"></span><span>clicked submit</span><span class="d8-step-time">12:04:06</span></div>
+      </main>
+      <form class="composer">
+        <div class="request-card d8-stamp" data-blocking="true">
+          <p class="d8-stamp-label">approval required</p>
+          <p class="d8-stamp-q">let me <span class="request-target">submit the $89.00 order</span>?</p>
+          <div class="request-actions request-scopes">
+            <button class="btn primary" type="button">allow once</button>
+            <button class="btn secondary" type="button">allow &amp; save</button>
+          </div>
+          <div class="d8-cancel-row"><button class="text-button" type="button">cancel</button></div>
+        </div>
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">send</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+</div>
+
+<script src="designs.js" defer></script>
+</body>
+</html>

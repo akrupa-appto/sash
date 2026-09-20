@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>d5 — Quiet Receipt · checkto panel directions</title>
+<link rel="stylesheet" href="designs.css">
+</head>
+<body class="doc" data-design="d5">
+
+<header class="comp-head">
+  <p class="comp-kicker">checkto · chrome side panel · direction 5 of 9</p>
+  <h1>d5 — Quiet Receipt</h1>
+  <p class="comp-rationale">The run as a ledger: steps become table rows with what / where / result columns, hairline row rules, dotted leaders, and tabular figures, so a finished run reads as a receipt you can scan top to bottom.</p>
+  <p class="comp-palette">palette — near-black neutral ramp, chroma 0 everywhere: bg oklch(0.13 0 0) → surface oklch(0.225 0 0), text 0.95/0.76/0.65, no accent and no semantic hue · one type size (12px), hierarchy entirely by weight and tracking · rectilinear radii (1–2px)</p>
+</header>
+
+<div class="shot-row">
+
+  <!-- 1 · first run -->
+  <section class="frame-slot" data-state="first">
+    <h2 class="frame-label">1 · first run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d5">
+        <div class="d5-doc-head">
+          <p class="d5-doc-title">what should i do in this tab?</p>
+          <p class="d5-meta"><span>checkto · browser agent</span><span>1 tab · 0 runs</span></p>
+        </div>
+        <div class="d5-tab">
+          <span class="d5-tab-mark" aria-hidden="true">E</span>
+          <span class="d5-tab-name">Example</span>
+          <span class="d5-leader" aria-hidden="true"></span>
+          <span class="d5-tab-hint">@ for another</span>
+        </div>
+        <table class="d5-ledger">
+          <thead><tr><th>try</th><th class="d5-col-num">no.</th></tr></thead>
+          <tbody>
+            <tr><td>fill this form</td><td class="d5-col-result">01</td></tr>
+            <tr><td>find the cheapest option</td><td class="d5-col-result">02</td></tr>
+          </tbody>
+        </table>
+        <p class="d5-foot"><span>no runs yet</span><span>—</span></p>
+      </main>
+      <form class="composer">
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">send</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 2 · live run -->
+  <section class="frame-slot" data-state="live">
+    <h2 class="frame-label">2 · live run</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d5">
+        <div class="message user"><div><span class="d5-who">you</span><span class="d5-utter-text">file the expense report in this tab</span></div></div>
+        <section class="trace">
+          <div class="d5-run-head">
+            <span class="d5-run-label">working · 4 steps · 12s</span>
+            <span class="d5-run-line" aria-hidden="true"></span>
+          </div>
+          <table class="d5-ledger">
+            <thead><tr><th>what</th><th class="d5-col-where">where</th><th class="d5-col-result">result</th></tr></thead>
+            <tbody>
+              <tr><td>opened the reports page</td><td class="d5-col-where">/reports</td><td class="d5-col-result">ok</td></tr>
+              <tr><td>filled the amount field</td><td class="d5-col-where">/reports</td><td class="d5-col-result">ok</td></tr>
+              <tr><td>attached the receipt</td><td class="d5-col-where">/reports/new</td><td class="d5-col-result">ok</td></tr>
+              <tr><td>clicked submit</td><td class="d5-col-where">/reports/new</td><td class="d5-col-result">ok</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <p class="d5-answer">filed. reference 4471.</p>
+      </main>
+      <form class="composer">
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">send</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 3 · waiting on you -->
+  <section class="frame-slot" data-state="waiting">
+    <h2 class="frame-label">3 · waiting on you</h2>
+    <div class="panel-frame" data-width="400">
+      <header class="panel-topbar">
+        <div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div>
+        <nav class="topbar-actions">
+          <button class="text-button" type="button">new</button>
+          <button class="text-button" type="button">settings</button>
+        </nav>
+      </header>
+      <main class="content d5">
+        <div class="message user"><div><span class="d5-who">you</span><span class="d5-utter-text">file the expense report in this tab</span></div></div>
+        <section class="trace">
+          <div class="d5-run-head">
+            <span class="d5-run-label">paused · 4 steps · 12s</span>
+            <span class="d5-run-line" aria-hidden="true"></span>
+          </div>
+          <table class="d5-ledger">
+            <thead><tr><th>what</th><th class="d5-col-where">where</th><th class="d5-col-result">result</th></tr></thead>
+            <tbody>
+              <tr><td>opened the reports page</td><td class="d5-col-where">/reports</td><td class="d5-col-result">ok</td></tr>
+              <tr><td>filled the amount field</td><td class="d5-col-where">/reports</td><td class="d5-col-result">ok</td></tr>
+              <tr><td>attached the receipt</td><td class="d5-col-where">/reports/new</td><td class="d5-col-result">ok</td></tr>
+              <tr><td>clicked submit</td><td class="d5-col-where">/reports/new</td><td class="d5-col-result">ok</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </main>
+      <form class="composer">
+        <div class="request-card d5-request" data-blocking="true">
+          <p class="request-flag">needs your decision</p>
+          <p class="request-question">let me <span class="request-target">submit the $89.00 order</span>?</p>
+          <div class="request-actions request-scopes">
+            <button class="btn primary" type="button">allow once</button>
+            <button class="btn secondary" type="button">allow &amp; save</button>
+          </div>
+          <div class="d5-cancel-row"><button class="text-button" type="button">cancel</button></div>
+        </div>
+        <div class="composer-field"><textarea rows="1" placeholder="Do anything" aria-label="message checkto"></textarea></div>
+        <div class="composer-actions">
+          <div class="composer-left">
+            <span class="model-pill">claude-sonnet-4.5 · high</span>
+            <label><span class="sr-only">agent mode</span><select class="mode-select"><option selected>careful</option><option>fast</option></select></label>
+          </div>
+          <button class="send-button" type="submit">send</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+</div>
+
+<script src="designs.js" defer></script>
+</body>
+</html>
