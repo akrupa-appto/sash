@@ -82,7 +82,7 @@ test('installed extension sends fake-device audio to the explicitly selected voi
     assert.equal(requests[0].headers.Authorization, 'Bearer voice-key', 'the selected voice key is used instead of the planner key');
     assert.match(requests[0].headers['Content-Type'], /^multipart\/form-data; boundary=/);
     assert.ok(requests[0].postData?.length > 200, 'the multipart request contains recorded audio bytes');
-    assert.match(requests[0].postData, /name="model"\r\n\r\nwhisper-1\r\n/, 'the provider default is sent as the actual model, never a capability sentinel');
+    assert.match(requests[0].postData, /name="model"\r\n\r\ngpt-transcribe\r\n/, 'the provider default is sent as the actual model, never a capability sentinel');
     assert.match(requests[0].postData, /name="file"; filename="dictation\.webm"/);
     assert.equal(await offscreenCount(worker), 0, 'the offscreen mic context closes after successful transcription');
   });

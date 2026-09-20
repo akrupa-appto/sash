@@ -16,13 +16,13 @@ const clip = { audio: new Uint8Array([1, 2, 3, 4]), mimeType: 'audio/webm;codecs
 const ok = (body, init) => new Response(JSON.stringify(body), init);
 
 test('provider-only voice choices resolve to stock transcription model specs', () => {
-  assert.equal(defaultTranscriptionSpec('openrouter'), 'openai/whisper-1');
-  assert.equal(defaultTranscriptionSpec('openai'), 'openai:whisper-1');
-  assert.equal(defaultTranscriptionSpec('gemini'), 'gemini:gemini-2.5-flash');
+  assert.equal(defaultTranscriptionSpec('openrouter'), 'openai/gpt-transcribe');
+  assert.equal(defaultTranscriptionSpec('openai'), 'openai:gpt-transcribe');
+  assert.equal(defaultTranscriptionSpec('gemini'), 'gemini:gemini-3.5-transcribe');
   assert.equal(defaultTranscriptionSpec('custom'), 'custom:whisper-1');
 });
 
-test('OpenRouter transcribes with the default whisper model, multipart, at its own endpoint', async () => {
+test('OpenRouter transcribes with the default speech-to-text model, multipart, at its own endpoint', async () => {
   let call;
   const fetchMock = { restore: () => {} };
   const realFetch = globalThis.fetch;
@@ -33,7 +33,7 @@ test('OpenRouter transcribes with the default whisper model, multipart, at its o
     assert.equal(call.url, 'https://openrouter.ai/api/v1/audio/transcriptions');
     assert.equal(call.init.headers.Authorization, 'Bearer or-key');
     assert.ok(call.init.body instanceof FormData);
-    assert.equal(call.init.body.get('model'), 'openai/whisper-1');
+    assert.equal(call.init.body.get('model'), 'openai/gpt-transcribe');
     const file = call.init.body.get('file');
     assert.equal(file.type, 'audio/webm;codecs=opus');
   } finally { globalThis.fetch = realFetch; fetchMock.restore(); }
@@ -63,6 +63,27 @@ test('Gemini sends the audio inline as base64 in a generateContent call', async 
     const part = call.init.body.contents[0].parts.find(p => p.inlineData);
     assert.equal(part.inlineData.mimeType, 'audio/webm');
     assert.equal(Buffer.from(part.inlineData.data, 'base64').join(','), '1,2,3,4');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// gemini-3.5-transcribe is a dedicated speech-to-text model, so the request drops the "transcribe
+// this" instruction (the model is already told what it is) and reads the transcript out of either
+// shape Google documents for it.
+test('the Gemini speech-to-text model gets the audio plus its transcription config, and its answer is read both ways', async () => {
+  const realFetch = globalThis.fetch;
+  let call;
+  globalThis.fetch = async (url, init) => {
+    call = { url, init: { ...init, body: JSON.parse(init.body) } };
+    // The word-annotation shape: no text part at all, one entry per recognized word.
+    return ok({ candidates: [{ content: { parts: [{ audioTranscription: { words: [{ word: 'buy' }, { word: 'oat' }, { word: 'milk' }] } }] } }] });
+  };
+  try {
+    const result = await withKeys({ GEMINI_API_KEY: 'g-key' }, () => transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }));
+    assert.equal(result.text, 'buy oat milk');
+    assert.equal(call.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent');
+    assert.deepEqual(call.init.body.generationConfig, { audioTranscriptionConfig: {} });
+    assert.equal(call.init.body.contents[0].parts.length, 1, 'the audio is the whole request; no instruction is needed');
+    assert.equal(call.init.body.contents[0].parts[0].inlineData.mimeType, 'audio/webm');
   } finally { globalThis.fetch = realFetch; }
 });
 
@@ -123,7 +144,7 @@ test('dictation with no explicit spec routes to the provider backing the configu
 
     calls.length = 0;
     await withKeys({ OPENROUTER_API_KEY: 'or-key', GEMINI_API_KEY: 'g-key', PLANNER_MODEL: 'gemini:gemini-2.5-flash' }, () => transcribe(clip));
-    assert.equal(calls[0], 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', 'audio went to the configured planner provider (Gemini), not OpenRouter');
+    assert.equal(calls[0], 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent', 'audio went to the configured planner provider (Gemini), with its current speech-to-text default');
   } finally { globalThis.fetch = realFetch; delete process.env.PLANNER_MODEL; }
 });
 

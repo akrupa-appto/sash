@@ -41,9 +41,14 @@ export class TranscribeUnsupportedError extends Error {
 // Whole-file model used when the caller does not name one. These are documented as accepting the
 // webm/opus output MediaRecorder produces natively, with no client-side PCM conversion needed.
 const DEFAULT_MODEL: Record<ProviderId, string> = {
-  openrouter: "openai/whisper-1",
-  openai: "whisper-1",
-  gemini: "gemini-2.5-flash",
+  // Current as of 2026-09-20. OpenAI's own deprecation notice (2026-08-26) replaces whisper-1,
+  // gpt-4o-transcribe and gpt-4o-mini-transcribe with gpt-transcribe (file/whole-utterance) or
+  // gpt-live-transcribe (microphone streams); gemini-3.5-transcribe is Gemini's speech-to-text
+  // model. A custom OpenAI-compatible server is the one case with no shared answer: whisper-1 is
+  // still the id such servers most often implement, so it stays the custom default.
+  openrouter: "openai/gpt-transcribe",
+  openai: "gpt-transcribe",
+  gemini: "gemini-3.5-transcribe",
   custom: "whisper-1",
 };
 
@@ -141,19 +146,31 @@ async function openaiStyleTranscribe(provider: ProviderId, model: string, key: s
   return String(json.text ?? "");
 }
 
-// Gemini has no dedicated transcription endpoint; audio goes inline (base64) in a normal
-// generateContent call, same as the chat path in providers.ts. 20MB inline cap.
+// Gemini's transcription model answers through generateContent too (it has no separate endpoint),
+// so the audio still goes inline as base64, same as the chat path in providers.ts. 20MB inline cap.
+//
+// Two shapes, because the model decides: a dedicated speech-to-text model (gemini-3.5-transcribe)
+// takes the audio and a `generationConfig.audioTranscriptionConfig` and hands back the transcript,
+// while a general multimodal model (which is what older settings named) needs to be told what to
+// do in words. The response is read both ways: the transcript normally arrives as text parts, and
+// with word-level annotations enabled it arrives as `audioTranscription.words` instead.
+// Documented at ai.google.dev/gemini-api/docs/generate-content/transcribe (checked 2026-09-20).
+// Only the model-plus-instruction shape has been exercised on this machine: there is no Gemini key
+// here, so the dedicated shape is documentation-verified, not live-verified.
 async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, mimeType: string): Promise<string> {
   const data = await toBase64(bytes);
-  const body = {
-    contents: [{
-      role: "user",
-      parts: [
-        { text: "Transcribe the spoken audio exactly as spoken. Reply with only the transcript text and no other commentary." },
-        { inlineData: { mimeType: mimeType.split(";")[0], data } },
-      ],
-    }],
-  };
+  const audio = { inlineData: { mimeType: mimeType.split(";")[0], data } };
+  const body = /transcribe/i.test(model)
+    ? { contents: [{ role: "user", parts: [audio] }], generationConfig: { audioTranscriptionConfig: {} } }
+    : {
+        contents: [{
+          role: "user",
+          parts: [
+            { text: "Transcribe the spoken audio exactly as spoken. Reply with only the transcript text and no other commentary." },
+            audio,
+          ],
+        }],
+      };
   // The 20MB inline cap is on the serialized request, not the raw audio: base64 alone inflates the
   // clip by ~4/3, on top of the JSON wrapper. Check the actual encoded payload, not the raw bytes.
   const encodedSize = new TextEncoder().encode(JSON.stringify(body)).byteLength;
@@ -167,7 +184,11 @@ async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, m
   if (!res.ok) throw new Error(`Gemini transcription failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
   const json: any = await res.json();
   const parts = json.candidates?.[0]?.content?.parts ?? [];
-  return parts.map((p: any) => p.text ?? "").join("").trim();
+  const text = parts.map((p: any) => p.text ?? "").join("").trim();
+  if (text) return text;
+  // Word-level annotation shape: one entry per recognized word, no text part at all.
+  const words = parts.flatMap((p: any) => (p.audioTranscription?.words ?? []).map((w: any) => String(w.word ?? "")));
+  return words.join(" ").trim();
 }
 
 export async function transcribe(req: TranscribeRequest): Promise<TranscribeResult> {
