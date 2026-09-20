@@ -276,9 +276,8 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
 .picker-footer{display:flex;justify-content:space-between;gap:var(--sp-2);border-top:var(--hairline) solid var(--line);padding:var(--sp-2) var(--sp-3);font-size:var(--text-2xs);color:var(--text-3)}
 .picker-empty{font-size:var(--text-xs);padding:var(--sp-4) var(--sp-2);margin:0}
 
-@keyframes pulse{50%{opacity:.3}}
 @media(prefers-reduced-motion:reduce){
-  .running .dot,.tab-card .hand{animation:none}
+  .tab-card .hand{animation:none}
   .trace-body,.trace.is-live>.trace-body,.tick,.trace-header .chev{transition:none}
 }
 @media(max-width:500px){.settings-page{padding:28px 18px}.two{grid-template-columns:1fr;gap:0}}

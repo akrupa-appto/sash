@@ -146,11 +146,15 @@ function stepCountLabel(count) { return `${count} step${count === 1 ? '' : 's'}`
 // Cost lives in the trace header now, next to the duration/step-count it already reports —
 // there is no separate status strip to hold it any more.
 function costSuffix(cost) { return cost ? ` · $${cost.toFixed(4)}` : ''; }
+const escapeHtml = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // The visible face of a trace header: ticks, then a plain label, then (for a collapsible, finished
 // trace) the chevron. The prose join-sentence goes on aria-label instead, so screen readers still get
 // a sentence, never a step count read as a stack trace.
+// The live label can now carry a step's raw ticker/plan/action text (page content the agent read),
+// not just a computed word or number like the finished-trace label always was — so it is escaped
+// before going into innerHTML, the same way any other untrusted string would be.
 function traceHeaderMarkup(steps, label, { chevron } = {}) {
-  return ticksMarkup(steps.length) + `<span class="trace-label">${label}</span>` + (chevron ? ICON_CHEV : '');
+  return ticksMarkup(steps.length) + `<span class="trace-label">${escapeHtml(label)}</span>` + (chevron ? ICON_CHEV : '');
 }
 // Three states only, phrased as what happened to the run, not as the agent's failure.
 function formatDuration(ms) {
@@ -323,8 +327,13 @@ function render(state) {
   // The run stopped on a request: the last reply is what the user has to answer, not a finished result.
   const waiting = !running && state.status === 'needs_input';
   $('#messages').replaceChildren(...state.messages.map((m, i) => {
-    const el = document.createElement('div'); el.className = `message ${m.role}${waiting && m.role === 'agent' && i === state.messages.length - 1 ? ' asking' : ''}`;
-    const label = document.createElement('span'); label.className = 'message-label'; label.textContent = m.role === 'user' ? 'you' : 'checkto';
+    const isAsking = waiting && m.role === 'agent' && i === state.messages.length - 1;
+    const el = document.createElement('div'); el.className = `message ${m.role}${isAsking ? ' asking' : ''}`;
+    const label = document.createElement('span'); label.className = 'message-label';
+    // .asking carries no visible border/stripe (palette 4's own "no decoration, only meaning"
+    // rule), so the sr-only label is where its text difference lives now that the old run-status
+    // strip's "waiting for your answer" is gone — color independence, per the Accessibility section.
+    label.textContent = m.role === 'user' ? 'you' : (isAsking ? 'checkto, waiting for your answer' : 'checkto');
     const body = document.createElement('div'); body.textContent = m.text;
     el.append(label);
     // The actions belong above the reply they produced, so the answer stays the last thing on screen.
