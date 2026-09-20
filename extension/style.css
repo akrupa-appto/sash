@@ -143,10 +143,11 @@ textarea{resize:vertical}
 
 /* ---- empty state ---------------------------------------------------------- */
 .intro{padding-top:clamp(var(--sp-5),9vh,60px)}
-.intro h1{font:700 var(--text-xl)/1.25 var(--font-ui);letter-spacing:-.01em;margin-bottom:var(--sp-6);color:var(--text-1)}
+.intro-eyebrow{font-size:var(--text-2xs);font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 var(--sp-3)}
+.intro h1{font:700 var(--text-xl)/1.25 var(--font-ui);letter-spacing:-.01em;margin-bottom:var(--sp-3);color:var(--text-1)}
 .intro h1 b{font-weight:700}
-.intro p{line-height:1.7;margin-top:var(--sp-5);color:var(--text-2)}
-.tab-card{border-radius:var(--r-16);overflow:hidden;background:var(--surface-1)}
+.intro-lead{line-height:1.7;margin:0 0 var(--sp-6);color:var(--text-2)}
+.tab-card{border-radius:var(--r-16);overflow:hidden;background:var(--surface-1);margin-bottom:var(--sp-6)}
 .tab-card-shot{position:relative;aspect-ratio:16/9;display:grid;place-items:center;background:var(--surface-2)}
 .tab-card-shot img{width:36px;height:36px;border-radius:var(--r-8);filter:grayscale(1);opacity:.85}
 .tab-card-mark{font:700 32px/1 var(--font-ui);color:var(--text-3)}
@@ -158,7 +159,8 @@ textarea{resize:vertical}
 /* "or type @ for another" is an instructive hint (tells the user an action they can take), not a
    status caption like the title beside it — the 12px functional floor, not the 11px caption size. */
 .tab-card-foot span:last-child{color:var(--text-3);white-space:nowrap;font-size:var(--text-xs)}
-.examples{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-6)}
+.examples{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2);margin-top:0}
+.examples-label{font-size:var(--text-2xs);color:var(--text-3)}
 .examples button{background:var(--surface-1);color:var(--text-2);border-radius:var(--r-8);padding:var(--sp-2) var(--sp-3);font-size:var(--text-xs);font-weight:400}
 .examples button:hover{background:var(--surface-2);color:var(--text-1)}
 
@@ -270,8 +272,9 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
    this one treatment (deep background lift) — the same reading the finished
    answer gets, marking it as this turn's confirmed output. ---- */
 .blocked-reason{margin:0;font-size:var(--text-sm);color:var(--status-danger)}
-.request-card,.blocked-card{margin:0 0 var(--sp-2);padding:var(--sp-3)}
-.request-question{margin:0 0 var(--sp-2);font-size:var(--text-sm)}
+.request-card,.blocked-card,.permission-card{margin:0 0 var(--sp-2);padding:var(--sp-3)}
+.permission-actions{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-1)}
+.request-question,.notice-lead{margin:0 0 var(--sp-2);font-size:var(--text-sm);color:var(--text-1)}
 .request-target{color:var(--status-warning);font-weight:500}
 .request-card .muted{margin:0 0 var(--sp-2)}
 .request-shot{display:block;width:100%;border-radius:var(--r-8);margin-bottom:var(--sp-3)}
