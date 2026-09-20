@@ -114,8 +114,10 @@ Full token block lives at the top of `extension/style.css` under `:root,:host`. 
 
 ## Slop audit
 
-- Date: 2026-09-20. Result: pass, no findings from `python3 ~/.agents/skills/unslop-ui/scripts/devibe_scan.py extension/`.
+- Date: 2026-09-20. Result: pass. `python3 ~/.agents/skills/unslop-ui/scripts/devibe_scan.py extension/`: 0 findings, vibe score 0. `impeccable detect extension/`: 0 findings (exit 0) after fixes below.
 - Notes: no AI-purple gradient, no centered-hero-plus-three-cards layout (not applicable to a chat panel, but checked), no gradient heading text, no emoji-as-icon, no unprompted glow. The one intentional non-default choice already called out in the stylesheet (`unslop-ignore` comment) is the pill-to-rounded-rect composer, a deliberate ChatGPT-style decision carried over from `todo.md`, not a default Tailwind/shadcn tell.
+- Real findings fixed during the pass, not suppressed: a coloured side-tab left-border on `.message.agent.asking` (the exact tell `frontend-design-deslop`'s NEVER list names; replaced with the design's actual mechanism, the amber `.request-target` phrase); a stray hardcoded `9px` in `.picker-footer` (now `--text-2xs`); a `:root` `font-size` bug that silently shrank every `rem`-based spacing token ~12.5% (spacing tokens now use `px`, decoupled from the document font-size); and two functional hint texts sized below the 11px legibility floor for actionable copy — `.composer-caption` (`#tab-context` + the send-key hint) and `.tab-card-foot`'s "or type @ for another" — both bumped from 11px (`--text-2xs`) to 12px (`--text-xs`).
+- Disclosed, not silently suppressed (`.impeccable/config.json`, each with a reason): `cramped-padding` and `broken-image` on `extension/panel.html` (verified false positives — see the file's ignore reasons), and `tiny-text` on the same file for `#status-text` and `#tab-card-title`, which are status/caption readouts (the textbook defensible case per this project's own `--text-2xs: 11px` caption tier), distinct from the two hint texts above that were genuinely fixed.
 
 ## Changelog
 

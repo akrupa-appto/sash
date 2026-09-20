@@ -20,6 +20,15 @@
         ],
         "createdAt": "2026-09-20T06:08:18.356Z",
         "reason": "img#tab-card-icon starts hidden with no src by design; renderTabCard() in panel.js sets its src once a real tab favicon URL is known. Not an unfilled placeholder."
+      },
+      {
+        "rule": "tiny-text",
+        "value": "*",
+        "files": [
+          "extension/panel.html"
+        ],
+        "createdAt": "2026-09-20T06:16:28.863Z",
+        "reason": "Two remaining 11px leaf texts, verified by rendering the built panel.html: #status-text (the run-status strip's live readout, e.g. 'ready'/'finished'/'waiting for your answer') and #tab-card-title (the tab-preview card's title, e.g. 'no tab yet'). Both are status/caption readouts, not body content the user reads at length and not an action hint — the textbook defensible case per the design's own type scale (--text-2xs: 11px reserved for captions/status, matching the Codex reference's --text-xs: 11px). Distinct from two other elements the same sweep DID fix: .composer-caption (#tab-context + the send-key hint) and .tab-card-foot's 'or type @ for another' hint, both bumped from 11px to the 12px functional floor because they are action hints, not captions."
       }
     ]
   }
