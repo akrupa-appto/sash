@@ -481,6 +481,30 @@ test('a fatal offscreen error (the recorder itself failing) closes the offscreen
   assert.equal(data.runState.dictation.status, 'error');
 });
 
+test('clear tears down an in-flight dictation session instead of leaving the mic hot', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  await send({ type: 'dictation:start' });
+  assert.equal(offscreenDocs, 1);
+  assert.equal(data.runState.dictation.status, 'listening');
+  // Before the fix, 'clear' replaced state wholesale without ever closing the offscreen document
+  // or telling it to stop capture, so the getUserMedia stream kept recording with no state.dictation
+  // left to reach it.
+  await send({ type: 'clear' });
+  assert.equal(offscreenDocs, 0, 'clear closes the offscreen document rather than abandoning a hot mic');
+  assert.equal(data.runState.dictation, undefined, 'no in-flight dictation state survives clear');
+});
+
+test('stop tears down an in-flight dictation session the same way clear does', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  await send({ type: 'dictation:start' });
+  assert.equal(offscreenDocs, 1);
+  await send({ type: 'stop' });
+  assert.equal(offscreenDocs, 0, 'stop closes the offscreen document rather than abandoning a hot mic');
+  assert.equal(data.runState.dictation, undefined);
+});
+
 // --- host access is asked for before a site is touched -----------------------------------------
 // Last in the file: it empties the granted origins, so anything after it would have to re-grant.
 test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {

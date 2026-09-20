@@ -2,8 +2,21 @@
 // takes a plain model id, "openai:"/"gemini:"/"custom:" prefixes pick the official/custom APIs, and
 // the provider is chosen by whichever key the user already configured for chat. BYOK end to end —
 // audio goes straight to that provider, never to a checkto server or to Google's free Web Speech API.
+import { env } from "./env.ts";
 import { PROVIDERS, customBase, configuredProviders, parseModel, providerKey } from "./providers.ts";
 import type { ProviderId } from "./providers.ts";
+
+// The provider dictation resolves to when the caller doesn't name one explicitly: the provider
+// backing the user's configured planner model (BYOK — the same provider chat already uses), not
+// whichever provider happens to have a key first. The extension sets env.PLANNER_MODEL from
+// settings.model before every transcribe call (see extension/config.js configure()), so this is
+// the same resolution planner.ts's plannerModel() uses for chat. Falls back to
+// configuredProviders()[0] only when no planner model is set at all (no PLANNER_MODEL env, e.g.
+// outside the extension), which is the only case where there is no configured provider to defer to.
+function defaultProvider(): ProviderId | undefined {
+  if (env.PLANNER_MODEL) return parseModel(env.PLANNER_MODEL).provider;
+  return configuredProviders()[0];
+}
 
 export type AudioInput = Blob | ArrayBuffer | Uint8Array;
 export type TranscribeRequest = {
@@ -48,9 +61,7 @@ export type TranscribeCapability = {
 };
 
 export function transcribeCapability(spec?: string): TranscribeCapability {
-  let provider: ProviderId | undefined;
-  if (spec) provider = parseModel(spec).provider;
-  else provider = configuredProviders()[0];
+  const provider: ProviderId | undefined = spec ? parseModel(spec).provider : defaultProvider();
   if (!provider) return { canTranscribe: false, streaming: false, reason: "no provider configured; add an API key in settings" };
   const key = providerKey(provider);
   if (!key) return { provider, canTranscribe: false, streaming: false, reason: `${PROVIDERS[provider].label} needs an API key to transcribe audio` };
@@ -153,7 +164,7 @@ async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, m
 }
 
 export async function transcribe(req: TranscribeRequest): Promise<TranscribeResult> {
-  const { provider, model } = req.spec ? parseModel(req.spec) : { provider: configuredProviders()[0], model: undefined };
+  const { provider, model } = req.spec ? parseModel(req.spec) : { provider: defaultProvider(), model: undefined };
   if (!provider) throw new Error("no transcription provider configured; add an API key in settings");
   const key = providerKey(provider);
   if (!key) throw new Error(`${PROVIDERS[provider].label} needs an API key to transcribe audio`);
