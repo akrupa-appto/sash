@@ -1,4 +1,5 @@
 import { blockedText, pickBlocking, RequestOutcome } from './requests.js';
+import { chunkMsFor, createPushToTalk, VOICE_MODES } from './voice.js';
 
 let running = false;
 let configured = false;
@@ -15,6 +16,12 @@ let durationTimer;
 // card can never disagree about whether there is something to answer first.
 let pendingRequest;
 let lastSeq = -1;
+// Voice dictation. `voice` is refreshed on every load() (see chrome.storage.onChanged below, the
+// same way #mode/#model-link only update on a settings change, not on every broadcast).
+let voice = { enabled: false, mode: undefined, capability: { canTranscribe: false } };
+let dictationSessionActive = false; // between a successful dictation:start and its matching stop
+let micBusy = false; // dictation:stop is in flight: recording has ended, the final transcription hasn't
+let micFilledComposer = false; // #goal's text was last written by dictation, not typed — see render()
 const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
 const request = async message => {
@@ -36,7 +43,60 @@ function controls() {
   $('#goal').disabled = blocked;
   $('#goal').placeholder = blocked ? 'answer the request above before sending a new message' : 'say what you need';
   $('#send').title = blocked ? 'answer the request above first' : 'send task';
+  renderMic();
 }
+// --- voice dictation ------------------------------------------------------------------------
+// Idle / listening / transcribing / hands-free are the only four states the mic button shows;
+// see extension/style.css's .mic-button[data-state] rule for how each one reads in the panel's
+// signal-only palette (blue = live, the same as .running .dot; there is no brand accent).
+function renderMic() {
+  const mic = $('#mic');
+  const usable = voice.enabled && voice.capability?.canTranscribe && !!voice.mode;
+  mic.hidden = !usable;
+  if (!usable) return;
+  mic.disabled = running || submitting || !!pendingRequest;
+  let visual = '';
+  if (micBusy) visual = 'transcribing';
+  else if (currentState?.dictation?.status === 'listening') visual = (ptt.latched || currentState.dictation.handsFree) ? 'hands-free' : 'listening';
+  if (visual) mic.dataset.state = visual; else delete mic.dataset.state;
+  mic.setAttribute('aria-pressed', String(visual === 'listening' || visual === 'hands-free'));
+  mic.title = { transcribing: 'transcribing…', listening: 'release to stop', 'hands-free': 'listening hands-free — tap the mic (or M) again to stop' }[visual]
+    || `hold to talk · ${VOICE_MODES[voice.mode]?.label || voice.mode} mode (hold M, or double-tap M for hands-free)`;
+}
+async function startDictation() {
+  if (dictationSessionActive || micBusy || running || submitting || pendingRequest) return;
+  if (!voice.enabled || !voice.capability?.canTranscribe || !voice.mode) return;
+  dictationSessionActive = true;
+  renderMic();
+  try {
+    const reply = await request({ type: 'dictation:start', chunkMs: chunkMsFor(voice.mode) });
+    if (!reply.ok) { dictationSessionActive = false; showError(new Error(reply.error || 'could not start the mic')); }
+  } catch (err) { dictationSessionActive = false; showError(err); }
+  renderMic();
+}
+async function stopDictation() {
+  if (!dictationSessionActive) return;
+  dictationSessionActive = false;
+  micBusy = true;
+  renderMic();
+  try { await request({ type: 'dictation:stop' }); }
+  catch (err) { showError(err); }
+  micBusy = false;
+  renderMic();
+}
+// Hold-to-talk with a double-tap-to-latch, driven by real keydown/keyup — see voice.js
+// createPushToTalk for why this (not the global chrome.commands shortcut) is where true
+// hold-then-release lives: a DOM keydown/keyup pair gives both edges, which chrome.commands cannot.
+const ptt = createPushToTalk({ onStart: () => void startDictation(), onStop: () => void stopDictation(), onLatchOn: renderMic, onLatchOff: renderMic });
+$('#mic').addEventListener('pointerdown', event => { event.preventDefault(); ptt.keydown({}); });
+['pointerup', 'pointerleave', 'pointercancel'].forEach(type => $('#mic').addEventListener(type, () => ptt.keyup()));
+// The in-panel keyboard shortcut: hold M while the composer (or any field) isn't focused, so typing
+// "m" into a message never triggers the mic. This key is deliberately NOT in manifest.json's
+// commands block — chrome.commands shortcuts are intercepted by Chrome before a keydown reaches the
+// page at all, which would make real hold-then-release here impossible for that key.
+function typingTarget(target) { return /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName) || target?.isContentEditable; }
+window.addEventListener('keydown', event => { if (event.key.toLowerCase() === 'm' && !typingTarget(event.target)) ptt.keydown(event); });
+window.addEventListener('keyup', event => { if (event.key.toLowerCase() === 'm') ptt.keyup(); });
 async function refreshTabs() {
   tabs = await chrome.tabs.query({});
   const current = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -311,6 +371,27 @@ function renderRequest(state, pending) {
 }
 function render(state) {
   currentState = state; running = state.running;
+  // A run starting (from any trigger — the mic, the global shortcut, or a plain typed message) ends
+  // hands-free listening, per the owner's spec ("...until the key is tapped again or the run
+  // starts"). The offscreen session itself is torn down on the background side; this only resets
+  // this panel's own in-page latch (extension/background.js resets its own command-shortcut latch
+  // the same way, independently, since it can't see this panel's local ptt state).
+  if (running) ptt.endLatch();
+  // Dictation reaching the composer: "dictate" only fills it once speech ends, so the user can still
+  // edit before pressing send; "prewarm"/"eager" stream the interim transcript live. Never touches
+  // the textarea once a run is under way (running clears anything voice last wrote there) or after
+  // the user has started typing their own message over it (see the #goal 'input' listener below).
+  if (voice.enabled && state.dictation && !running) {
+    const goal = $('#goal');
+    if (voice.mode !== 'dictate' && state.dictation.status === 'listening' && typeof state.dictation.partialText === 'string') {
+      goal.value = state.dictation.partialText; micFilledComposer = true; updateMultiline(); controls();
+    } else if (voice.mode === 'dictate' && state.dictation.status === 'idle' && state.dictation.text) {
+      goal.value = state.dictation.text; micFilledComposer = true; updateMultiline(); controls();
+    }
+  } else if (running && micFilledComposer) {
+    $('#goal').value = ''; micFilledComposer = false; updateMultiline();
+  }
+  if (state.dictation?.status === 'error' && state.dictation.error) $('#error').textContent = state.dictation.error;
   $('#intro').hidden = !!state.messages.length;
   // The run stopped on a request: the last reply is what the user has to answer, not a finished result.
   const waiting = !running && state.status === 'needs_input';
@@ -390,6 +471,7 @@ async function load() {
   $('#model-link').textContent = response.model ? `${response.model.replace(/^(openai|gemini|custom):/, '')} · ${response.reasoning || 'auto'}` : '';
   $('#model-link').hidden = response.mode !== 'careful' || !response.model;
   configured = response.configured; $('#setup').hidden = configured;
+  voice = response.voice || { enabled: false, mode: undefined, capability: { canTranscribe: false } };
   // getState can be in flight while a newer broadcast lands, so its snapshot gets the same
   // staleness check as a broadcast: never render (or rewind lastSeq to) an older state.
   if (response.seq === undefined || response.seq >= lastSeq) {
