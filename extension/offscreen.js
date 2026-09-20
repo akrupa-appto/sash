@@ -13,6 +13,15 @@ let stream;
 let recorder;
 let chunks = [];
 let chunkMs;
+// Bumped every time a session ends (teardown). A chunk transcription captures the id it was
+// enqueued under; if that no longer matches by the time the request resolves, the session it was
+// for has since stopped or restarted, and the result is dropped rather than overwriting whatever
+// state a newer session has written.
+let sessionId = 0;
+// Serializes chunk transcriptions so at most one transcribeBlob() call is ever in flight: each
+// tick's work is appended here rather than fired independently, so results can't complete out of
+// order or pile up as concurrent requests.
+let chunkQueue = Promise.resolve();
 
 function pickMimeType() {
   const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
@@ -28,6 +37,7 @@ function teardown() {
   recorder = undefined;
   chunks = [];
   chunkMs = undefined;
+  sessionId++; // invalidate any chunk transcription still in flight (or queued) for this session
 }
 
 async function transcribeBlob(blob) {
@@ -40,19 +50,32 @@ async function transcribeBlob(blob) {
   }
 }
 
-// Fired on every MediaRecorder timeslice when chunking is on. Each chunk is transcribed on its own
-// (whole-chunk re-transcription, not a live stream) so a later stage can show growing partial text
-// while the user is still speaking.
-async function handleChunk(data, mimeType) {
+// Fired on every MediaRecorder timeslice when chunking is on. Transcribes the accumulated buffer
+// (whole-chunk re-transcription of everything recorded so far, not a live stream) so a later stage
+// can show growing partial text while the user is still speaking. Only the FIRST MediaRecorder
+// timeslice carries the WebM/Opus container header (EBML, Segment, Tracks); every later chunk is
+// bare Cluster data, which fails to decode (or returns empty/garbage text) sent alone — so this
+// re-sends every chunk collected since the session started, same as stop() does for the final
+// transcript, not just the newest one. Work is appended to chunkQueue so at most one transcription
+// is ever in flight, and a session id captured at enqueue time lets a result that resolves after the
+// session already stopped (or restarted) be dropped instead of overwriting a newer partial.
+function handleChunk(data, mimeType) {
   if (!data || !data.size) return;
   chunks.push(data);
   if (!chunkMs) return; // record-until-stopped mode: no partials, just accumulate
-  try {
-    const { text } = await transcribeBlob(new Blob([data], { type: mimeType }));
-    if (text) await chrome.runtime.sendMessage({ type: 'dictation:partial', text }).catch(() => {});
-  } catch (err) {
-    await chrome.runtime.sendMessage({ type: 'dictation:error', error: String(err?.message || err) }).catch(() => {});
-  }
+  const session = sessionId;
+  const snapshot = chunks.slice();
+  chunkQueue = chunkQueue.then(async () => {
+    if (session !== sessionId) return; // the session ended before this chunk's turn came up
+    try {
+      const { text } = await transcribeBlob(new Blob(snapshot, { type: mimeType }));
+      if (session !== sessionId) return; // stopped/restarted while the request was in flight
+      if (text) await chrome.runtime.sendMessage({ type: 'dictation:partial', text }).catch(() => {});
+    } catch (err) {
+      if (session !== sessionId) return;
+      await chrome.runtime.sendMessage({ type: 'dictation:error', error: String(err?.message || err) }).catch(() => {});
+    }
+  });
 }
 
 // Starts capture. `chunkMs` set = periodic-chunking mode (incremental partials via handleChunk);
@@ -65,8 +88,13 @@ async function start(options = {}) {
   chunkMs = Number.isFinite(options.chunkMs) && options.chunkMs > 0 ? options.chunkMs : undefined;
   recorder = new MediaRecorder(stream, { mimeType });
   recorder.addEventListener('dataavailable', event => { void handleChunk(event.data, mimeType); });
+  // A MediaRecorder error is terminal: the recorder stops itself. Release the mic immediately
+  // rather than leaving a dead stream held open, and flag it fatal so background closes this
+  // document too — unlike a single failed chunk transcription, which is not fatal to the session.
   recorder.addEventListener('error', event => {
-    void chrome.runtime.sendMessage({ type: 'dictation:error', error: String(event.error?.message || event.error || 'recording error') }).catch(() => {});
+    const message = String(event.error?.message || event.error || 'recording error');
+    teardown();
+    void chrome.runtime.sendMessage({ type: 'dictation:error', error: message, fatal: true }).catch(() => {});
   });
   recorder.start(chunkMs);
   return { ok: true };

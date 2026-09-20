@@ -100,6 +100,17 @@ async function closeOffscreen() {
   if (!chrome.offscreen) return;
   await chrome.offscreen.closeDocument().catch(() => {});
 }
+// Tears an in-flight (or errored) dictation session down the same way an explicit
+// 'dictation:stop' does: tell the offscreen document to stop capture, then close the document so
+// no getUserMedia stream survives it. Any path that abandons a session — new chat, a stopped task,
+// or the explicit stop button — must call this rather than dropping state.dictation on the floor,
+// or the mic keeps recording with nothing left to reach it.
+async function teardownDictation() {
+  if (!state.dictation || state.dictation.status === 'idle') return;
+  await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(() => {});
+  await closeOffscreen();
+  state.dictation = undefined;
+}
 // A first-run grant commonly needs one full-tab navigation before the offscreen document can reuse
 // the permission (see extension/mic-permission.html); anything that looks like that denial opens it.
 const NEEDS_PERMISSION_TAB = /permission|notallowed|dismissed/i;
@@ -405,8 +416,10 @@ async function handle(message) {
   }
   if (message.type === 'stop') {
     await stop();
+    const hadDictation = !!(state.dictation && state.dictation.status !== 'idle');
+    await teardownDictation();
     // A stop from a turn that ended waiting: decline what is still on screen rather than dropping it.
-    if (declinePending('stopped').length) await persist();
+    if (declinePending('stopped').length || hadDictation) await persist();
     return { ok: true };
   }
   if (message.type === 'getBadge') return { badge: feedback(message.tabId).badge };
@@ -420,6 +433,9 @@ async function handle(message) {
     // have to go too, or a new chat starts with the last one's dots still on the user's tabs.
     for (const tabId of [...feedbackByTab.keys()]) { await setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }); feedbackByTab.delete(tabId); }
     void persistFeedback();
+    // A live dictation session (offscreen document + hot mic) must not survive a wholesale state
+    // replacement below, or it keeps capturing with no state.dictation left to reach it.
+    await teardownDictation();
     state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
     await persist(); return { ok: true, state, seq };
   }
@@ -529,6 +545,9 @@ async function handle(message) {
   if (message.type === 'dictation:error') {
     state.dictation = { ...(state.dictation || {}), status: 'error', error: safeError(message.error) };
     await persist();
+    // A single failed partial transcription is not fatal to the session; a MediaRecorder error is —
+    // it has already stopped itself and released the mic in offscreen.js, so close the document too.
+    if (message.fatal) await closeOffscreen();
     return { ok: true };
   }
   // Acknowledgement from the one-time full-tab permission page; nothing to do but confirm receipt.
