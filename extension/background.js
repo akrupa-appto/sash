@@ -560,6 +560,9 @@ async function execute(run, message) {
     state.messages.push({
       role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings),
       steps: state.steps.slice(-60), startedAt: state.startedAt, endedAt: state.endedAt, stopped: state.status === 'stopped',
+      // Carried onto the reply so its trace header (the panel's one place a run reports on itself)
+      // can still show what the run cost after it moves out of the live status strip.
+      cost: state.cost,
     });
     state.messages = state.messages.slice(-20);
     clearConfig();

@@ -116,13 +116,23 @@ test('a run shorter than one second shows no duration divider at all', { skip },
   await page.close();
 });
 
-test('the live action list only shows while the run is in flight, carries the join-sentence as its aria-label, and ticks a "Working" duration once a second has passed', { skip }, async () => {
+test('the live trace header shows while the run is in flight, carries the join-sentence as its aria-label, the live ticker and running cost as its label (there is no separate status strip any more), and ticks a "Working" duration once a second has passed', { skip }, async () => {
   const page = await panel({ ...finished, running: true, status: 'working', startedAgoMs: 2000, messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);
-  assert.equal(await page.locator('#steps-label .trace-label').innerText(), '2 steps');
+  // Folded from the old #status-text/#cost strip: the trace header is the one place a live run
+  // reports on itself now, so it carries the live ticker text and the running cost.
+  assert.equal(await page.locator('#steps-label .trace-label').innerText(), 'Clicking the "upload" button · $0.0002');
   assert.equal(await page.locator('#steps-label').getAttribute('aria-label'), 'Opened tab: ~/upload, clicked the "upload" button');
   assert.equal(await page.locator('.message.agent').count(), 0);
   assert.equal(await page.locator('#live-duration').innerText(), 'Working');
+  await page.close();
+});
+
+test('the live trace header shows the instant a run starts, before any step has landed', { skip }, async () => {
+  const page = await panel({ running: true, status: 'connecting', cost: 0, steps: [], messages: [{ role: 'user', text: 'do it' }] });
+  assert.equal(await page.locator('#steps-wrap').isVisible(), true);
+  assert.equal(await page.locator('#steps-label .trace-label').innerText(), 'connecting to your tab…');
+  assert.equal(await page.locator('#steps-label .tick').count(), 0);
   await page.close();
 });
 
@@ -137,13 +147,41 @@ test('the segmented tick track advances as steps land', { skip }, async () => {
   await page.close();
 });
 
+// Palette 4's own caption says "send, ticks, and primary buttons go neutral" — green is reserved
+// for the per-step done check, not the trace's tick track. A prior pass shipped the track green.
+test('the segmented tick track is neutral (--accent), not the status-success green used by step checks', { skip }, async () => {
+  const page = await panel(finished);
+  const [tickColor, accent, statusSuccess, glyphColor] = await page.evaluate(() => {
+    const tick = document.querySelector('.message.agent .steps .tick.is-done');
+    const style = getComputedStyle(document.documentElement);
+    return [
+      getComputedStyle(tick).backgroundColor,
+      style.getPropertyValue('--accent').trim(),
+      style.getPropertyValue('--status-success').trim(),
+      getComputedStyle(document.querySelector('.status-glyph')).color,
+    ];
+  });
+  assert.notEqual(tickColor, glyphColor, 'the tick fill must not reuse the step-check green');
+  const probe = await page.evaluate(([accentValue]) => {
+    const el = document.createElement('div'); el.style.color = accentValue; document.body.append(el);
+    const rgb = getComputedStyle(el).color; el.remove(); return rgb;
+  }, [accent]);
+  assert.equal(tickColor, probe, 'the tick fill should resolve to --accent');
+  assert.notEqual(accent, statusSuccess);
+  await page.close();
+});
+
 test('monospace is confined to genuine tool output: the row label stays sans, only a raw execution note goes mono', { skip }, async () => {
   const notedSteps = [{ ...steps[0], note: 'jev chose "confirm", corrected to the element the supervisor named' }, steps[1]];
   const page = await panel({ ...finished, steps: notedSteps, messages: [finished.messages[0], { ...finished.messages[1], steps: notedSteps }] });
   // The trace is collapsed at rest, so its content has no rendered box yet; read it structurally
   // (textContent) rather than by rendered innerText, the same way a stylesheet-agnostic check should.
   const row = page.locator('.message.agent .step').first();
-  assert.equal(await row.locator('.tool-output').textContent(), 'jev chose "confirm", corrected to the element the supervisor named');
+  // Labelled like the comp's own tool-output block ("plaintext"), the label living in its own
+  // span so the note text itself stays exactly what the agent loop recorded.
+  // The trace is collapsed at rest, so read structurally (textContent), not by rendered innerText.
+  assert.equal(await row.locator('.tool-output .lang-tag').textContent(), 'plaintext');
+  assert.equal(await row.locator('.tool-output').textContent(), 'plaintextjev chose "confirm", corrected to the element the supervisor named');
   assert.match(await row.locator('.tool-output').evaluate(el => getComputedStyle(el).fontFamily), /Plex Mono/i);
   assert.doesNotMatch(await row.locator('.step-label').evaluate(el => getComputedStyle(el).fontFamily), /Plex Mono/i);
   // The second row has no note at all, so it renders no tool-output block whatsoever.
@@ -169,7 +207,6 @@ test('a page that blocked the run says in the panel which check stopped it', { s
   const page = await panel({ ...finished, status: 'blocked', blockedReason: 'captcha_failed' });
   assert.equal(await page.locator('#blocked').isVisible(), true);
   assert.match(await page.locator('#blocked').innerText(), /captcha/);
-  assert.equal(await page.locator('#status-text').innerText(), 'needs your attention');
   // It gets the same bordered-card treatment as its sibling "needs you" states (ask, approval,
   // credential), not bare caption text: same background and radius as a request card.
   const [blockedBg, blockedRadius] = await page.locator('#blocked').evaluate(el => {
@@ -309,7 +346,6 @@ test('a run waiting on the user reads as asking, not as ordinary chat text', { s
     messages: [{ role: 'user', text: 'open the readme' }, { role: 'agent', text: 'which README do you mean?', steps }],
     requests: [{ id: 'ask-1', type: 'user_input', question: 'which README do you mean?' }],
   });
-  assert.equal(await page.locator('#status-text').innerText(), 'waiting for your answer');
   assert.equal(await page.locator('.message.agent.asking > div').last().innerText(), 'which README do you mean?');
   await page.close();
 });
@@ -339,7 +375,7 @@ test('once the pending request clears, the composer is available again', { skip 
   assert.equal(await page.locator('#goal').isDisabled(), true);
   await page.evaluate(s => window.onState({ type: 'state', state: s }), finished);
   assert.equal(await page.locator('#goal').isDisabled(), false);
-  assert.equal(await page.locator('#goal').getAttribute('placeholder'), 'say what you need');
+  assert.equal(await page.locator('#goal').getAttribute('placeholder'), 'Do anything');
   await page.close();
 });
 
@@ -380,28 +416,28 @@ test('the transcript keeps riding the real bottom when content settles late, ins
   assert.ok(after.scrollHeight > after.clientHeight, 'test setup should keep the transcript scrollable');
   // (a) no overscroll / no lag: the container tracks the real bottom even after the late growth.
   assert.ok(after.gap <= 1, `scrollTop should still sit at the real bottom after late layout growth (gap ${after.gap})`);
-  // (b) the last message's actions toggle is fully visible, not clipped under the status strip below #content.
+  // (b) the last message's actions toggle is fully visible, not clipped under the composer docked below #content.
   const boxes = await page.evaluate(() => {
     const toggle = document.querySelector('.message.agent:last-of-type .steps');
-    const strip = document.querySelector('#run-status');
+    const strip = document.querySelector('#task-form');
     return { toggle: toggle.getBoundingClientRect().toJSON(), strip: strip.getBoundingClientRect().toJSON() };
   });
   assert.ok(boxes.toggle.bottom <= boxes.strip.top + 1,
-    `actions toggle (bottom ${boxes.toggle.bottom}) should end above the status strip (top ${boxes.strip.top})`);
+    `actions toggle (bottom ${boxes.toggle.bottom}) should end above the composer (top ${boxes.strip.top})`);
   await page.close();
 });
 
-test('clicking new-chat resets the status strip to ready, even if a stale broadcast from the finished run arrives after', { skip }, async () => {
+test('clicking new-chat clears the transcript, and a stale broadcast from the finished run cannot resurrect it after', { skip }, async () => {
   const page = await panel(finished);
-  assert.equal(await page.locator('#status-text').innerText(), 'finished');
+  assert.equal(await page.locator('.message').count(), 2);
   await page.click('#new-chat');
-  // The clear response carries the cleared state, so the strip resets without waiting on a broadcast.
-  await page.waitForFunction(() => document.querySelector('#status-text').textContent === 'ready when you are');
+  // The clear response carries the cleared state, so the transcript empties without waiting on a broadcast.
+  await page.waitForFunction(() => document.querySelectorAll('.message').length === 0);
   // Now the race: a stray broadcast from the previous ('finished') run, tagged with an older seq
-  // than the clear response, lands after the reset and must not flash the old status back.
+  // than the clear response, lands after the reset and must not bring the old messages back.
   await page.evaluate(s => window.onState({ type: 'state', state: s, seq: 1 }), finished);
   await page.waitForTimeout(50);
-  assert.equal(await page.locator('#status-text').innerText(), 'ready when you are');
+  assert.equal(await page.locator('.message').count(), 0, 'a stale broadcast tagged with an old seq must not resurrect the cleared run');
   await page.close();
 });
 
@@ -432,44 +468,34 @@ test('the settings page renders the same neutral theme as the panel', { skip }, 
 
 const readyState = { running: false, status: 'ready', messages: [], steps: [] };
 
-test('the compose box is a full pill for a single-line message and steps down once the textarea wraps to multiple lines', { skip }, async () => {
-  const page = await panel(readyState);
-  const box = page.locator('.compose-box');
-  const goal = page.locator('#goal');
-  const radius = async () => box.evaluate(el => getComputedStyle(el).borderRadius);
-  assert.equal(await radius(), '999px');
-  await goal.fill('one\ntwo\nthree');
-  // r-20 in checkto's radius scale (20px * 1.25) — the "role" radius token for a multi-line container,
-  // not the bare 20px a scale-less system would reach for.
-  assert.equal(await radius(), '25px');
-  await goal.fill('back to one line');
-  assert.equal(await radius(), '999px');
-  await page.close();
-});
-
-test('the @ and send buttons sit at the bottom of a tall compose box, next to the caret, not centered', { skip }, async () => {
+// Adopted from the comp: a rounded composer-field (the input alone) sits above a fixed
+// composer-actions row ("+", model/mode, send) — not the single morphing pill the shipped build
+// used to grow around every control as the textarea wrapped.
+test('the composer field grows with the textarea, but the actions row underneath ("+", model pill, send) keeps its own fixed height', { skip }, async () => {
   const page = await panel(readyState);
   const goal = page.locator('#goal');
+  const field = page.locator('.composer-field');
+  const mention = page.locator('#mention-tabs');
+  const fieldHeightBefore = (await field.boundingBox()).height;
+  const mentionHeightBefore = (await mention.boundingBox()).height;
   await goal.fill(Array.from({ length: 6 }, (_, i) => `line ${i}`).join('\n'));
-  const [goalBox, mentionBox, sendBox] = await Promise.all([
-    goal.boundingBox(), page.locator('#mention-tabs').boundingBox(), page.locator('#send').boundingBox(),
-  ]);
-  assert.ok(goalBox.height > 60, 'the textarea should have grown across several lines');
-  for (const button of [mentionBox, sendBox]) {
-    assert.ok(Math.abs((button.y + button.height) - (goalBox.y + goalBox.height)) <= 4, 'button bottom should align with the textarea bottom, not float in the middle');
-  }
+  const fieldHeightAfter = (await field.boundingBox()).height;
+  const mentionHeightAfter = (await mention.boundingBox()).height;
+  assert.ok(fieldHeightAfter > fieldHeightBefore + 40, 'the composer-field should grow with a multi-line message');
+  assert.ok(Math.abs(mentionHeightAfter - mentionHeightBefore) <= 1, 'the "+" control in the actions row below should not stretch with the field');
+  await goal.fill('back to one line');
+  const fieldHeightReset = (await field.boundingBox()).height;
+  assert.ok(fieldHeightReset < fieldHeightAfter, 'the field should shrink back once the message is one line again');
   await page.close();
 });
 
-test('the @ button stays centered next to a wrapped placeholder, not pinned under it, when the composer is disabled', { skip }, async () => {
+test('the actions row ("+", model pill, mode, send) stays below the composer field when the composer is disabled by a pending request', { skip }, async () => {
   const page = await panel(waiting([{ id: 'ask-1', type: 'user_input', question: 'which README do you mean?' }]), { width: 320 });
   const goal = page.locator('#goal');
   assert.equal(await goal.isDisabled(), true);
-  const [goalBox, mentionBox] = await Promise.all([goal.boundingBox(), page.locator('#mention-tabs').boundingBox()]);
-  assert.ok(goalBox.height > 30, 'the disabled placeholder should have wrapped to more than one line');
-  const goalCenter = goalBox.y + goalBox.height / 2;
-  const mentionCenter = mentionBox.y + mentionBox.height / 2;
-  assert.ok(Math.abs(goalCenter - mentionCenter) <= 4, '@ should sit centered beside the wrapped placeholder, not next to only its last line');
+  const [goalBox, mentionBox, sendBox] = await Promise.all([goal.boundingBox(), page.locator('#mention-tabs').boundingBox(), page.locator('#send').boundingBox()]);
+  assert.ok(mentionBox.y >= goalBox.y + goalBox.height - 2, '"+" should sit in the actions row under the field, not beside it');
+  assert.ok(sendBox.y >= goalBox.y + goalBox.height - 2, 'send should sit in the actions row under the field, not beside it');
   await page.close();
 });
 

@@ -137,13 +137,20 @@ textarea{resize:vertical}
 
 /* ---- panel shell --------------------------------------------------------- */
 .panel-page{height:100dvh;display:flex;flex-direction:column;min-width:260px;background:var(--bg-page);color:var(--text-1);font-size:var(--text-sm)}
-.panel-header{padding:var(--sp-5) var(--sp-5) 0;display:flex;align-items:center;justify-content:space-between;flex:none}
+/* Topbar: the comp's framed panel has a rounded-square logo mark beside the wordmark, separated
+   from the body by one hairline — the panel's own frame (Chrome's side-panel chrome already
+   provides the outer rounded container the comp's lab viewport mocks up, so that part is not
+   re-implemented here). "new" and "settings" — both still live functionality — move to the
+   topbar's trailing edge, where the comp reserves a meta slot next to the wordmark. */
+.panel-topbar{flex:none;display:flex;align-items:center;justify-content:space-between;padding:var(--sp-3) var(--sp-4);border-bottom:var(--hairline) solid var(--line)}
+.panel-brand{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--text-sm);font-weight:600;color:var(--text-1)}
+.brand-mark{width:16px;height:16px;border-radius:var(--r-4);background:var(--accent);flex:none}
 .brand{font:600 var(--text-sm)/1 var(--font-ui);letter-spacing:-.01em;color:var(--text-1)}
-.header-actions{display:flex;gap:var(--sp-4)}
+.topbar-actions{display:flex;gap:var(--sp-4)}
 .text-button{background:transparent;border:0;padding:var(--sp-1) 0;font-size:var(--text-xs);color:var(--text-3);font-weight:400}
 .text-button:hover{color:var(--text-1);background:transparent}
 
-.content{flex:1;min-height:0;overflow-y:auto;overflow-anchor:auto;padding:var(--sp-3) var(--sp-5) var(--sp-5);scrollbar-width:thin}
+.content{flex:1;min-height:0;overflow-y:auto;overflow-anchor:auto;padding:var(--sp-4) var(--sp-5) var(--sp-5);scrollbar-width:thin}
 .content::-webkit-scrollbar{width:8px}
 .content::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:var(--r-8)}
 
@@ -189,7 +196,9 @@ textarea{resize:vertical}
 details.trace>.trace-header{cursor:pointer}
 .ticks{display:flex;gap:3px;flex:none}
 .tick{width:8px;height:8px;border-radius:var(--r-2);background:var(--surface-3);transform:scale(1);transition:background-color var(--dur-relaxed) var(--ease-out),transform var(--dur-basic) var(--ease-enter)}
-.tick.is-done{background:var(--status-success)}
+/* Palette 4 is signal-only: send, ticks, and every primary button fill are neutral. Green is
+   reserved for the per-step done check (.status-glyph below), not the track itself. */
+.tick.is-done{background:var(--accent)}
 .trace-label{flex:1 1 auto;color:var(--text-3)}
 .trace-header .chev{width:10px;height:10px;color:var(--text-3);transition:transform var(--dur-basic) var(--ease-out);flex:none}
 details.trace[open]>.trace-header .chev{transform:rotate(90deg)}
@@ -209,38 +218,51 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
    attaches to a step (why an action was corrected, retried, or failed),
    never chrome, labels, or timings. ---- */
 .tool-output{font-family:var(--font-mono);font-size:var(--text-2xs);line-height:1.6;color:var(--text-2);background:var(--surface-1);border-radius:var(--r-8);padding:var(--sp-3);margin-top:var(--sp-1);max-height:92px;overflow:hidden;position:relative;-webkit-mask-image:linear-gradient(to bottom,black 55%,transparent 96%);mask-image:linear-gradient(to bottom,black 55%,transparent 96%)}
+.tool-output .lang-tag{display:block;font-family:var(--font-ui);font-size:var(--text-2xs);color:var(--text-3);margin-bottom:var(--sp-1)}
 
 .duration{font-size:var(--text-2xs);color:var(--text-3);margin:var(--sp-2) 0}
 
 /* ---- composer -------------------------------------------------------------- */
-.composer{flex:none;padding:0 var(--sp-3) var(--sp-3);background:var(--bg-page)}
-.run-status{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--text-2xs);line-height:1;color:var(--text-3);background:var(--surface-1);border-radius:var(--r-16) var(--r-16) 0 0;padding:var(--sp-3) var(--sp-4);min-width:0}
-#status-text{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;flex:1}
-.dot{width:6px;height:6px;background:var(--text-3);border-radius:50%;flex:none}
-.running .dot{background:var(--status-info);animation:pulse 1.2s ease-in-out infinite}
-.cost{margin-left:auto;font-variant-numeric:tabular-nums}
-
-.mode-row{display:flex;justify-content:flex-end;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-2) var(--sp-2);background:var(--bg-page)}
-.mode-row #model-link{font-size:var(--text-2xs);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mode-row select{width:auto;border:0;background:transparent;color:var(--text-2);font-size:var(--text-2xs);padding:2px 0;cursor:pointer;text-decoration:underline;text-underline-offset:4px}
-
-/* unslop-ignore: pill-to-rounded-rect on this one control is a deliberate ChatGPT-style
-   composer decision from todo.md, not the default "round everything" tell. */
-.compose-box{position:relative;background:var(--surface-1);border-radius:var(--radius-pill);padding:var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4)}
-.compose-box:has(textarea[data-multiline]){border-radius:var(--r-20)}
-.compose-box:focus-within{border:1px solid var(--line-strong)}
-.compose-row{display:flex;align-items:center;gap:var(--sp-2)}
-.compose-row:has(textarea[data-multiline]:not(:disabled)){align-items:flex-end}
-.composer textarea{flex:1;border:0;box-shadow:none;outline:none;padding:var(--sp-2) 0;min-height:32px;max-height:140px;resize:none;font-size:var(--text-sm);line-height:1.4;background:transparent;color:var(--text-1);field-sizing:content}
+/* Adopted from the comp's own composer: a rounded input field, then one actions row underneath
+   holding "+" (tab attach/context), the model+mode control, and the circular send button — not
+   the three extra chrome rows (a status strip, a model/mode row, a caption) the shipped build
+   used to bolt underneath a ChatGPT-style pill. Where those three rows' live functionality went:
+   - run status + cost: folded into the trace header (#steps-label / a finished turn's own
+     summary line), the one place a run already reports on itself, live or done.
+   - mode + model: the model-pill button (opens settings, like the old model-link) plus the
+     `#mode` select sit together in the actions row's left cluster, reading as one control.
+   - the tab-context caption ("all tabs available…"): kept as a screen-reader-only live region
+     (#tab-context) instead of a permanent visible line; the "+" button's tooltip and the tab
+     picker's own heading carry the same information for sighted users, on demand. */
+.composer{flex:none;padding:var(--sp-3) var(--sp-3) var(--sp-4);border-top:var(--hairline) solid var(--line);background:var(--bg-page);display:flex;flex-direction:column;gap:var(--sp-2)}
+.compose-box{position:relative}
+.composer-field{background:var(--surface-1);border-radius:var(--r-16);padding:var(--sp-3) var(--sp-4);display:flex;align-items:center}
+.composer-field:focus-within{outline:1px solid var(--line-strong);outline-offset:-1px}
+.composer textarea{flex:1;border:0;box-shadow:none;outline:none;padding:0;min-height:22px;max-height:140px;resize:none;font-size:var(--text-sm);line-height:1.4;background:transparent;color:var(--text-1);field-sizing:content}
 .composer textarea::placeholder{color:var(--text-3)}
-.mention-button{background:transparent;color:var(--text-3);padding:0 var(--sp-1);font-size:17px;border:0}
-.mention-button:hover{color:var(--text-1);background:transparent}
+.composer-actions{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2)}
+.composer-left{display:flex;align-items:center;gap:var(--sp-2);min-width:0}
+.icon-btn{width:26px;height:26px;border-radius:var(--r-8);background:var(--surface-1);color:var(--text-2);display:grid;place-items:center;font-size:var(--text-sm);border:none;flex:none;padding:0}
+.icon-btn:hover{background:var(--surface-2);color:var(--text-1)}
+/* One visual chip carries both facts the comp's single "checkto‑1" pill has no room for: model and
+   mode. #model-link and #mode sit flush against each other on the same surface-1 fill, so they read
+   as one control (model name, opens settings — click through to change it — then a thin rule and the
+   mode picker) instead of two separate pills bolted side by side. */
+.model-cluster{display:flex;align-items:center;background:var(--surface-1);border-radius:var(--r-8);min-width:0;flex:1 1 auto;overflow:hidden}
+.model-pill{font-size:var(--text-2xs);color:var(--text-2);background:transparent;border-radius:0;padding:var(--sp-1) var(--sp-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400;min-width:0;flex:0 1 auto}
+.model-pill:hover{color:var(--text-1)}
+.model-pill[hidden]{display:none}
+.mode-select{width:auto;border:0;border-left:var(--hairline) solid var(--line);background:transparent;color:var(--text-2);font-size:var(--text-2xs);padding:var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-1);border-radius:0;cursor:pointer;flex:none}
+.mode-select:hover{color:var(--text-1)}
 .send-button,.stop-button{display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:50%;font-size:var(--text-md);background:var(--accent);color:var(--accent-ink);flex:none}
+.send-button svg{width:14px;height:14px}
 .stop-button{font-size:var(--text-xs)}
-/* Idle mic reads like @: a plain, low-key control, not a call to action. Listening/transcribing are
-   the one live state in this composer's own signal-only palette (--status-info, the same blue
-   .running .dot uses) — there is no brand accent to reach for instead. Transcribing pulses slower
-   than listening's record dot so the two read as different things, not just "still lit up". */
+/* Idle mic reads like the "+" attach button beside it: a plain, low-key control, not a call to
+   action. Listening/transcribing are the one live state in this composer's own signal-only palette
+   (--status-info, the same blue .running .dot uses) — there is no brand accent to reach for instead.
+   Transcribing pulses slower than listening's record dot so the two read as different things, not
+   just "still lit up". Sized to match .icon-btn's footprint since the mic sits in .composer-left
+   alongside it (see panel.html); a follow-up could unify the two into one shape system. */
 .mic-button{display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:50%;border:0;background:transparent;color:var(--text-3);flex:none}
 .mic-button svg{width:18px;height:18px}
 .mic-button:hover{background:var(--surface-2);color:var(--text-1)}
@@ -249,11 +271,7 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
 .mic-button[data-state="hands-free"]{background:var(--status-info);color:var(--accent-strong);box-shadow:0 0 0 2px var(--status-info-bg,var(--surface-1))}
 .mic-button:disabled{opacity:.4}
 @media (prefers-reduced-motion:reduce){.mic-button[data-state]{animation:none}}
-/* Functional hint text, not meta caption: #tab-context tells the user what "send" is about to do
-   with their tabs, and "↵ send" is the keyboard-shortcut label. Both are read every time the
-   composer is used, so they get the 12px functional floor, not the 11px caption size. */
-.composer-caption{display:flex;justify-content:space-between;gap:var(--sp-2);color:var(--text-3);font-size:var(--text-xs);margin:var(--sp-2) var(--sp-2) 0}
-.composer .error{margin:var(--sp-2) var(--sp-2) 0;color:var(--status-danger)}
+.composer .error{margin:0;color:var(--status-danger)}
 
 .notice{padding:var(--sp-4);background:var(--surface-2);border-radius:var(--r-12);margin-bottom:var(--sp-4)}
 .notice p{margin:0 0 var(--sp-3);color:var(--text-1)}
@@ -278,9 +296,8 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
 .picker-footer{display:flex;justify-content:space-between;gap:var(--sp-2);border-top:var(--hairline) solid var(--line);padding:var(--sp-2) var(--sp-3);font-size:var(--text-2xs);color:var(--text-3)}
 .picker-empty{font-size:var(--text-xs);padding:var(--sp-4) var(--sp-2);margin:0}
 
-@keyframes pulse{50%{opacity:.3}}
 @media(prefers-reduced-motion:reduce){
-  .running .dot,.tab-card .hand{animation:none}
+  .tab-card .hand{animation:none}
   .trace-body,.trace.is-live>.trace-body,.tick,.trace-header .chev{transition:none}
 }
 @media(max-width:500px){.settings-page{padding:28px 18px}.two{grid-template-columns:1fr;gap:0}}

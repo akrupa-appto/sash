@@ -10,7 +10,7 @@
           "extension/panel.html"
         ],
         "createdAt": "2026-09-20T06:08:18.347Z",
-        "reason": "Detector cannot resolve CSS custom-property padding (var(--sp-*) via calc()) on .notice/.run-status/.compose-box; verified via Playwright getComputedStyle: .notice=16px, .run-status=12/16px, .compose-box=8/8/8/16px, all real insets. .tab-card is the padded-children shape: 0 padding on the wrapper itself, but its only text-bearing child (.tab-card-foot) carries its own 12/16px padding, and .tab-card-shot has no text against its edge."
+        "reason": "Detector cannot resolve CSS custom-property padding (var(--sp-*) via calc()) on .notice/.composer-field; verified via Playwright getComputedStyle: .notice=16px, .composer-field=12/16px, all real insets. .tab-card is the padded-children shape: 0 padding on the wrapper itself, but its only text-bearing child (.tab-card-foot) carries its own 12/16px padding, and .tab-card-shot has no text against its edge. (The panel-match-comp pass replaced .compose-box's own padding/background with .composer-field's, adopting the comp's composer composition; .run-status no longer exists.)"
       },
       {
         "rule": "broken-image",
@@ -28,7 +28,7 @@
           "extension/panel.html"
         ],
         "createdAt": "2026-09-20T06:16:28.863Z",
-        "reason": "Two remaining 11px leaf texts, verified by rendering the built panel.html: #status-text (the run-status strip's live readout, e.g. 'ready'/'finished'/'waiting for your answer') and #tab-card-title (the tab-preview card's title, e.g. 'no tab yet'). Both are status/caption readouts, not body content the user reads at length and not an action hint — the textbook defensible case per the design's own type scale (--text-2xs: 11px reserved for captions/status, matching the Codex reference's --text-xs: 11px). Distinct from two other elements the same sweep DID fix: .composer-caption (#tab-context + the send-key hint) and .tab-card-foot's 'or type @ for another' hint, both bumped from 11px to the 12px functional floor because they are action hints, not captions."
+        "reason": "One remaining 11px leaf text, verified by rendering the built panel.html: #tab-card-title (the tab-preview card's title, e.g. 'no tab yet'). It is a status/caption readout, not body content the user reads at length and not an action hint — the textbook defensible case per the design's own type scale (--text-2xs: 11px reserved for captions/status, matching the Codex reference's --text-xs: 11px). The standalone #status-text run-status strip this note previously also covered no longer exists: the panel-match-comp pass adopted the comp's composer/topbar composition, folding the live readout into the trace header (#steps-label) instead of a strip bolted underneath the composer."
       }
     ]
   }

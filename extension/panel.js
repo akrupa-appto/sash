@@ -41,7 +41,7 @@ function controls() {
   // A card is waiting for an answer: the chat box itself must go inert, not just the send button,
   // or submitting free text over it looks like it worked and quietly drops the pending request.
   $('#goal').disabled = blocked;
-  $('#goal').placeholder = blocked ? 'answer the request above before sending a new message' : 'say what you need';
+  $('#goal').placeholder = blocked ? 'answer the request above before sending a new message' : 'Do anything';
   $('#send').title = blocked ? 'answer the request above first' : 'send task';
   renderMic();
 }
@@ -176,7 +176,7 @@ const ICON_CHECK = '<svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6
 const ICON_CHEV = '<svg class="chev" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 // A finished step's row always shows its expanded sentence: by the time an entry exists the action is
 // already done, so every glyph resolves straight to its check — there is no live/ticker form to show
-// here (the ticker is used in #status-text instead). Raw execution detail (why a step was corrected,
+// here (the ticker is folded into the live trace header instead). Raw execution detail (why a step was corrected,
 // retried or failed) is the one thing on this row set in monospace, faded out behind a gradient mask
 // rather than hard-clipped; everything else on the row is Archivo.
 function stepElement(s) {
@@ -185,7 +185,12 @@ function stepElement(s) {
   const body = document.createElement('div'); body.className = 'step-body';
   const label = document.createElement('span'); label.className = 'step-label'; label.textContent = s.log?.expanded || s.plan || s.action;
   body.append(label);
-  if (s.note) { const detail = document.createElement('div'); detail.className = 'tool-output'; detail.textContent = s.note; body.append(detail); }
+  if (s.note) {
+    const detail = document.createElement('div'); detail.className = 'tool-output';
+    const tag = document.createElement('span'); tag.className = 'lang-tag'; tag.textContent = 'plaintext';
+    const text = document.createElement('span'); text.textContent = s.note;
+    detail.append(tag, text); body.append(detail);
+  }
   el.append(glyph, body);
   return el;
 }
@@ -204,11 +209,18 @@ function ticksMarkup(count) {
   return `<span class="ticks" aria-hidden="true">${'<span class="tick is-done"></span>'.repeat(count)}</span>`;
 }
 function stepCountLabel(count) { return `${count} step${count === 1 ? '' : 's'}`; }
+// Cost lives in the trace header now, next to the duration/step-count it already reports —
+// there is no separate status strip to hold it any more.
+function costSuffix(cost) { return cost ? ` · $${cost.toFixed(4)}` : ''; }
+const escapeHtml = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // The visible face of a trace header: ticks, then a plain label, then (for a collapsible, finished
 // trace) the chevron. The prose join-sentence goes on aria-label instead, so screen readers still get
 // a sentence, never a step count read as a stack trace.
+// The live label can now carry a step's raw ticker/plan/action text (page content the agent read),
+// not just a computed word or number like the finished-trace label always was — so it is escaped
+// before going into innerHTML, the same way any other untrusted string would be.
 function traceHeaderMarkup(steps, label, { chevron } = {}) {
-  return ticksMarkup(steps.length) + `<span class="trace-label">${label}</span>` + (chevron ? ICON_CHEV : '');
+  return ticksMarkup(steps.length) + `<span class="trace-label">${escapeHtml(label)}</span>` + (chevron ? ICON_CHEV : '');
 }
 // Three states only, phrased as what happened to the run, not as the agent's failure.
 function formatDuration(ms) {
@@ -402,8 +414,13 @@ function render(state) {
   // The run stopped on a request: the last reply is what the user has to answer, not a finished result.
   const waiting = !running && state.status === 'needs_input';
   $('#messages').replaceChildren(...state.messages.map((m, i) => {
-    const el = document.createElement('div'); el.className = `message ${m.role}${waiting && m.role === 'agent' && i === state.messages.length - 1 ? ' asking' : ''}`;
-    const label = document.createElement('span'); label.className = 'message-label'; label.textContent = m.role === 'user' ? 'you' : 'checkto';
+    const isAsking = waiting && m.role === 'agent' && i === state.messages.length - 1;
+    const el = document.createElement('div'); el.className = `message ${m.role}${isAsking ? ' asking' : ''}`;
+    const label = document.createElement('span'); label.className = 'message-label';
+    // .asking carries no visible border/stripe (palette 4's own "no decoration, only meaning"
+    // rule), so the sr-only label is where its text difference lives now that the old run-status
+    // strip's "waiting for your answer" is gone — color independence, per the Accessibility section.
+    label.textContent = m.role === 'user' ? 'you' : (isAsking ? 'checkto, waiting for your answer' : 'checkto');
     const body = document.createElement('div'); body.textContent = m.text;
     el.append(label);
     // The actions belong above the reply they produced, so the answer stays the last thing on screen.
@@ -414,7 +431,7 @@ function render(state) {
       const wrap = document.createElement('details'); wrap.className = 'trace steps';
       const header = document.createElement('summary'); header.className = 'trace-header';
       header.setAttribute('aria-label', summarySentence(m.steps));
-      const label = durationText({ startedAt: m.startedAt, endedAt: m.endedAt, stopped: m.stopped, live: false }) || stepCountLabel(m.steps.length);
+      const label = (durationText({ startedAt: m.startedAt, endedAt: m.endedAt, stopped: m.stopped, live: false }) || stepCountLabel(m.steps.length)) + costSuffix(m.cost);
       header.innerHTML = traceHeaderMarkup(m.steps, label, { chevron: true });
       const body = document.createElement('div'); body.className = 'trace-body';
       const inner = document.createElement('div'); inner.className = 'trace-steps'; inner.append(...m.steps.map(stepElement));
@@ -425,16 +442,15 @@ function render(state) {
     el.append(body);
     return el;
   }));
-  // The live list only covers the run in flight; once it ends the steps move onto that run's reply.
-  $('#steps-wrap').hidden = !running || !state.steps.length;
+  // The live list covers the run in flight, from the moment it starts (even before a first step has
+  // landed — the header then reads the same live ticker text the old standalone status strip used to
+  // carry, plus the running cost, since the header is the one place a run already reports on itself).
+  $('#steps-wrap').hidden = !running;
   $('#steps-label').setAttribute('aria-label', summarySentence(state.steps));
-  $('#steps-label').innerHTML = traceHeaderMarkup(state.steps, stepCountLabel(state.steps.length));
-  $('#steps').replaceChildren(...state.steps.map(stepElement));
   const latest = state.steps.at(-1);
-  $('#status-text').textContent = running ? (latest?.log?.ticker || latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', needs_input: 'waiting for your answer', max_steps: 'step limit reached' }[state.status] || state.status);
-  $('#status-text').title = $('#status-text').textContent;
-  $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
-  $('#run-status').classList.toggle('running', running);
+  const liveLabel = (latest?.log?.ticker || latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) + costSuffix(state.cost);
+  $('#steps-label').innerHTML = traceHeaderMarkup(state.steps, liveLabel);
+  $('#steps').replaceChildren(...state.steps.map(stepElement));
   renderLiveDuration();
   // The same pending request both gates the composer and is what the request card renders: computed
   // once here so the two can never see a different answer to "is something waiting on the user".
@@ -479,8 +495,13 @@ contentResize.observe($('#steps-wrap'));
 async function load() {
   const response = await request({ type: 'getState' });
   $('#mode').value = response.mode;
-  $('#model-link').textContent = response.model ? `${response.model.replace(/^(openai|gemini|custom):/, '')} · ${response.reasoning || 'auto'}` : '';
-  $('#model-link').hidden = response.mode !== 'careful' || !response.model;
+  // The model pill is the composer's permanent home for "what model" (it doubles as the old
+  // model-link into settings); it shows a reasoning level only in careful mode, since fast mode
+  // has none to report.
+  $('#model-link').textContent = response.model
+    ? `${response.model.replace(/^(openai|gemini|custom):/, '')}${response.mode === 'careful' && response.reasoning ? ` · ${response.reasoning}` : ''}`
+    : 'choose a model';
+  $('#model-link').hidden = false;
   configured = response.configured; $('#setup').hidden = configured;
   voice = response.voice || { enabled: false, mode: undefined, capability: { canTranscribe: false } };
   // getState can be in flight while a newer broadcast lands, so its snapshot gets the same
