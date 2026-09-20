@@ -3,13 +3,14 @@
 <body class="panel-page">
 <header class="panel-header"><span class="brand">checkto</span><div class="header-actions"><button class="text-button" id="new-chat">new</button><button class="text-button settings-link">settings</button></div></header>
 <main class="content" id="content">
-<div id="setup" class="notice" hidden><p>connect a model to start.</p><button class="settings-link secondary">open settings <span aria-hidden="true">↗</span></button></div>
-<div id="permission" class="notice" hidden role="alertdialog" aria-labelledby="permission-title" aria-describedby="permission-detail"><h2 id="permission-title"></h2><p id="permission-detail"></p><div class="row"><button type="button" id="permission-allow"></button><button type="button" class="secondary" id="permission-deny"></button></div></div>
+<div id="setup" class="notice" hidden><p class="notice-lead">connect a model to start</p><p class="muted">checkto needs at least one API key before it can plan or act in your browser.</p><button class="settings-link secondary">open settings <span aria-hidden="true">↗</span></button></div>
+<div id="permission" class="notice permission-card" hidden role="alertdialog" aria-labelledby="permission-title" aria-describedby="permission-detail"><p class="notice-lead" id="permission-title"></p><p class="muted" id="permission-detail"></p><div class="permission-actions"><button type="button" id="permission-allow"></button><button type="button" class="secondary" id="permission-deny"></button></div></div>
 <div class="intro" id="intro">
+<p class="intro-eyebrow">browser agent</p>
 <h1>what should i do<br>in <b>this tab?</b></h1>
-<div class="tab-card" aria-hidden="true"><div class="tab-card-shot"><img id="tab-card-icon" alt="" hidden><span class="tab-card-mark" id="tab-card-mark">·</span><svg class="hand" viewBox="0 0 24 24"><path d="M4 2 L20 11 L12.5 12.8 L9.5 20 Z" fill="#FFB48A" stroke="#171020" stroke-width="1.4" stroke-linejoin="round"/></svg></div><div class="tab-card-foot"><span id="tab-card-title">no tab yet</span><span>or type @ for another</span></div></div>
-<p>say it like you would to a person. it reads the page, clicks, and tells you when it's done.</p>
-<div class="examples"><button data-task="summarize this page">summarize this page</button><button data-task="compare these tabs">compare tabs</button></div>
+<p class="intro-lead">say it like you would to a person. it reads the page, clicks, and tells you when it's done.</p>
+<div class="tab-card" aria-hidden="true"><div class="tab-card-shot"><img id="tab-card-icon" alt="" hidden><span class="tab-card-mark" id="tab-card-mark">·</span><svg class="hand" viewBox="0 0 24 24"><path d="M4 2 L20 11 L12.5 12.8 L9.5 20 Z" fill="var(--text-3)" stroke="var(--surface-2)" stroke-width="1.4" stroke-linejoin="round"/></svg></div><div class="tab-card-foot"><span id="tab-card-title">no tab yet</span><span>or type @ for another</span></div></div>
+<div class="examples"><span class="examples-label" aria-hidden="true">try</span><button data-task="summarize this page">summarize this page</button><button data-task="compare these tabs">compare tabs</button></div>
 </div>
 <div id="messages" aria-live="polite"></div>
 <div class="trace is-live" id="steps-wrap" hidden><div class="trace-header" id="steps-label" role="group"></div><div class="trace-body"><div id="steps"></div></div></div>
