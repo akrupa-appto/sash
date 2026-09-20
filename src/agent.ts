@@ -447,9 +447,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // An opaque page (about:blank, data:, a chrome error page) has no usable origin: originOf gives
         // the literal "null" for all of them, which would key one grant for every such page. Keep the
         // page's own origin when it has one, and fall back to its full url so the key stays distinct.
+        // A `data:` url can be megabytes, so the key is capped; an empty url must never reach the card
+        // as an empty origin, which the request builder reads as "every site".
         if (p.status === "approve") {
           const pageOrigin = originOf(snap.url);
-          const grantOrigin = p.origin === "*" ? "*" : pageOrigin && pageOrigin !== "null" ? pageOrigin : snap.url;
+          const grantOrigin = p.origin === "*" ? "*" : pageOrigin && pageOrigin !== "null" ? pageOrigin : (snap.url || snap.fingerprint || "unidentified page").slice(0, 512);
           return ask(approvalRequest({ action: p.action ?? p.next, origin: grantOrigin, why: p.why }));
         }
         // A login wall: hand the page back as a typed form. Field labels and input types travel;

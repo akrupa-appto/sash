@@ -151,6 +151,45 @@ test('an upload that fails after the session opened is cancelled, not orphaned',
   } finally { globalThis.fetch = realFetch; }
 });
 
+// The bytes have landed by the time the finalize reply comes back, so a reply that cannot be read (a
+// truncated body, an HTML error page) leaves a real file behind: cancel is the only thing that
+// removes it, and the failure must not be silently swallowed into an empty transcript.
+test('a finalize reply that cannot be read cancels the session instead of leaving the clip behind', async () => {
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (init.headers?.['X-Goog-Upload-Command'] === 'cancel') return new Response('{}', { status: 200 });
+    if (String(url) === 'https://upload.example.test/session') return new Response('<html>gateway timed out</html>', { status: 200 });
+    return ok({ output_text: 'x' });
+  };
+  try {
+    await withKeys({ GEMINI_API_KEY: 'g-key' }, () =>
+      assert.rejects(transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' })));
+    const cancel = calls.find(c => c.init.headers?.['X-Goog-Upload-Command'] === 'cancel');
+    assert.equal(cancel?.url, 'https://upload.example.test/session', 'an unreadable reply after the bytes landed still cancels the session');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// The reply can name the file without naming its uri. That name is enough to delete it.
+test('a reply naming a file but no uri deletes that file before reporting the failure', async () => {
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url) === 'https://upload.example.test/session') return new Response(JSON.stringify({ file: { name: 'files/abc' } }), { status: 200 });
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    await withKeys({ GEMINI_API_KEY: 'g-key' }, () =>
+      assert.rejects(transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }), /returned no file uri/));
+    const cleanup = calls.find(c => c.init.method === 'DELETE');
+    assert.equal(cleanup?.url, 'https://generativelanguage.googleapis.com/v1beta/files/abc', 'the audio it just uploaded is deleted, not left for 48 hours');
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('a custom server without the transcription endpoint produces a clear, actionable error', async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response('not found', { status: 404 });
