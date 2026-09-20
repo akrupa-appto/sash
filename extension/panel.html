@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto</title><link rel="stylesheet" href="style.css"></head>
 <body class="panel-page">
-<header class="panel-header"><span class="brand">checkto</span><div class="header-actions"><button class="text-button" id="new-chat">new</button><button class="text-button settings-link">settings</button></div></header>
+<header class="panel-topbar"><div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div><nav class="topbar-actions"><button type="button" class="text-button" id="new-chat">new</button><button type="button" class="text-button settings-link">settings</button></nav></header>
 <main class="content" id="content">
 <div id="setup" class="notice" hidden><p class="notice-lead">connect a model to start</p><p class="muted">checkto needs at least one API key before it can plan or act in your browser.</p><button class="settings-link secondary">open settings <span aria-hidden="true">↗</span></button></div>
 <div id="permission" class="notice permission-card" hidden role="alertdialog" aria-labelledby="permission-title" aria-describedby="permission-detail"><p class="notice-lead" id="permission-title"></p><p class="muted" id="permission-detail"></p><div class="permission-actions"><button type="button" id="permission-allow"></button><button type="button" class="secondary" id="permission-deny"></button></div></div>
@@ -17,14 +17,17 @@
 <div class="duration" id="live-duration" hidden></div>
 </main>
 <form class="composer" id="task-form">
-<div class="run-status" id="run-status"><span class="dot"></span><span id="status-text">ready</span><span class="cost" id="cost"></span></div>
 <div class="notice blocked-card" id="blocked" hidden><p class="blocked-reason" id="blocked-text"></p></div>
 <div id="request" hidden></div>
-<div class="mode-row"><button type="button" class="text-button settings-link" id="model-link" title="change the planner model in settings"></button><label class="sr-only" for="mode">agent mode</label><select id="mode"><option value="careful">careful</option><option value="fast">fast</option></select></div>
 <div class="compose-box">
 <div class="tab-picker" id="tab-picker" hidden><div class="picker-heading"><span>open tabs</span><span id="tab-count"></span></div><div id="tab-results" role="listbox" aria-label="open tabs"></div><div class="picker-footer">↑ ↓ to browse <span>enter to add · esc to close</span></div></div>
 <div class="selected-tabs" id="selected-tabs" aria-label="referenced tabs"></div>
-<div class="compose-row"><button class="mention-button" type="button" id="mention-tabs" title="add a tab" aria-label="add a tab">@</button><label class="sr-only" for="goal">message checkto</label><textarea id="goal" placeholder="say what you need" required maxlength="10000" rows="1" aria-autocomplete="list" aria-controls="tab-results" aria-expanded="false"></textarea><button id="send" class="send-button" type="submit" aria-label="send task" title="send task">↑</button><button id="stop" class="stop-button" type="button" hidden aria-label="stop task" title="stop task">■</button></div>
+<div class="composer-field"><label class="sr-only" for="goal">message checkto</label><textarea id="goal" placeholder="Do anything" required maxlength="10000" rows="1" aria-autocomplete="list" aria-controls="tab-results" aria-expanded="false"></textarea></div>
 </div>
-<div class="status error" id="error" role="alert"></div><div class="composer-caption"><span id="tab-context">all your tabs, one conversation</span><span>↵ send</span></div>
+<div class="composer-actions">
+<div class="composer-left"><button class="icon-btn" type="button" id="mention-tabs" title="attach a tab" aria-label="attach a tab">+</button><div class="model-cluster"><button type="button" class="model-pill settings-link" id="model-link" title="change the planner model in settings"></button><label class="sr-only" for="mode">agent mode</label><select id="mode" class="mode-select"><option value="careful">careful</option><option value="fast">fast</option></select></div><span id="tab-context" class="sr-only"></span></div>
+<button id="send" class="send-button" type="submit" aria-label="send task" title="send task"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h8.2M8.2 4.3L12 8l-3.8 3.7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke="currentColor"/></svg></button>
+<button id="stop" class="stop-button" type="button" hidden aria-label="stop task" title="stop task">■</button>
+</div>
+<div class="status error" id="error" role="alert"></div>
 </form><script type="module" src="panel.js"></script></body></html>
