@@ -245,13 +245,11 @@
     display: flex;
     flex-direction: column;
     gap: var(--sp-4);
-    /* Anchor content to the composer, not the topbar. The panel is tall and
-       narrow; a short exchange used to leave a dead gap between the answer
-       and the composer because flex-start left everything pinned to the
-       top. Real chat surfaces anchor to the newest message at the bottom —
-       flex-end does that without stretching or centering anything, and
-       still scrolls normally once content exceeds the height. */
-    justify-content: flex-end;
+    /* Top-anchored, like the Codex panel this is drawn from. Bottom-anchoring
+       was tried and is worse: with one short exchange it leaves a large void
+       above the first message, which reads as broken. Space below short
+       content is normal, the composer is docked to the bottom edge anyway. */
+    justify-content: flex-start;
   }
   .transcript::-webkit-scrollbar{ width: 8px; }
   .transcript::-webkit-scrollbar-thumb{ background: var(--surface-3); border-radius: var(--r-8); }
