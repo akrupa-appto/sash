@@ -633,12 +633,16 @@ chrome.tabs.onCreated.addListener(scheduleRefresh); chrome.tabs.onRemoved.addLis
 // happened and what to do about it. The raw text is not hidden: it stays on the element's title,
 // and anything unrecognised is shown verbatim, exactly as before — this never guesses and never
 // replaces a message it does not understand.
-const PROVIDER_ERROR = /^([A-Za-z][^:]{0,39}?)\s(\d{3}):\s*([\s\S]+)$/;
+// Both shapes this codebase actually throws are matched: providers.ts's `Label 401: body` for a
+// run, and transcribe.ts's `Label transcription failed (401): body` for dictation.
+const PROVIDER_ERROR = /^([A-Za-z][^:]{0,39}?)\s(?:\((\d{3})\)|(\d{3})):\s*([\s\S]+)$/;
+const PROVIDER_SUFFIX = /\s*(?:transcription|request|chat|completion|generation)?\s*failed$/i;
 const NETWORK_ERROR = /failed to fetch|fetch failed|network ?error|network request failed|load failed|socket hang up|econnrefused|enotfound|err_(?:name_not_resolved|connection|timed_out)/i;
 function humanError(message) {
   const raw = String(message ?? '').trim();
-  const [, provider, code] = raw.match(PROVIDER_ERROR) || [];
-  const status = code ? Number(code) : undefined;
+  const match = raw.match(PROVIDER_ERROR);
+  const provider = match ? match[1].replace(PROVIDER_SUFFIX, '').trim() : '';
+  const status = match ? Number(match[2] || match[3]) : undefined;
   if (status === 401 || status === 403) return `${provider} rejected the api key: it is invalid, expired or revoked. open settings and paste a current one.`;
   if (status === 429) return `${provider} is rate-limiting this key, or its quota is used up. wait a moment and try again.`;
   if (status >= 500) return `${provider} failed at its own end (${status}). that one is theirs, not yours — try again in a moment.`;

@@ -787,6 +787,13 @@ test('a provider error reads as one actionable sentence, with the raw text kept 
   await dictationError(page, plain, 103);
   assert.equal(await line.innerText(), plain);
   assert.equal(await line.getAttribute('title'), null);
+  // Dictation throws the same failure in transcribe.ts's own shape — `Label transcription failed
+  // (401): body` — and that is a real 401 a user can hit, so it gets the same sentence with the
+  // provider's name, not the phrase the throw happened to use.
+  const DICTATION_401 = 'Custom transcription failed (401): {"error":{"message":"The gateway key is invalid, expired, or revoked."}}';
+  await dictationError(page, DICTATION_401, 104);
+  assert.match(await line.innerText(), /^Custom rejected the api key/);
+  assert.equal(await line.getAttribute('title'), DICTATION_401);
   // The other way an error lands here: the panel's own call threw, and showError got the message.
   await page.evaluate(() => {
     chrome.runtime.sendMessage = async message => (message.type === 'clear' ? { error: 'Custom 401: {"error":{"message":"The gateway key is invalid"}}' } : { ok: true });
