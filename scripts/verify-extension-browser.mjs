@@ -15,11 +15,15 @@ try {
   await fixture.goto(origin);
   await fixture.bringToFront();
   // Exercise the same protocol commands that chrome.debugger sends, on a real page.
-  globalThis.chrome = { tabs: { update: async () => fixture.bringToFront() }, debugger: {
-    attach: async () => { cdp = await fixture.context().newCDPSession(fixture); },
-    detach: async () => cdp.detach(),
-    sendCommand: async (_target, method, params) => cdp.send(method, params),
-  } };
+  globalThis.chrome = {
+    tabs: { update: async () => fixture.bringToFront(), get: async () => ({ id: 1, windowId: 1 }) },
+    windows: { update: async () => {} },
+    debugger: {
+      attach: async () => { cdp = await fixture.context().newCDPSession(fixture); },
+      detach: async () => cdp.detach(),
+      sendCommand: async (_target, method, params) => cdp.send(method, params),
+    },
+  };
   const ac = new AbortController();
   const pages = [];
   const page = new b.ChromePage({ id: 1, url: origin, title: 'fixture' }, ac.signal, pages);

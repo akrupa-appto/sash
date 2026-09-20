@@ -8,7 +8,8 @@
     "build:extension": "node scripts/build-extension.mjs",
     "package:extension": "node scripts/package-extension.mjs",
     "pretest": "npm run build:extension",
-    "test:extension": "node scripts/verify-extension-installed.mjs"
+    "test:extension": "node scripts/verify-extension-installed.mjs",
+    "test:browser": "node scripts/verify-extension-browser.mjs"
   },
   "dependencies": {
     "playwright": "^1.63.0"
