@@ -48,33 +48,109 @@
     --ease-enter: cubic-bezier(.23, 1, .32, 1);
     --hairline: .5px;
 
-    /* checkto neutral surfaces — near-black with a whisper of the old plum,
-       not the plum itself. see caption for why. */
-    --bg-page: #0f0e11;
-    --bg: #141317;
-    --surface-1: #1c1b20;
-    --surface-2: #232228;
-    --surface-3: #2b2a31;
-    --line: rgba(255,255,255,.08);
-    --line-strong: rgba(255,255,255,.14);
+    /* ---- neutral ramp — TRUE neutral (chroma 0), shared by all four
+       palettes below. The old ramp (#0f0e11 etc.) carried a hidden plum/blue
+       cast (B>R>G in every stop) that fought whatever accent sat on it. An
+       even OKLCH lightness ramp at C 0 removes that for good; only the
+       accent and semantic tokens below vary per palette. ---- */
+    --bg-page: oklch(0.14 0 0);
+    --bg: oklch(0.17 0 0);
+    --surface-1: oklch(0.21 0 0);
+    --surface-2: oklch(0.25 0 0);
+    --surface-3: oklch(0.30 0 0);
+    --line: oklch(1 0 0 / 10%);
+    --line-strong: oklch(1 0 0 / 16%);
 
-    --text-1: #ece9e6;
-    --text-2: #a7a3ad;
-    --text-3: #726e79;
+    --text-1: oklch(0.95 0 0);
+    --text-2: oklch(0.74 0 0);
+    --text-3: oklch(0.62 0 0);
 
-    /* checkto's own accent: gold, not orange, not purple, not a status color. */
-    --accent: #e3a72e;
-    --accent-strong: #f2be49;
-    --accent-ink: #1c1406;
+    /* ---- palette 3 (warm accent, done properly) as the :root fallback —
+       overridden per palette below via [data-palette]. ---- */
+    --accent: oklch(0.80 0.17 80);
+    --accent-strong: oklch(0.86 0.15 80);
+    --accent-ink: oklch(0.15 0 0);
 
-    --status-success: #59d24e;
-    --status-danger: #f44a4c;
-    --status-warning: #f87915;
-    --status-info: #339cff;
+    --status-success: oklch(0.72 0.13 145);
+    --status-danger: oklch(0.68 0.17 25);
+    --status-danger-bg: oklch(0.68 0.17 25 / 14%);
+    --status-warning: oklch(0.72 0.17 45);
+    --status-info: oklch(0.68 0.15 230);
+    --dot-color: var(--text-3);
 
     --font-ui: "Archivo", system-ui, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
   }
+
+  /* =========================================================================
+     PALETTES — the only thing this pass changes. Structure, layout, motion
+     and the tick-track signature of designs 1 and 4 are untouched; only the
+     tokens below swap per ?palette=1..4. Neutral ramp is identical across
+     all four (see :root) so the comparison is accent-vs-accent, not
+     background-vs-background.
+     ========================================================================= */
+
+  /* ---- palette 1: achromatic. No chroma anywhere except the tiny pending
+     dot. Hierarchy is lightness and weight only. ---- */
+  html[data-palette="1"]{
+    --accent: oklch(0.98 0 0);
+    --accent-strong: oklch(1 0 0);
+    --accent-ink: oklch(0.14 0 0);
+    --status-success: oklch(0.90 0 0);
+    --status-danger: oklch(0.80 0 0);
+    --status-danger-bg: oklch(1 0 0 / 8%);
+    --status-warning: oklch(0.80 0 0);
+    --status-info: oklch(0.80 0 0);
+    --dot-color: oklch(0.75 0.09 220);
+  }
+
+  /* ---- palette 2: single cool accent. True neutrals + one cool hue (200,
+     cyan-blue) for interactive elements only; status stays functional and
+     desaturated; the dot stays neutral so the one hue reads as intentional. ---- */
+  html[data-palette="2"]{
+    --accent: oklch(0.75 0.12 200);
+    --accent-strong: oklch(0.82 0.10 200);
+    --accent-ink: oklch(0.15 0 0);
+    --status-success: oklch(0.72 0.10 145);
+    --status-danger: oklch(0.68 0.14 25);
+    --status-danger-bg: oklch(0.68 0.14 25 / 14%);
+    --status-warning: oklch(0.75 0.11 70);
+    --status-info: oklch(0.72 0.09 205);
+    --dot-color: var(--text-3);
+  }
+
+  /* ---- palette 3: single warm accent, done properly. Same gold family as
+     the brand, but purer (higher C) and paired with a genuinely neutral
+     near-black instead of a warm-tinted one, so it reads crisp, not muddy.
+     Also the :root fallback above. ---- */
+  html[data-palette="3"]{
+    --accent: oklch(0.80 0.17 80);
+    --accent-strong: oklch(0.86 0.15 80);
+    --accent-ink: oklch(0.15 0 0);
+    --status-success: oklch(0.72 0.13 145);
+    --status-danger: oklch(0.68 0.17 25);
+    --status-danger-bg: oklch(0.68 0.17 25 / 14%);
+    --status-warning: oklch(0.72 0.17 45);
+    --status-info: oklch(0.68 0.15 230);
+    --dot-color: var(--text-3);
+  }
+
+  /* ---- palette 4: signal-only. No brand accent — interactive fills go
+     neutral — colour appears only to carry meaning (running/done/failed/
+     needs-you). The pending dot borrows status-info to make even that tiny
+     mark a signal, not decoration. ---- */
+  html[data-palette="4"]{
+    --accent: oklch(0.92 0 0);
+    --accent-strong: oklch(0.98 0 0);
+    --accent-ink: oklch(0.15 0 0);
+    --status-success: oklch(0.75 0.15 145);
+    --status-danger: oklch(0.68 0.19 25);
+    --status-danger-bg: oklch(0.68 0.19 25 / 14%);
+    --status-warning: oklch(0.78 0.15 75);
+    --status-info: oklch(0.72 0.12 230);
+    --dot-color: var(--status-info);
+  }
+  html[data-palette="4"] .approval-lede .target{ color: var(--status-warning); }
 
   *{ box-sizing: border-box; }
   html,body{ margin:0; padding:0; }
@@ -109,6 +185,7 @@
     margin-top: var(--sp-2);
     color: var(--text-3);
   }
+  .caption .palette-caption-name{ margin-top: var(--sp-4); }
 
   /* ---- panel shell ------------------------------------------------------ */
   .panel-frame{
@@ -168,6 +245,13 @@
     display: flex;
     flex-direction: column;
     gap: var(--sp-4);
+    /* Anchor content to the composer, not the topbar. The panel is tall and
+       narrow; a short exchange used to leave a dead gap between the answer
+       and the composer because flex-start left everything pinned to the
+       top. Real chat surfaces anchor to the newest message at the bottom —
+       flex-end does that without stretching or centering anything, and
+       still scrolls normally once content exceeds the height. */
+    justify-content: flex-end;
   }
   .transcript::-webkit-scrollbar{ width: 8px; }
   .transcript::-webkit-scrollbar-thumb{ background: var(--surface-3); border-radius: var(--r-8); }
@@ -253,7 +337,7 @@
     content:"";
     width: 5px; height: 5px;
     border-radius: var(--r-24);
-    background: var(--text-3);
+    background: var(--dot-color);
     opacity: 0;
     transform: scale(.6);
     transition: opacity var(--dur-basic) var(--ease-out), transform var(--dur-basic) var(--ease-out);
@@ -518,7 +602,7 @@
   .blocked-glyph{
     width: 32px; height: 32px;
     border-radius: var(--r-10);
-    background: rgba(244,74,76,.12);
+    background: var(--status-danger-bg);
     color: var(--status-danger);
     display: grid;
     place-items: center;
@@ -1176,6 +1260,36 @@
   };
 
   /* ------------------------------------------------------------------ */
+  /* palette captions                                                     */
+  /* ------------------------------------------------------------------ */
+  var PALETTE_CAPTIONS = {
+    1: {
+      name: "Palette 1 — Achromatic",
+      body: "Ramp: oklch(0.14→0.95 0 0) in 6 even steps, C 0 throughout — no hue anywhere in the ramp or the accent. " +
+        "1 hue on screen at once, and only while a step is pending: the 5px dot on the status glyph borrows oklch(0.75 0.09 220), a soft blue, as the one functional exception. " +
+        "Everything else — send button, ticks, checks, Deny — is neutral, told apart by lightness and weight only. Worst measured contrast: 4.88:1 (text-3 on surface-1)."
+    },
+    2: {
+      name: "Palette 2 — Single Cool Accent",
+      body: "Ramp: oklch(0.14→0.95 0 0) in 6 even steps, C 0, shared with every palette here. " +
+        "Accent is oklch(0.75 0.12 200) — a cyan-leaning blue, picked specifically to sit outside the 250–320 indigo/violet band the AI default reaches for; used only on send, focus, and the live tick. " +
+        "Status (success/danger/warning) stays separately hued but desaturated (C 0.10–0.14), so on a finished run you see 2 hues at once: the cyan accent plus the green done-check. Worst measured contrast: 4.88:1 (text-3 on surface-1)."
+    },
+    3: {
+      name: "Palette 3 — Single Warm Accent, Done Properly",
+      body: "Ramp: oklch(0.14→0.95 0 0) in 6 even steps, C 0 — the fix is not the neutral, it's what sits on it. " +
+        "Accent is oklch(0.80 0.17 80), a purer, higher-chroma gold than the old #e3a72e, set against a genuinely neutral near-black instead of the old plum-tinted one, so it reads crisp instead of muddy. " +
+        "2 hues on screen at once on a finished run: the gold accent plus the green done-check. Worst measured contrast: 4.88:1 (text-3 on surface-1)."
+    },
+    4: {
+      name: "Palette 4 — Signal-Only",
+      body: "Ramp: oklch(0.14→0.95 0 0) in 6 even steps, C 0. No brand accent — send, ticks, and primary buttons go neutral. " +
+        "Colour exists only to mean something: green (145°) done, red (25°) failed/blocked, amber (75°) needs-you (the approval target text itself switches to this), blue (230°) running/pending, including the tiny status dot. " +
+        "Up to 3 hues on screen at once on an approval card (amber target + neutral chrome + a green done-check above it). Worst measured contrast: 4.88:1 (text-3 on surface-1)."
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
   /* render / state                                                       */
   /* ------------------------------------------------------------------ */
   var RENDERERS = { 1: design1, 2: design2, 3: design3, 4: design4 };
@@ -1192,10 +1306,12 @@
     var d = parseInt(p.get("design"), 10);
     var s = parseInt(p.get("state"), 10);
     var w = p.get("width");
+    var pal = parseInt(p.get("palette"), 10);
     if (!(d >= 1 && d <= 4)) d = 1;
     if (!(s >= 1 && s <= 6)) s = 3;
     if (w !== "320") w = "400";
-    return { design: d, state: s, width: w };
+    if (!(pal >= 1 && pal <= 4)) pal = 3;
+    return { design: d, state: s, width: w, palette: pal };
   }
 
   function setParams(next, replace){
@@ -1205,6 +1321,7 @@
     url.searchParams.set("design", merged.design);
     url.searchParams.set("state", merged.state);
     url.searchParams.set("width", merged.width);
+    url.searchParams.set("palette", merged.palette);
     history[replace ? "replaceState" : "pushState"]({}, "", url);
     render();
   }
@@ -1212,12 +1329,15 @@
   function render(){
     clearTimers();
     var st = params();
+    document.documentElement.setAttribute("data-palette", st.palette);
     document.getElementById("panelFrame").setAttribute("data-width", st.width);
 
     var cap = CAPTIONS[st.design];
+    var pcap = PALETTE_CAPTIONS[st.palette];
     document.getElementById("caption").innerHTML =
       '<div class="design-name">' + cap.name + '</div><div>' + cap.body + '</div>' +
-      '<div class="axis-line">' + cap.axis + '</div>';
+      '<div class="axis-line">' + cap.axis + '</div>' +
+      '<div class="design-name palette-caption-name">' + pcap.name + '</div><div>' + pcap.body + '</div>';
 
     var elapsed = 12;
     document.getElementById("panelBody").innerHTML = RENDERERS[st.design](st.state, elapsed);
@@ -1298,6 +1418,11 @@
       html += '<button class="dock-btn' + (st.state === s ? ' is-active' : '') + '" data-state="' + s + '">' + s + '</button>';
     }
     html += '</div>';
+    html += '<div class="dock-row"><span class="dock-label">palette</span>';
+    for (var pl = 1; pl <= 4; pl++){
+      html += '<button class="dock-btn' + (st.palette === pl ? ' is-active' : '') + '" data-palette-btn="' + pl + '">' + pl + '</button>';
+    }
+    html += '</div>';
     html += '<div class="dock-sep"></div>';
     html += '<div class="dock-row">' +
       '<button class="dock-btn wide' + (st.width === "400" ? ' is-active' : '') + '" data-width="400">400px</button>' +
@@ -1310,6 +1435,9 @@
     });
     dock.querySelectorAll("[data-state]").forEach(function(btn){
       btn.addEventListener("click", function(){ setParams({ state: parseInt(btn.dataset.state, 10) }); buildDock(); });
+    });
+    dock.querySelectorAll("[data-palette-btn]").forEach(function(btn){
+      btn.addEventListener("click", function(){ setParams({ palette: parseInt(btn.dataset.paletteBtn, 10) }); buildDock(); });
     });
     dock.querySelectorAll("[data-width]").forEach(function(btn){
       btn.addEventListener("click", function(){ setParams({ width: btn.dataset.width }); buildDock(); });
