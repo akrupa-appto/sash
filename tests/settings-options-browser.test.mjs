@@ -65,18 +65,35 @@ const refused = status => route => route.fulfill({ status, contentType: 'text/pl
 async function settingsPage({ transcription = offline } = {}) {
   const page = await context.newPage();
   const errors = [];
+  // Every catalog request the page made, headers included. The route is the only place the request
+  // itself is visible, and options.js's refreshTranscriptionModels hands listTranscriptionModels the
+  // key typed in the form as its second argument — a stub that answers whatever it is asked would let
+  // `listTranscriptionModels(request.signal)` drop that argument with every assertion here still
+  // passing, since only the argument the function itself reads is covered. See catalogCarriesTypedKey.
+  const catalog = [];
   page.on('pageerror', error => errors.push(error.message));
   // Only the transcription catalog is stubbed: the planner's own model list is left alone.
-  await page.route(url => url.href.startsWith('https://openrouter.ai/api/v1/models') && url.href.includes('output_modalities=transcription'), transcription);
+  await page.route(url => url.href.startsWith('https://openrouter.ai/api/v1/models') && url.href.includes('output_modalities=transcription'), route => {
+    catalog.push(route.request().headers());
+    return transcription(route);
+  });
   const url = `chrome-extension://${extensionId}/settings.html`;
   await page.goto(url).catch(error => { if (page.url() !== url) throw error; });
   // The speech-to-text list is built from the keys typed in the form, so the placeholder option is
   // the signal that options.js has run to completion.
   await page.waitForFunction(() => document.querySelectorAll('#transcriptionModel option').length > 0);
-  return { page, errors };
+  return { page, errors, catalog };
 }
 const payload = page => page.evaluate(() => Object.fromEntries(new FormData(document.querySelector('#settings'))));
 const optionValues = page => page.$$eval('#transcriptionModel option', options => options.map(option => option.value));
+// The newest catalog request must carry the key the form is showing: that is what
+// `listTranscriptionModels(signal, key)` as a whole does, not just what its own parameter holds.
+// options.js refires this per keystroke, so the last request is the one the value on screen earned.
+async function catalogCarriesTypedKey(page, catalog) {
+  const newest = catalog.at(-1);
+  assert.ok(newest, 'the transcription catalog request must have been made');
+  assert.equal(newest.authorization, `Bearer ${await page.locator('#openrouterKey').inputValue()}`);
+}
 
 test('the in-page nav reaches every section of the one-pager', { skip }, async () => {
   const { page, errors } = await settingsPage();
@@ -96,6 +113,10 @@ test('action approvals offers three plain-language choices and defaults to askin
   // word in a dropdown — and the loud default says so out loud.
   for (const value of values) assert.equal(await page.locator(`label.choice:has(input[value=${value}])`).locator('small').count(), 1);
   assert.match(await page.locator('#access-settings').innerText(), /prompts a lot on purpose/);
+  // None of the three choices may promise something a run without a planner cannot do: a fast run
+  // asks nothing at any approval mode, so the control itself has to say where these choices apply.
+  assert.match(await page.locator('#access-settings').innerText(), /a fast run has no planner, so it never stops to ask/);
+  assert.match(await page.locator('#access-settings').innerText(), /only apply in careful mode/);
   assert.match(await page.locator('label.choice:has(input[value=risky])').innerText(), /spending/);
   assert.match(await page.locator('label.choice:has(input[value=risky])').innerText(), /sending/);
   assert.match(await page.locator('label.choice:has(input[value=none])').innerText(), /can send or spend|sending and spending/);
@@ -171,7 +192,7 @@ test('speech-to-text is a separate picker: only configured providers are offered
 });
 
 test('the OpenRouter speech list is its live catalog: recommended first, catalog names, official-API rows kept, selection held across the swap', { skip }, async () => {
-  const { page, errors } = await settingsPage({ transcription: served([...LIVE_CATALOG, TOKEN_PRICED], 300) });
+  const { page, errors, catalog } = await settingsPage({ transcription: served([...LIVE_CATALOG, TOKEN_PRICED], 300) });
   await page.locator('#openaiKey').fill('openai-test-key');
   await page.locator('#geminiKey').fill('gemini-test-key');
   await page.locator('#openrouterKey').fill('openrouter-test-key');
@@ -180,6 +201,7 @@ test('the OpenRouter speech list is its live catalog: recommended first, catalog
   assert.ok(before.includes('google/chirp-3'), 'the fallback rows are on screen before the catalog lands');
   await page.locator('#transcriptionModel').selectOption('google/chirp-3');
   await page.waitForFunction(() => [...document.querySelectorAll('#transcriptionModel option')].some(option => option.value === 'microsoft/mai-transcribe-2'));
+  await catalogCarriesTypedKey(page, catalog);
 
   // The recommended model is pinned first whatever order the catalog published; the rest keep the
   // catalog's own order; the deprecated ids are gone even though the catalog lists them, and the
@@ -220,11 +242,12 @@ test('the OpenRouter speech list is its live catalog: recommended first, catalog
 test('a catalog that cannot be read leaves the fallback rows in place, offline or refused', { skip }, async () => {
   for (const [name, transcription] of [['offline', offline], ['refused', refused(503)]]) {
     let attempted = 0;
-    const { page, errors } = await settingsPage({ transcription: route => { attempted++; return transcription(route); } });
+    const { page, errors, catalog } = await settingsPage({ transcription: route => { attempted++; return transcription(route); } });
     await page.locator('#openrouterKey').fill('openrouter-test-key');
     // The request was made and failed; the list is what it was before it.
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.ok(attempted > 0, `${name}: the catalog request must have been attempted`);
+    await catalogCarriesTypedKey(page, catalog);
     assert.deepEqual(await optionValues(page), [
       '', 'openai/gpt-transcribe', 'meta/muse-voice-transcribe-1.0', 'deepgram/nova-3', 'nvidia/parakeet-tdt-0.6b-v3', 'google/chirp-3',
     ]);
