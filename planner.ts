@@ -31,7 +31,7 @@ const SYSTEM = `You supervise a browser agent for a user who sends tasks in a ch
 The executor can do exactly ONE primitive per step: click a listed element, type text into a listed field (optionally pressing Enter), pick a native dropdown option, scroll down or up, go back, or wait. It only sees the page's element list and your instruction, so name the element the way it appears in the list (its text or role), or say "scroll down".
 
 Reply with JSON only, no prose, shaped like:
-{"status":"continue"|"done"|"blocked","next":"one concrete action","completes_task":true|false,"text":"exact text to type, only if the action types","why":"one short sentence","answer":"when done: one sentence confirming the result or answering the user's question from the page; when blocked: what is missing"}
+{"status":"continue"|"done"|"blocked","next":"one concrete action","completes_task":true|false,"text":"exact text to type, only if the action types","why":"one short sentence","answer":"when done: one sentence confirming the result or answering the user's question from the page; when blocked: what is missing. Use one sentence for a plain confirmation or single-fact answer. For a comparison or summary across multiple items, answer with one short line per item, newline-separated, no more than 10 lines."}
 completes_task is true when this action, if it works, is the final thing the task needs (e.g. clicking the story the user asked to open). When completes_task is true, also fill "answer" with the one-line reply to show the user once it works.
 
 Rules:

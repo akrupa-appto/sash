@@ -7,6 +7,7 @@ let matches = [];
 let highlighted = 0;
 let mention;
 let submitting = false;
+let lastSeq = -1;
 const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
 const request = async message => {
@@ -127,17 +128,53 @@ function render(state) {
   $('#cost').textContent = state.cost ? `$${state.cost.toFixed(4)}` : '';
   $('#run-status').classList.toggle('running', running);
   controls();
-  $('#content').scrollTop = $('#content').scrollHeight;
+  if (pinnedToBottom) scrollToEnd();
 }
+// A single scrollTop = scrollHeight read right after replaceChildren() is not actually stale —
+// browsers force layout on that read — but content can still grow *after* this point (the
+// Outfit web font swapping in via font-display:swap, an image finishing decode, the steps
+// <details> settling its final box), and nothing re-corrects the scroll position when that
+// happens. That's what leaves the scrollbar thumb short of the track end, or the actions
+// toggle sitting right at the clipped edge next to the status strip. So instead of a one-shot
+// scroll, #content watches its own size with a ResizeObserver and keeps riding the bottom for
+// as long as the person was already there, however late the real layout settles.
+const contentEl = $('#content');
+let pinnedToBottom = true;
+function scrollToEnd() {
+  requestAnimationFrame(() => { contentEl.scrollTop = contentEl.scrollHeight - contentEl.clientHeight; });
+}
+contentEl.addEventListener('scroll', () => {
+  pinnedToBottom = contentEl.scrollHeight - contentEl.clientHeight - contentEl.scrollTop <= 4;
+});
+// #content's own box never resizes from new messages — its *children* (#messages, the live
+// steps block) do, and that's exactly the growth a ResizeObserver on #content alone would miss.
+const clamp = () => { if (pinnedToBottom) contentEl.scrollTop = contentEl.scrollHeight - contentEl.clientHeight; };
+const contentResize = new ResizeObserver(clamp);
+contentResize.observe(contentEl);
+contentResize.observe($('#messages'));
+contentResize.observe($('#steps-wrap'));
 async function load() {
   const response = await request({ type: 'getState' });
   $('#mode').value = response.mode;
   $('#model-link').textContent = response.model ? `${response.model.replace(/^(openai|gemini|custom):/, '')} · ${response.reasoning || 'auto'}` : '';
   $('#model-link').hidden = response.mode !== 'careful' || !response.model;
   configured = response.configured; $('#setup').hidden = configured;
-  render(response.state); await refreshTabs();
+  // getState can be in flight while a newer broadcast lands, so its snapshot gets the same
+  // staleness check as a broadcast: never render (or rewind lastSeq to) an older state.
+  if (response.seq === undefined || response.seq >= lastSeq) {
+    if (response.seq !== undefined) lastSeq = response.seq;
+    render(response.state);
+  }
+  await refreshTabs();
 }
-chrome.runtime.onMessage.addListener(message => { if (message.type === 'state') render(message.state); });
+chrome.runtime.onMessage.addListener(message => {
+  if (message.type !== 'state') return;
+  // A broadcast can arrive after a newer one (e.g. a stale in-flight run update landing after
+  // a clear response already applied), so ignore anything older than what we already showed.
+  if (message.seq !== undefined && message.seq < lastSeq) return;
+  if (message.seq !== undefined) lastSeq = message.seq;
+  render(message.state);
+});
 chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.settings) void load().catch(showError); });
 let refreshTimer;
 const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => void refreshTabs().catch(showError), 150); };
@@ -156,7 +193,18 @@ $('#mention-tabs').addEventListener('click', () => {
   input.setRangeText(prefix, input.selectionStart, input.selectionEnd, 'end'); updateMention();
   void refreshTabs().catch(showError);
 });
-$('#new-chat').addEventListener('click', async () => { try { await request({ type: 'clear' }); selected = []; renderSelected(); $('#error').textContent = ''; } catch (err) { showError(err); } });
+$('#new-chat').addEventListener('click', async () => {
+  try {
+    const response = await request({ type: 'clear' });
+    // Apply the cleared state from this response directly instead of waiting on the
+    // async broadcast, which can otherwise race with a stale in-flight update.
+    if (response.state !== undefined) {
+      if (response.seq !== undefined) lastSeq = response.seq;
+      render(response.state);
+    }
+    selected = []; renderSelected(); $('#error').textContent = '';
+  } catch (err) { showError(err); }
+});
 $('#stop').addEventListener('click', async () => { try { await request({ type: 'stop' }); } catch (err) { showError(err); } });
 $('#task-form').addEventListener('submit', async event => {
   event.preventDefault(); if (running || submitting) return;

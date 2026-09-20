@@ -6,11 +6,18 @@ import { readSettings, validateSettings } from './settings.js';
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready' };
 let saving = Promise.resolve();
+// Broadcasts can race (a stale in-flight 'run' broadcast landing after a later 'clear'),
+// so panel.js uses this to drop any broadcast older than the last one it applied.
+let seq = 0;
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  const saved = (await chrome.storage.local.get('runState')).runState;
-  if (saved) state = { ...saved, running: false };
-  if (saved?.running) {
+  const saved = await chrome.storage.local.get(['runState', 'seq']);
+  // The service worker gets killed and restarted on idle while the panel stays open, so an
+  // in-memory-only seq would reset to 0 and the panel's lastSeq guard would then drop every
+  // broadcast (and the next getState reply) as "stale" forever. Restore it across restarts.
+  if (typeof saved.seq === 'number') seq = saved.seq;
+  if (saved.runState) state = { ...saved.runState, running: false };
+  if (saved.runState?.running) {
     state.status = 'stopped';
     state.messages.push({ role: 'agent', text: 'the browser restarted, so the task stopped. send a task to continue.' });
     await persist();
@@ -18,8 +25,9 @@ const ready = (async () => {
 })();
 function persist() {
   const copy = structuredClone(state);
-  saving = saving.catch(() => {}).then(() => chrome.storage.local.set({ runState: copy }));
-  chrome.runtime.sendMessage({ type: 'state', state: copy }).catch(() => {});
+  seq += 1;
+  saving = saving.catch(() => {}).then(() => chrome.storage.local.set({ runState: copy, seq }));
+  chrome.runtime.sendMessage({ type: 'state', state: copy, seq }).catch(() => {});
   return saving;
 }
 function safeError(error, settings = {}) {
@@ -160,13 +168,13 @@ async function handle(message) {
     const settings = await readSettings();
     let configured = true;
     try { validateSettings(settings); } catch { configured = false; }
-    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning };
+    return { state, configured, mode: settings.mode, model: settings.model, reasoning: settings.reasoning, seq };
   }
   if (message.type === 'stop') { await stop(); return { ok: true }; }
   if (message.type === 'clear') {
     if (active) throw new Error('stop the current task before starting a new chat');
     state = { running: false, messages: [], steps: [], status: 'ready' };
-    await persist(); return { ok: true };
+    await persist(); return { ok: true, state, seq };
   }
     if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
