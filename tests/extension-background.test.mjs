@@ -77,6 +77,20 @@ globalThis.chrome = {
     closeDocument: async () => { offscreenDocs = Math.max(0, offscreenDocs - 1); },
   },
 };
+// The real transcribeCapability() (unmocked) reads process.env directly in this raw, unbundled
+// test run — src/transcribe.ts's own "./env.ts" import only gets aliased to extension/config.js
+// (and so to the extension settings this file drives through `data.settings`) by the esbuild step
+// that builds the shipped extension bundle (scripts/build-extension.mjs). Mocked here so these
+// voice tests exercise background.js's own logic against `data.settings`, not this process's real
+// environment variables; transcribeCapability's own provider-resolution logic has its coverage in
+// tests/transcribe.test.mjs.
+mock.module('../src/transcribe.ts', { namedExports: {
+  transcribeCapability: spec => {
+    const provider = spec?.startsWith('openai:') ? 'openai' : spec?.startsWith('gemini:') ? 'gemini' : spec?.startsWith('custom:') ? 'custom' : 'openrouter';
+    const key = { openrouter: data.settings.openrouterKey, openai: data.settings.openaiKey, gemini: data.settings.geminiKey, custom: data.settings.customKey }[provider];
+    return key ? { provider, canTranscribe: true, streaming: false } : { provider, canTranscribe: false, streaming: false, reason: `${provider} needs a key to transcribe audio` };
+  },
+} });
 mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
   ChromePage: class {
@@ -503,6 +517,136 @@ test('stop tears down an in-flight dictation session the same way clear does', a
   await send({ type: 'stop' });
   assert.equal(offscreenDocs, 0, 'stop closes the offscreen document rather than abandoning a hot mic');
   assert.equal(data.runState.dictation, undefined);
+});
+
+// --- voice: the three eagerness modes, wired to real runs -------------------------------------
+// A goal typed through voice reaches the exact same 'run' path a manual submit does (see the
+// recursive handle({type:'run',...}) call the 'answer' handler above already uses), so it is
+// impossible for these tests to pass while skipping the pending-request/already-running guards.
+async function withVoiceSettings(patch, fn) {
+  const before = { ...data.settings };
+  Object.assign(data.settings, patch);
+  try { await fn(); } finally { data.settings = before; }
+}
+test('getState reports which eagerness modes the configured provider supports, and none at all with no key', async () => {
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'eager' }, async () => {
+    const reply = await send({ type: 'getState' });
+    assert.equal(reply.voice.enabled, true);
+    assert.equal(reply.voice.mode, 'eager', 'the configured mode is supported, so it resolves unchanged');
+    assert.equal(reply.voice.capability.canTranscribe, true);
+  });
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'eager', openrouterKey: '' }, async () => {
+    const reply = await send({ type: 'getState' });
+    assert.equal(reply.voice.capability.canTranscribe, false, 'no provider key means no transcription at all');
+    assert.equal(reply.voice.mode, undefined, 'so no mode is offered, "eager" included — never silently downgraded to another mode');
+  });
+});
+test('voice/dictate: the final transcript never starts a run on its own', async () => {
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'dictate' }, async () => {
+    offscreenDocs = 0; offscreenStartResult = { ok: true }; offscreenStopResult = { text: 'summarize this page' };
+    const before = taskStarted;
+    await send({ type: 'dictation:start' });
+    await send({ type: 'dictation:stop' });
+    assert.equal(taskStarted, before, 'dictate fills the composer; it never sends for the user');
+    assert.equal(data.runState.dictation.status, 'idle');
+    assert.equal(data.runState.dictation.text, 'summarize this page');
+    assert.equal(data.runState.running, false);
+  });
+});
+test('voice/prewarm: streams partials without running, then runs once speech ends', async () => {
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm' }, async () => {
+    offscreenDocs = 0; offscreenStartResult = { ok: true }; offscreenStopResult = { text: 'summarize this page' };
+    const before = taskStarted;
+    await send({ type: 'dictation:start' });
+    const offscreenSender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+    await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'summarize this' }, offscreenSender, resolve));
+    assert.equal(taskStarted, before, 'a partial never runs anything under prewarm, no matter how long it gets');
+    nextOutcome = { status: 'done', message: 'summarized' };
+    await send({ type: 'dictation:stop' });
+    await until(() => data.runState.running === false);
+    assert.equal(taskStarted, before + 1, 'speech ending is what starts the run');
+    assert.equal(lastInput.goal, 'summarize this page');
+    assert.equal(data.runState.dictation, undefined, 'the run starting tears the mic session down, same as an explicit stop');
+  });
+});
+test('voice/eager: a partial with enough words starts the run mid-utterance, and only once', async () => {
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'eager' }, async () => {
+    offscreenDocs = 0; offscreenStartResult = { ok: true }; offscreenStopResult = { text: 'open the upload tab and click upload' };
+    const before = taskStarted;
+    await send({ type: 'dictation:start' });
+    const offscreenSender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+    // One word: not enough of a head start yet.
+    await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'open' }, offscreenSender, resolve));
+    assert.equal(taskStarted, before);
+    nextOutcome = { status: 'done', message: 'opened it' };
+    // Three words: eager acts before the sentence is finished.
+    await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'open the upload' }, offscreenSender, resolve));
+    await until(() => taskStarted === before + 1);
+    assert.equal(lastInput.goal, 'open the upload', 'ran on the partial as it stood at that moment, not a later one');
+    await until(() => data.runState.running === false);
+    // A later partial for the same (already-triggered, now-torn-down) session must not start a second run.
+    await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'open the upload tab and click' }, offscreenSender, resolve));
+    assert.equal(taskStarted, before + 1, 'eager fires once per utterance, not once per chunk');
+  });
+});
+test('voice never starts a run while a request is pending, or while one is already running', async () => {
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm' }, async () => {
+    // Already running: start an ordinary run first, then try to auto-run over it.
+    offscreenDocs = 0; offscreenStartResult = { ok: true }; offscreenStopResult = { text: 'do something else' };
+    const beforeRun = taskStarted;
+    await send({ type: 'run', tabId: 12, goal: 'a long-running task', mode: 'fast' });
+    await until(() => taskStarted === beforeRun + 1);
+    try {
+      const before = taskStarted;
+      await send({ type: 'dictation:start' });
+      await send({ type: 'dictation:stop' });
+      assert.equal(taskStarted, before, 'voice must not be a way to start a second run over one already in flight');
+    } finally {
+      finishTask?.(); // never leave the fixture's fake task hanging for later tests, even if an assertion above throws
+      await until(() => data.runState.running === false);
+    }
+  });
+});
+// The session-liveness filtering itself (a result resolving after its session already ended) is
+// offscreen.js's job, thoroughly covered by extension-offscreen.test.mjs's "a late-arriving partial
+// from a stopped session is ignored" — background.js trusts what offscreen.js sends it. This only
+// covers background's own new piece: an eager auto-run is per-session (dictationTriggered resets on
+// dictation:start), so a partial arriving with no session behind it at all must not start a run.
+test('a dictation:partial with no session behind it (voice disabled, or never started) never starts a run', async () => {
+  const before = taskStarted;
+  const offscreenSender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+  const reply = await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'buy oat milk now' }, offscreenSender, resolve));
+  assert.equal(reply.ok, true);
+  assert.equal(taskStarted, before, 'voice is off by default in this fixture, so this must never start a run');
+});
+
+// --- voice: the global "toggle-dictation" shortcut ----------------------------------------------
+test('the global shortcut never opens the mic for a configuration voice cannot actually use', async () => {
+  offscreenDocs = 0; offscreenStartResult = { ok: true };
+  // voiceEnabled is off in this fixture by default: a press must not open a mic nobody turned on.
+  chrome.commands.onCommand.fire('toggle-dictation');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(offscreenDocs, 0, 'voice is off, so the shortcut is a no-op');
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm', openrouterKey: '' }, async () => {
+    // Voice is on, but the configured provider has no key at all: still no mode to use, still no mic.
+    chrome.commands.onCommand.fire('toggle-dictation');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(offscreenDocs, 0, 'no provider can transcribe, so there is no mode to fall back to');
+  });
+});
+test('the global shortcut opens the mic once voice is on and a mode is actually usable', async () => {
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm' }, async () => {
+    offscreenDocs = 0; offscreenStartResult = { ok: true };
+    // Empty, not a leftover transcript from an earlier test: this test is only about the toggle
+    // mechanics (start, then stop), not "prewarm" auto-running on stop — that has its own coverage
+    // above, and a non-empty transcript here would start a real (hanging, in this fixture) run.
+    offscreenStopResult = { text: '' };
+    chrome.commands.onCommand.fire('toggle-dictation');
+    await until(() => offscreenDocs === 1);
+    assert.equal(data.runState.dictation.status, 'listening');
+    chrome.commands.onCommand.fire('toggle-dictation'); // a second press, past the double-tap window, stops it
+    await until(() => offscreenDocs === 0);
+  });
 });
 
 // --- host access is asked for before a site is touched -----------------------------------------

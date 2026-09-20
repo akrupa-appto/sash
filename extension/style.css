@@ -128,6 +128,12 @@ textarea{resize:vertical}
 .model-button #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .settings-page .label{display:block;margin-bottom:var(--sp-2)}
 .settings-page dialog.mp{--mp-bg:var(--surface-1);--mp-active:var(--surface-2)}
+.voice-modes{display:grid;gap:var(--sp-2)}
+.voice-mode-option{display:grid;gap:2px;text-align:left;width:100%;background:var(--surface-1);color:var(--text-1);font-weight:400;border:1px solid var(--line)}
+.voice-mode-option strong{font-weight:500}
+.voice-mode-option small{color:var(--text-3);font-weight:400}
+.voice-mode-option[aria-checked="true"]{border-color:var(--status-info);background:var(--surface-2)}
+.voice-mode-option:disabled{opacity:.5;cursor:not-allowed}
 
 /* ---- panel shell --------------------------------------------------------- */
 .panel-page{height:100dvh;display:flex;flex-direction:column;min-width:260px;background:var(--bg-page);color:var(--text-1);font-size:var(--text-sm)}
@@ -251,6 +257,20 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
 .send-button,.stop-button{display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:50%;font-size:var(--text-md);background:var(--accent);color:var(--accent-ink);flex:none}
 .send-button svg{width:14px;height:14px}
 .stop-button{font-size:var(--text-xs)}
+/* Idle mic reads like the "+" attach button beside it: a plain, low-key control, not a call to
+   action. Listening/transcribing are the one live state in this composer's own signal-only palette
+   (--status-info, the same blue .running .dot uses) — there is no brand accent to reach for instead.
+   Transcribing pulses slower than listening's record dot so the two read as different things, not
+   just "still lit up". Sized to match .icon-btn's footprint since the mic sits in .composer-left
+   alongside it (see panel.html); a follow-up could unify the two into one shape system. */
+.mic-button{display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:50%;border:0;background:transparent;color:var(--text-3);flex:none}
+.mic-button svg{width:18px;height:18px}
+.mic-button:hover{background:var(--surface-2);color:var(--text-1)}
+.mic-button[data-state="listening"]{background:var(--status-info);color:var(--accent-strong);animation:pulse 1.2s ease-in-out infinite}
+.mic-button[data-state="transcribing"]{background:var(--status-info);color:var(--accent-strong);opacity:.6;animation:pulse 2.4s ease-in-out infinite}
+.mic-button[data-state="hands-free"]{background:var(--status-info);color:var(--accent-strong);box-shadow:0 0 0 2px var(--status-info-bg,var(--surface-1))}
+.mic-button:disabled{opacity:.4}
+@media (prefers-reduced-motion:reduce){.mic-button[data-state]{animation:none}}
 .composer .error{margin:0;color:var(--status-danger)}
 
 .notice{padding:var(--sp-4);background:var(--surface-2);border-radius:var(--r-12);margin-bottom:var(--sp-4)}
