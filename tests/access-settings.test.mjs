@@ -5,8 +5,11 @@ import { chromium } from 'playwright';
 import { isRequired, requiredPatterns } from '../extension/access-settings.js';
 const source = await readFile(new URL('../extension/access-settings.js', import.meta.url), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
-const browser = await chromium.launch();
-after(() => browser.close());
+// A checkout without `npx playwright install chromium` skips these instead of failing the suite,
+// the same way panel.test.mjs does.
+const browser = await chromium.launch().catch(() => undefined);
+const skip = browser ? false : 'chromium is not installed: npx playwright install chromium';
+after(() => browser?.close());
 const fixtureManifest = {
   host_permissions: ['https://openrouter.ai/*'],
   permissions: ['storage'],
@@ -48,7 +51,7 @@ async function fixture({ manifest = fixtureManifest, origins = ['https://openrou
   await page.waitForFunction(rows => document.querySelectorAll('.access-row').length === rows, rows);
   return page;
 }
-test('approvals show real scopes, render untrusted text safely, and revoke through worker', async () => {
+test('approvals show real scopes, render untrusted text safely, and revoke through worker', { skip }, async () => {
   const page = await fixture();
   assert.match(await page.locator('#approval-list').innerText(), /this conversation/);
   assert.equal(await page.locator('#approval-list script').count(), 0);
@@ -59,7 +62,7 @@ test('approvals show real scopes, render untrusted text safely, and revoke throu
   await page.waitForFunction(() => document.querySelector('#approval-list').textContent.includes('no saved approvals'));
   await page.close();
 });
-test('site removal lists required hosts without a revoke button and stops task before removing a broad optional grant', async () => {
+test('site removal lists required hosts without a revoke button and stops task before removing a broad optional grant', { skip }, async () => {
   const page = await fixture();
   for (const host of ['openrouter.ai', 'internal-script.test']) {
     const locked = page.locator('#site-access-list .access-row.is-required').filter({ hasText: host });
@@ -78,7 +81,7 @@ test('site removal lists required hosts without a revoke button and stops task b
   assert.equal(await page.locator('#site-access-list .access-row').filter({ hasText: 'https://*/*' }).count(), 0);
   await page.close();
 });
-test('with the real manifest, every http(s) site is required coverage and only Chrome can narrow it', async () => {
+test('with the real manifest, every http(s) site is required coverage and only Chrome can narrow it', { skip }, async () => {
   // Chrome reports content_scripts.matches from permissions.getAll() and refuses permissions.remove
   // for them and for any narrower site they cover. Offering "revoke" there could only fail.
   const origins = ['https://openrouter.ai/*', 'http://*/*', 'https://*/*', 'https://example.test/*', 'file:///*'];
@@ -108,7 +111,7 @@ test('required coverage follows Chrome match-pattern semantics, not string equal
   assert.equal(isRequired('https://example.test/*', ['https://example.test/api/*']), false);
   assert.equal(isRequired('ftp://example.test/*', ['<all_urls>']), true);
 });
-test('failed revocation stays visible, never leaks exceptions, and can be retried', async () => {
+test('failed revocation stays visible, never leaks exceptions, and can be retried', { skip }, async () => {
   const page = await fixture();
   await page.evaluate(() => { window.fail = true; });
   await page.locator('#approval-list button').first().click();
@@ -120,7 +123,7 @@ test('failed revocation stays visible, never leaks exceptions, and can be retrie
   await page.waitForFunction(() => document.querySelectorAll('#approval-list .access-row').length === 1);
   await page.close();
 });
-test('failed task stop never removes site access', async () => {
+test('failed task stop never removes site access', { skip }, async () => {
   const page = await fixture();
   await page.evaluate(() => { window.stopFails = true; });
   await page.locator('#site-access-list button').first().click();

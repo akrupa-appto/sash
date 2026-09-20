@@ -6,15 +6,20 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { chromium } from 'playwright';
 const extension = path.resolve('dist/checkto-extension');
+// A checkout without `npx playwright install chromium` skips these instead of failing the suite,
+// the same way panel.test.mjs does.
 const context = await chromium.launchPersistentContext('', {
   channel: 'chromium', headless: true, viewport: { width: 760, height: 1400 },
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
-});
-after(() => context.close());
-const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 15000 });
-const extensionId = new URL(worker.url()).host;
+}).catch(() => undefined);
+const skip = context ? false : 'chromium is not installed: npx playwright install chromium';
+after(() => context?.close());
+const worker = context
+  ? (context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 15000 }))
+  : undefined;
+const extensionId = worker ? new URL(worker.url()).host : '';
 
-test('Chrome treats content-script coverage as required and rejects removing sites inside it', async () => {
+test('Chrome treats content-script coverage as required and rejects removing sites inside it', { skip }, async () => {
   const probe = await worker.evaluate(async () => {
     const { origins } = await chrome.permissions.getAll();
     const attempts = {};
@@ -33,7 +38,7 @@ test('Chrome treats content-script coverage as required and rejects removing sit
   }
 });
 
-test('settings page shows every granted site as required with no revoke button', async () => {
+test('settings page shows every granted site as required with no revoke button', { skip }, async () => {
   const page = await context.newPage();
   const url = `chrome-extension://${extensionId}/settings.html`;
   await page.goto(url).catch(error => { if (page.url() !== url) throw error; });
