@@ -60,25 +60,28 @@ function renderModel() {
 // (`curl "https://openrouter.ai/api/v1/models?output_modalities=transcription"` returned 21
 // entries; see DECISIONS.md). Deliberately absent: openai/whisper-1, gpt-4o-transcribe, and
 // gpt-4o-mini-transcribe (all three deprecated by OpenAI, removal 2027-02-26), and gemini-2.5-flash.
+// The five OpenRouter rows are bare model ids, not `openrouter:…`: parseModel() in src/providers.ts
+// only recognises the openai/gemini/custom prefixes and resolves everything else to OpenRouter with
+// the whole string as the model id, so a prefixed spec would be sent as a model literally named
+// "openrouter:openai/gpt-transcribe". A bare spec means OpenRouter, by design.
 // `tag` is the one-line note shown inside the option itself, `detail` the sentence shown under the
 // select once it is chosen.
 const TRANSCRIPTION_CHOICES = [
-  { spec: 'openrouter:openai/gpt-transcribe', provider: 'openrouter', label: 'GPT Transcribe (OpenAI)', tag: 'recommended', detail: "OpenAI's current speech-to-text model, reached through OpenRouter. the best all-round choice here." },
-  { spec: 'openrouter:meta/muse-voice-transcribe-1.0', provider: 'openrouter', label: 'Muse Voice Transcribe (Meta)', tag: 'newest', detail: "the newest speech model in OpenRouter's catalog." },
-  { spec: 'openrouter:deepgram/nova-3', provider: 'openrouter', label: 'Nova 3 (Deepgram)', tag: 'steady pick', detail: 'Deepgram\'s production speech model; a long-standing, widely used choice.' },
-  { spec: 'openrouter:nvidia/parakeet-tdt-0.6b-v3', provider: 'openrouter', label: 'Parakeet TDT (NVIDIA)', tag: 'cheapest here', detail: 'a small NVIDIA model; the lowest cost per minute of these five.' },
-  { spec: 'openrouter:google/chirp-3', provider: 'openrouter', label: 'Chirp 3 (Google)', tag: 'earlier Google model', detail: 'Google\'s earlier speech model; the Gemini 3.5 entry is its newer replacement.' },
+  { spec: 'openai/gpt-transcribe', provider: 'openrouter', label: 'GPT Transcribe (OpenAI)', tag: 'recommended', detail: "OpenAI's current speech-to-text model, reached through OpenRouter. the best all-round choice here." },
+  { spec: 'meta/muse-voice-transcribe-1.0', provider: 'openrouter', label: 'Muse Voice Transcribe (Meta)', tag: 'newest', detail: "the newest speech model in OpenRouter's catalog." },
+  { spec: 'deepgram/nova-3', provider: 'openrouter', label: 'Nova 3 (Deepgram)', tag: 'steady pick', detail: 'Deepgram\'s production speech model; a long-standing, widely used choice.' },
+  { spec: 'nvidia/parakeet-tdt-0.6b-v3', provider: 'openrouter', label: 'Parakeet TDT (NVIDIA)', tag: 'cheapest here', detail: 'a small NVIDIA model; the lowest cost per minute of these five.' },
+  { spec: 'google/chirp-3', provider: 'openrouter', label: 'Chirp 3 (Google)', tag: 'earlier Google model', detail: 'Google\'s earlier speech model; the Gemini 3.5 entry is its newer replacement.' },
   { spec: 'openai:gpt-transcribe', provider: 'openai', label: 'GPT Transcribe', tag: 'your OpenAI key', detail: "OpenAI's current speech model on your own key, with no OpenRouter mark-up." },
   { spec: 'gemini:gemini-3.5-transcribe', provider: 'gemini', label: 'Gemini 3.5 Transcribe', tag: 'your Gemini key', detail: "Google's current speech model on your own key." },
   { spec: 'custom:whisper-1', provider: 'custom', label: 'your custom server\'s speech model', tag: '', detail: 'the model id your custom server expects; it must implement /v1/audio/transcriptions.' },
 ];
 // A provider saved before this picker existed (voiceProvider set, no model yet) becomes that
 // provider's recommended model rather than being dropped on the next save.
-const RECOMMENDED_TRANSCRIPTION = { openrouter: 'openrouter:openai/gpt-transcribe', openai: 'openai:gpt-transcribe', gemini: 'gemini:gemini-3.5-transcribe', custom: 'custom:whisper-1' };
-// providerOfSpec, not parseModel: OpenRouter's prefix is empty in PROVIDERS (it is the default
-// provider), so an explicitly prefixed "openrouter:openai/…" spec would otherwise read as an
-// OpenRouter model literally named "openrouter:openai/…". The three prefixed providers are checked
-// by their own prefix; anything else is an OpenRouter spec, and "" means "same as the planner model".
+const RECOMMENDED_TRANSCRIPTION = { openrouter: 'openai/gpt-transcribe', openai: 'openai:gpt-transcribe', gemini: 'gemini:gemini-3.5-transcribe', custom: 'custom:whisper-1' };
+// providerOfSpec mirrors parseModel's rule for the three prefixed providers and treats everything
+// else as OpenRouter, which is what a bare "openai/gpt-transcribe"-style spec means, and what ""
+// means too ("same as the planner model"). This is why no row above carries an `openrouter:` prefix.
 function providerOfSpec(spec) {
   return Object.keys(PROVIDERS).find(id => PROVIDERS[id].prefix && spec.startsWith(PROVIDERS[id].prefix)) || (spec ? 'openrouter' : '');
 }

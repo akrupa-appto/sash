@@ -89,9 +89,13 @@ test('speech-to-text is a separate picker: only configured providers are offered
 
   await page.locator('#openrouterKey').fill('openrouter-test-key');
   const openrouter = await optionValues(page);
-  for (const spec of ['openrouter:openai/gpt-transcribe', 'openrouter:meta/muse-voice-transcribe-1.0', 'openrouter:deepgram/nova-3', 'openrouter:nvidia/parakeet-tdt-0.6b-v3', 'openrouter:google/chirp-3']) {
+  // Bare ids, not "openrouter:…": parseModel() in src/providers.ts resolves anything without an
+  // openai/gemini/custom prefix to OpenRouter and passes the whole string as the model id, so a
+  // prefixed spec would be requested as a model literally named "openrouter:openai/gpt-transcribe".
+  for (const spec of ['openai/gpt-transcribe', 'meta/muse-voice-transcribe-1.0', 'deepgram/nova-3', 'nvidia/parakeet-tdt-0.6b-v3', 'google/chirp-3']) {
     assert.ok(openrouter.includes(spec), `${spec} must be offered with an OpenRouter key`);
   }
+  assert.equal(openrouter.some(spec => spec.startsWith('openrouter:')), false, 'no option may carry an "openrouter:" prefix, which parseModel cannot read');
   assert.equal(openrouter.includes('openai:gpt-transcribe'), false, 'an OpenAI model needs an OpenAI key');
 
   await page.locator('#openaiKey').fill('openai-test-key');
@@ -115,7 +119,7 @@ test('speech-to-text is a separate picker: only configured providers are offered
   assert.equal(chosen.voiceProvider, 'openai');
   assert.match(await page.locator('#transcription-detail').innerText(), /OpenAI's current speech model/);
 
-  await page.locator('#transcriptionModel').selectOption('openrouter:nvidia/parakeet-tdt-0.6b-v3');
+  await page.locator('#transcriptionModel').selectOption('nvidia/parakeet-tdt-0.6b-v3');
   assert.equal((await payload(page)).voiceProvider, 'openrouter');
   await page.locator('#transcriptionModel').selectOption('');
   const fallback = await payload(page);
