@@ -149,6 +149,11 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
     p = extractJson(content) as Plan;
     if (!p || !["continue", "done", "blocked", "ask", "approve", "credential"].includes(p.status)) throw new Error('invalid plan status');
     if (p.status === 'ask' && !(typeof p.question === 'string' && p.question.trim()) && !(typeof p.why === 'string' && p.why.trim())) throw new Error('missing question');
+    // "never ask — just do it" covers the planner's own questions too, not only the approval card: a
+    // run that stops for an answer is exactly the wait the user turned off. The instruction above
+    // already asks the model not to, so this is the floor under it — refused, retried once by the
+    // recovery path below, and if the model asks again the run reports it rather than pausing.
+    if (p.status === 'ask' && env.APPROVAL_MODE === 'none') throw new Error('questions are turned off');
     if (p.options !== undefined && !(Array.isArray(p.options) && p.options.every(o => typeof o === 'string'))) throw new Error('invalid options');
     if (p.tabId == null) delete p.tabId;
     if (p.tabId != null && !Number.isInteger(p.tabId)) throw new Error('invalid tab ID');
