@@ -1,0 +1,858 @@
+<!--
+  THROWAWAY PROTOTYPE — not production. Delete or fold into extension/panel.html
+  once a direction is picked; do not ship this file.
+
+  QUESTION: what should the Checkto side panel look like?
+  Checkto is a Chrome extension: type a task in plain language, an LLM agent
+  drives your OWN browser tabs to do it, reporting each action as it goes.
+  This is a trust/legibility surface for a technical operator, not a chat toy.
+
+  FIVE DIRECTIONS (?variant=a|b|c|d|e), by information hierarchy, not colour:
+    a — Operator console     log-first, dense, monospace, CI-log feel
+    b — Answer-first editorial the answer is the hero, mechanics collapse to one line
+    c — Task board            live status rows (running/done/failed), not a transcript
+    d — Instrument            device readouts: steps, elapsed, cost, tokens, tabular
+    e — Conversational minimal  almost no chrome, ephemeral inline agent text
+
+  Each variant renders the same six states so they compare like for like:
+    1 first run (empty)   2 run in flight   3 finished run (log+answer)
+    4 approval request    5 credential handoff   6 blocked by CAPTCHA
+
+  Switch variants via the URL (?variant=a) or the floating bar. Switch state
+  with the second row of the floating bar. Default stage: 400px wide,
+  ~820px tall; a toggle drops it to 320px.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checkto panel — 5 directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Public+Sans:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@500;600;700&family=Libre+Franklin:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+  body {
+    min-height: 100vh;
+    background: #dcdfe3;
+    background-image:
+      linear-gradient(45deg, #cfd3d8 25%, transparent 25%),
+      linear-gradient(-45deg, #cfd3d8 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #cfd3d8 75%),
+      linear-gradient(-45deg, transparent 75%, #cfd3d8 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28px 16px 140px;
+  }
+
+  /* ---- meta chrome (not part of any variant's design) ---- */
+  #meta {
+    width: 100%;
+    max-width: 900px;
+    color: #33363b;
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  #meta h1 { font-size: 15px; margin: 0 0 4px; font-weight: 700; letter-spacing: 0.01em; }
+  #meta p { font-size: 12px; margin: 0; opacity: 0.7; }
+
+  #stage-outer {
+    background: #fff;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.22), 0 1px 0 rgba(0,0,0,0.05);
+    border-radius: 6px;
+    overflow: hidden;
+    width: 400px;
+  }
+  #stage-outer.narrow { width: 320px; }
+  #stage {
+    height: 820px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+  }
+  #stage::-webkit-scrollbar { width: 8px; }
+  #stage::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 4px; }
+
+  .caption {
+    padding: 12px 14px 11px;
+    font: 11px/1.5 -apple-system, "Segoe UI", sans-serif;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+  }
+  .caption b { display: block; font-size: 12.5px; margin-bottom: 3px; }
+  .caption .row { opacity: 0.85; }
+  .caption .row strong { font-weight: 600; }
+
+  /* ---- floating control bar ---- */
+  #bar {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    background: #14151a;
+    color: #f2f2f2;
+    border-radius: 999px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    z-index: 1000;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    max-width: 94vw;
+  }
+  #bar .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  #bar button {
+    font: 600 11px/1 -apple-system, sans-serif;
+    background: rgba(255,255,255,0.08);
+    color: #f2f2f2;
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 999px;
+    padding: 7px 11px;
+    cursor: pointer;
+  }
+  #bar button:hover { background: rgba(255,255,255,0.16); }
+  #bar button.active { background: #f2f2f2; color: #14151a; border-color: #f2f2f2; }
+  #bar .arrow { padding: 7px 10px; }
+  #bar .divider { width: 1px; align-self: stretch; background: rgba(255,255,255,0.16); margin: 0 2px; }
+  #bar .lbl { font-size: 10px; opacity: 0.55; padding: 0 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* ============================================================
+     VARIANT A — OPERATOR CONSOLE
+     ============================================================ */
+  .stage-a {
+    background: oklch(0.16 0.01 260);
+    color: oklch(0.88 0.01 260);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    min-height: 820px;
+  }
+  .stage-a .caption { background: oklch(0.13 0.01 260); border-color: oklch(0.28 0.01 260); color: oklch(0.75 0.01 260); }
+  .stage-a .caption b { color: oklch(0.92 0.01 260); }
+  .a-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 8px 12px; border-bottom: 1px solid oklch(0.28 0.01 260);
+    font-size: 10.5px; color: oklch(0.55 0.01 260); letter-spacing: 0.02em;
+  }
+  .a-body { padding: 10px 12px 100px; }
+  .a-task { font-size: 12px; color: oklch(0.9 0.01 260); margin-bottom: 10px; line-height: 1.5; }
+  .a-task .p { color: oklch(0.55 0.13 70); }
+  .a-log { border-top: 1px solid oklch(0.26 0.01 260); }
+  .a-row {
+    display: grid; grid-template-columns: 46px 14px 1fr; gap: 8px;
+    padding: 5px 0; border-bottom: 1px solid oklch(0.22 0.01 260);
+    font-size: 11.5px; line-height: 1.45; align-items: start;
+  }
+  .a-row .t { color: oklch(0.5 0.01 260); }
+  .a-row .s { text-align: center; }
+  .a-row.done .s { color: oklch(0.65 0.13 145); }
+  .a-row.running .s { color: oklch(0.75 0.15 70); animation: a-pulse 1s infinite; }
+  .a-row.failed .s { color: oklch(0.6 0.18 25); }
+  @keyframes a-pulse { 50% { opacity: 0.3; } }
+  .a-row.running .txt { animation: a-shimmer 1.6s ease-in-out infinite; }
+  @keyframes a-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+  .a-answer {
+    margin-top: 12px; border: 1px solid oklch(0.32 0.01 260);
+    background: oklch(0.19 0.01 260); padding: 10px; font-size: 12px; line-height: 1.6;
+  }
+  .a-answer .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: oklch(0.55 0.01 260); margin-bottom: 6px; }
+  .a-meta { display: flex; gap: 14px; margin-top: 8px; font-size: 10.5px; color: oklch(0.5 0.01 260); }
+  .a-card {
+    margin-top: 14px; border: 1px solid oklch(0.55 0.13 70); background: oklch(0.2 0.02 70);
+    padding: 10px 12px; font-size: 11.5px; line-height: 1.6;
+  }
+  .a-card.deny { border-color: oklch(0.6 0.18 25); background: oklch(0.2 0.03 25); }
+  .a-card .h { color: oklch(0.92 0.01 260); font-weight: 700; margin-bottom: 6px; }
+  .a-scopes { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .a-scopes button, .a-deny-btn, .a-retry {
+    font-family: inherit; font-size: 11px; text-align: left; padding: 6px 8px;
+    background: oklch(0.24 0.01 260); color: oklch(0.85 0.01 260); border: 1px solid oklch(0.34 0.01 260);
+    cursor: pointer;
+  }
+  .a-scopes button:hover, .a-retry:hover { background: oklch(0.3 0.01 260); }
+  .a-deny-btn { color: oklch(0.7 0.15 25); border-color: oklch(0.4 0.1 25); margin-top: 4px; }
+  .a-cred { margin-top: 12px; border: 1px solid oklch(0.4 0.01 260); padding: 10px; background: oklch(0.19 0.01 260); }
+  .a-cred label { display: block; font-size: 10px; color: oklch(0.55 0.01 260); margin: 8px 0 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .a-cred input {
+    width: 100%; background: oklch(0.13 0.01 260); border: 1px solid oklch(0.36 0.01 260);
+    color: oklch(0.9 0.01 260); font-family: inherit; font-size: 12px; padding: 6px 7px;
+  }
+  .a-cred .note { margin-top: 8px; font-size: 10.5px; color: oklch(0.55 0.13 70); }
+  .a-composer {
+    position: sticky; bottom: 0; border-top: 1px solid oklch(0.3 0.01 260);
+    background: oklch(0.13 0.01 260); padding: 10px 12px; display: flex; gap: 8px;
+  }
+  .a-composer input { flex: 1; background: oklch(0.19 0.01 260); border: 1px solid oklch(0.34 0.01 260); color: oklch(0.85 0.01 260); font-family: inherit; font-size: 12px; padding: 7px 8px; }
+  .a-composer button { background: oklch(0.55 0.13 70); color: oklch(0.15 0.02 70); border: none; font-family: inherit; font-weight: 700; font-size: 11px; padding: 0 12px; cursor: pointer; }
+  .a-composer input:disabled { opacity: 0.4; }
+  .a-run-btn { background: oklch(0.75 0.15 70); color: oklch(0.15 0.02 70); font-family: inherit; font-weight: 700; border: none; padding: 7px 12px; font-size: 11px; cursor: pointer; }
+
+  /* ============================================================
+     VARIANT B — ANSWER-FIRST EDITORIAL
+     ============================================================ */
+  .stage-b {
+    background: oklch(0.97 0.005 250);
+    color: oklch(0.22 0.02 260);
+    font-family: 'Public Sans', sans-serif;
+    min-height: 820px;
+  }
+  .stage-b .caption { background: oklch(0.94 0.006 250); border-color: oklch(0.86 0.006 250); }
+  .b-body { padding: 30px 26px 100px; }
+  .b-eyebrow { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: oklch(0.5 0.02 260); margin-bottom: 10px; }
+  .b-empty-h { font-family: 'Source Serif 4', serif; font-size: 27px; line-height: 1.25; font-weight: 600; margin: 0 0 14px; }
+  .b-empty-p { font-size: 14px; line-height: 1.6; color: oklch(0.42 0.02 260); max-width: 30ch; }
+  .b-task { font-size: 12.5px; color: oklch(0.45 0.02 260); margin-bottom: 8px; font-style: italic; }
+  .b-live { font-size: 13px; line-height: 1.7; color: oklch(0.35 0.02 260); }
+  .b-live .cur { color: oklch(0.55 0.16 35); font-weight: 600; }
+  .b-answer {
+    font-family: 'Source Serif 4', serif; font-size: 25px; line-height: 1.42;
+    font-weight: 600; margin: 4px 0 16px; letter-spacing: -0.005em;
+  }
+  .b-answer-list { font-family: 'Public Sans', sans-serif; font-size: 14px; line-height: 1.8; font-weight: 500; }
+  .b-trace {
+    margin-top: 18px; font-size: 12px; color: oklch(0.45 0.02 260);
+    cursor: pointer; user-select: none; border-top: 1px solid oklch(0.86 0.006 250); padding-top: 12px;
+  }
+  .b-trace .arrow { display: inline-block; margin-right: 6px; transition: transform 0.2s ease-out; }
+  .b-trace.open .arrow { transform: rotate(90deg); }
+  .b-log-wrap { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 0.24s ease-out, opacity 0.2s ease-out; }
+  .b-trace.open + .b-log-wrap { grid-template-rows: 1fr; opacity: 1; }
+  .b-log { overflow: hidden; margin-top: 10px; font-size: 12.5px; line-height: 1.9; color: oklch(0.4 0.02 260); min-height: 0; }
+  .b-log .t { color: oklch(0.6 0.02 260); margin-right: 8px; font-variant-numeric: tabular-nums; }
+  .b-card {
+    margin-top: 22px; border-left: 3px solid oklch(0.55 0.16 35); background: oklch(0.995 0.003 250);
+    padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .b-card .h { font-family: 'Source Serif 4', serif; font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+  .b-card p { font-size: 13px; line-height: 1.6; color: oklch(0.4 0.02 260); margin: 0 0 12px; }
+  .b-scopes { display: flex; flex-direction: column; gap: 6px; }
+  .b-scopes button {
+    font-family: 'Public Sans', sans-serif; font-size: 12.5px; text-align: left; padding: 9px 11px;
+    background: oklch(0.97 0.005 250); border: 1px solid oklch(0.84 0.006 250); cursor: pointer; border-radius: 3px;
+  }
+  .b-scopes button.primary { background: oklch(0.55 0.16 35); color: white; border-color: oklch(0.55 0.16 35); font-weight: 600; }
+  .b-deny { margin-top: 8px; background: none; border: none; color: oklch(0.5 0.02 260); text-decoration: underline; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .b-cred label { display: block; font-size: 11px; color: oklch(0.45 0.02 260); margin: 12px 0 4px; }
+  .b-cred input { width: 100%; border: 1px solid oklch(0.8 0.006 250); border-radius: 3px; padding: 8px 9px; font-size: 13px; font-family: inherit; }
+  .b-cred .note { margin-top: 10px; font-size: 12px; font-style: italic; color: oklch(0.5 0.02 260); }
+  .b-blocked-h { font-family: 'Source Serif 4', serif; font-size: 20px; font-weight: 600; color: oklch(0.5 0.15 30); }
+  .b-composer { position: sticky; bottom: 0; background: linear-gradient(oklch(0.97 0.005 250 / 0), oklch(0.97 0.005 250) 30%); padding: 18px 26px 0; }
+  .b-composer-inner { display: flex; gap: 8px; border-bottom: 1.5px solid oklch(0.3 0.02 260); padding-bottom: 8px; }
+  .b-composer input { flex: 1; border: none; background: none; font-family: 'Public Sans', sans-serif; font-size: 14px; outline: none; }
+  .b-composer button { background: none; border: none; color: oklch(0.55 0.16 35); font-weight: 700; font-size: 13px; cursor: pointer; font-family: inherit; }
+
+  /* ============================================================
+     VARIANT C — TASK BOARD
+     ============================================================ */
+  .stage-c {
+    background: oklch(0.95 0.005 240);
+    color: oklch(0.2 0.01 240);
+    font-family: 'Manrope', sans-serif;
+    min-height: 820px;
+    display: flex; flex-direction: column;
+  }
+  .stage-c .caption { background: oklch(0.99 0.002 240); border-color: oklch(0.87 0.005 240); }
+  .c-composer { padding: 10px 12px; background: oklch(0.99 0.002 240); border-bottom: 1px solid oklch(0.87 0.005 240); display: flex; gap: 6px; }
+  .c-composer input { flex: 1; border: 1px solid oklch(0.83 0.005 240); border-radius: 6px; padding: 8px 10px; font-family: inherit; font-size: 12.5px; }
+  .c-composer button { background: oklch(0.55 0.16 220); color: white; border: none; border-radius: 6px; padding: 0 12px; font-weight: 700; font-size: 11.5px; cursor: pointer; }
+  .c-empty { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 40px 20px; text-align: center; color: oklch(0.5 0.01 240); }
+  .c-empty .ic { width: 34px; height: 34px; border: 2px solid oklch(0.7 0.01 240); border-radius: 8px; margin-bottom: 14px; }
+  .c-empty p { font-size: 12.5px; line-height: 1.6; max-width: 26ch; margin: 0; }
+  .c-board { padding: 10px; flex: 1; }
+  .c-boardhead { display: flex; justify-content: space-between; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: oklch(0.5 0.01 240); padding: 4px 4px 8px; }
+  .c-row {
+    background: oklch(0.99 0.002 240); border: 1px solid oklch(0.88 0.005 240); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 7px; display: flex; align-items: center; gap: 10px;
+  }
+  .c-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .c-row.done .c-dot { background: oklch(0.6 0.14 150); }
+  .c-row.running .c-dot { background: oklch(0.75 0.15 75); animation: c-pulse 1.1s infinite; }
+  .c-row.failed .c-dot { background: oklch(0.58 0.19 25); }
+  @keyframes c-pulse { 50% { transform: scale(1.6); opacity: 0.5; } }
+  .c-row.running { position: relative; overflow: hidden; }
+  .c-row.running::before {
+    content: ''; position: absolute; inset: 0; border-radius: 8px; padding: 1.5px;
+    background: conic-gradient(from 0deg, transparent 0%, oklch(0.75 0.15 75) 12%, transparent 24%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    animation: c-trail 2.2s linear infinite;
+  }
+  @keyframes c-trail { to { transform: rotate(360deg); } }
+  .c-row .c-txt { flex: 1; font-size: 12.5px; font-weight: 600; }
+  .c-row .c-sub { font-size: 11px; color: oklch(0.5 0.01 240); font-weight: 500; margin-top: 2px; }
+  .c-row .c-time { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.5 0.01 240); flex-shrink: 0; }
+  .c-chip { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600; flex-shrink: 0; }
+  .c-chip.done { background: oklch(0.92 0.05 150); color: oklch(0.4 0.1 150); }
+  .c-chip.running { background: oklch(0.93 0.08 75); color: oklch(0.45 0.12 75); }
+  .c-chip.failed { background: oklch(0.92 0.08 25); color: oklch(0.45 0.15 25); }
+  .c-summary { display: flex; gap: 14px; padding: 10px 14px; font-size: 11px; color: oklch(0.45 0.01 240); font-family: 'IBM Plex Mono', monospace; }
+  .c-answer-card { margin: 6px 10px 10px; background: oklch(0.99 0.002 240); border: 1.5px solid oklch(0.55 0.16 220); border-radius: 8px; padding: 12px 14px; }
+  .c-answer-card .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: oklch(0.55 0.16 220); font-weight: 700; margin-bottom: 6px; }
+  .c-answer-card p { font-size: 12.5px; line-height: 1.6; margin: 0; }
+  .c-card { margin: 6px 10px 10px; background: oklch(0.99 0.002 240); border: 1.5px solid oklch(0.75 0.15 75); border-radius: 8px; padding: 12px 14px; }
+  .c-card.failed { border-color: oklch(0.58 0.19 25); }
+  .c-card .h { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  .c-card p { font-size: 12px; line-height: 1.55; color: oklch(0.4 0.01 240); margin: 0 0 10px; }
+  .c-scopes { display: flex; flex-direction: column; gap: 5px; }
+  .c-scopes button { font-family: inherit; font-size: 12px; text-align: left; padding: 8px 10px; border-radius: 6px; border: 1px solid oklch(0.83 0.005 240); background: oklch(0.97 0.003 240); cursor: pointer; font-weight: 600; }
+  .c-scopes button.primary { background: oklch(0.55 0.16 220); color: white; border-color: oklch(0.55 0.16 220); }
+  .c-deny { margin-top: 6px; width: 100%; background: none; border: 1px solid oklch(0.58 0.19 25); color: oklch(0.5 0.17 25); border-radius: 6px; padding: 8px 10px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .c-cred label { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: oklch(0.5 0.01 240); margin: 10px 0 4px; font-weight: 700; }
+  .c-cred input { width: 100%; border: 1px solid oklch(0.83 0.005 240); border-radius: 6px; padding: 7px 9px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+  .c-cred .note { margin-top: 10px; font-size: 11px; color: oklch(0.45 0.01 240); }
+  .c-retry { width: 100%; background: oklch(0.55 0.16 220); color: white; border: none; border-radius: 6px; padding: 9px; font-weight: 700; font-size: 12px; cursor: pointer; }
+
+  /* ============================================================
+     VARIANT D — INSTRUMENT
+     ============================================================ */
+  .stage-d {
+    background: oklch(0.14 0 0);
+    color: oklch(0.95 0 0);
+    font-family: 'Barlow Condensed', sans-serif;
+    min-height: 820px;
+  }
+  .stage-d .caption { background: oklch(0.1 0 0); border-color: oklch(0.32 0 0); color: oklch(0.75 0 0); }
+  .d-strip {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    border-bottom: 2px solid oklch(0.32 0 0); background: oklch(0.1 0 0);
+  }
+  .d-strip .cell { padding: 8px 6px; border-right: 1px solid oklch(0.28 0 0); text-align: center; }
+  .d-strip .cell:last-child { border-right: none; }
+  .d-strip .lbl { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.08em; color: oklch(0.55 0 0); font-weight: 600; }
+  .d-strip .val { font-family: 'Space Mono', monospace; font-size: 14px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .d-strip .val.live { color: oklch(0.7 0.15 150); }
+  .d-strip .val.tick { animation: d-tick 0.22s ease-out; }
+  @keyframes d-tick { from { transform: translateY(-5px); opacity: 0.35; } to { transform: translateY(0); opacity: 1; } }
+  .d-body { padding: 14px; }
+  .d-task { font-size: 17px; font-weight: 600; line-height: 1.3; margin-bottom: 14px; border-left: 3px solid oklch(0.95 0 0); padding-left: 10px; }
+  .d-empty { text-align: center; padding: 60px 20px; color: oklch(0.55 0 0); }
+  .d-empty .glyph { font-family: 'Space Mono', monospace; font-size: 32px; margin-bottom: 12px; }
+  .d-empty p { font-size: 15px; }
+  .d-row { display: grid; grid-template-columns: 56px 1fr 20px; gap: 10px; border-bottom: 1px solid oklch(0.28 0 0); padding: 7px 0; align-items: start; }
+  .d-row .t { font-family: 'Space Mono', monospace; font-size: 11px; color: oklch(0.55 0 0); padding-top: 1px; }
+  .d-row .txt { font-size: 15.5px; line-height: 1.3; }
+  .d-row .led { width: 9px; height: 9px; margin-top: 4px; justify-self: center; }
+  .d-row.done .led { background: oklch(0.7 0.15 150); }
+  .d-row.running .led { background: oklch(0.75 0.16 75); animation: d-blink 0.9s infinite; }
+  .d-row.failed .led { background: oklch(0.6 0.2 25); }
+  @keyframes d-blink { 50% { opacity: 0.2; } }
+  .d-answer { margin-top: 16px; border: 2px solid oklch(0.95 0 0); padding: 12px; }
+  .d-answer .lbl { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: oklch(0.6 0 0); margin-bottom: 8px; }
+  .d-answer p { font-size: 16px; line-height: 1.45; margin: 0 0 6px; }
+  .d-card { margin-top: 16px; border: 2px solid oklch(0.75 0.16 75); padding: 12px; }
+  .d-card.deny { border-color: oklch(0.6 0.2 25); }
+  .d-card .h { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 0.08em; color: oklch(0.75 0.16 75); margin-bottom: 8px; text-transform: uppercase; }
+  .d-card p { font-size: 16px; line-height: 1.4; margin: 0 0 12px; }
+  .d-scopes button, .d-deny, .d-retry {
+    display: block; width: 100%; font-family: 'Space Mono', monospace; font-size: 11.5px; text-align: left;
+    background: oklch(0.14 0 0); color: oklch(0.9 0 0); border: 1px solid oklch(0.4 0 0); padding: 8px 9px; margin-bottom: 5px; cursor: pointer;
+  }
+  .d-scopes button:hover { border-color: oklch(0.95 0 0); }
+  .d-deny { border-color: oklch(0.6 0.2 25); color: oklch(0.75 0.16 25); }
+  .d-cred label { display: block; font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: oklch(0.6 0 0); margin: 10px 0 4px; text-transform: uppercase; }
+  .d-cred input { width: 100%; background: oklch(0.1 0 0); border: 1px solid oklch(0.4 0 0); color: oklch(0.95 0 0); font-family: 'Space Mono', monospace; font-size: 13px; padding: 8px; }
+  .d-cred .note { margin-top: 10px; font-size: 13.5px; color: oklch(0.75 0.16 75); font-weight: 600; }
+  .d-composer { position: sticky; bottom: 0; border-top: 2px solid oklch(0.32 0 0); background: oklch(0.1 0 0); padding: 10px 14px; display: flex; gap: 8px; }
+  .d-composer input { flex: 1; background: oklch(0.14 0 0); border: 1px solid oklch(0.4 0 0); color: oklch(0.95 0 0); font-family: 'Barlow Condensed', sans-serif; font-size: 15px; padding: 7px 9px; }
+  .d-composer button { background: oklch(0.95 0 0); color: oklch(0.14 0 0); border: none; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 11px; padding: 0 12px; cursor: pointer; }
+
+  /* ============================================================
+     VARIANT E — CONVERSATIONAL MINIMAL
+     ============================================================ */
+  .stage-e {
+    background: oklch(0.995 0 0);
+    color: oklch(0.18 0 0);
+    font-family: 'Libre Franklin', sans-serif;
+    min-height: 820px;
+    display: flex; flex-direction: column;
+  }
+  .stage-e .caption { border-color: oklch(0.9 0 0); }
+  .e-body { flex: 1; padding: 22px 18px 90px; }
+  .e-empty { height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; color: oklch(0.55 0 0); padding: 40px 0; }
+  .e-empty p { font-size: 14px; line-height: 1.6; max-width: 24ch; margin: 0; }
+  .e-msg-you { font-size: 14.5px; line-height: 1.55; margin-bottom: 14px; }
+  .e-msg-you .who { display: block; font-size: 10.5px; color: oklch(0.55 0 0); margin-bottom: 3px; }
+  .e-inline { font-size: 12.5px; color: oklch(0.55 0 0); line-height: 1.9; margin-bottom: 14px; }
+  .e-inline .cur { color: oklch(0.55 0.12 240); font-weight: 500; display: inline-block; transition: opacity 0.18s ease-out; }
+  .e-done-line { font-size: 12.5px; color: oklch(0.5 0 0); font-style: italic; margin-bottom: 6px; cursor: pointer; }
+  .e-answer { font-size: 15px; line-height: 1.65; margin: 0 0 18px; }
+  .e-answer-list { font-size: 14px; line-height: 1.85; margin: 6px 0 18px; }
+  .e-card { border-top: 1px solid oklch(0.9 0 0); border-bottom: 1px solid oklch(0.9 0 0); padding: 14px 0; margin: 10px 0 18px; }
+  .e-card .h { font-size: 14.5px; font-weight: 600; margin-bottom: 6px; }
+  .e-card p { font-size: 13px; line-height: 1.6; color: oklch(0.4 0 0); margin: 0 0 12px; }
+  .e-scopes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .e-scopes button { font-family: inherit; font-size: 12.5px; padding: 7px 12px; border-radius: 999px; border: 1px solid oklch(0.8 0 0); background: none; cursor: pointer; }
+  .e-scopes button.primary { background: oklch(0.18 0 0); color: white; border-color: oklch(0.18 0 0); }
+  .e-deny { margin-top: 8px; background: none; border: none; color: oklch(0.5 0 0); text-decoration: underline; font-size: 12.5px; cursor: pointer; font-family: inherit; }
+  .e-cred label { display: block; font-size: 11.5px; color: oklch(0.5 0 0); margin: 10px 0 4px; }
+  .e-cred input { width: 100%; border: none; border-bottom: 1px solid oklch(0.75 0 0); padding: 6px 2px; font-size: 14px; font-family: inherit; }
+  .e-cred .note { margin-top: 10px; font-size: 12px; color: oklch(0.55 0.12 240); }
+  .e-blocked { font-size: 14px; line-height: 1.6; color: oklch(0.5 0.15 30); margin-bottom: 6px; }
+  .e-composer { position: sticky; bottom: 0; background: oklch(0.995 0 0); padding: 12px 18px 0; }
+  .e-composer-pill { display: flex; align-items: center; gap: 8px; border: 1px solid oklch(0.85 0 0); border-radius: 999px; padding: 9px 14px; }
+  .e-composer input { flex: 1; border: none; outline: none; font-family: inherit; font-size: 13.5px; background: none; }
+  .e-composer button { width: 24px; height: 24px; border-radius: 50%; background: oklch(0.18 0 0); color: white; border: none; font-size: 13px; cursor: pointer; }
+
+  @media (max-width: 340px) {
+    .caption { font-size: 10.5px; }
+  }
+</style>
+</head>
+<body>
+  <div id="meta">
+    <h1>Checkto side panel — five directions</h1>
+    <p id="meta-sub"></p>
+  </div>
+
+  <div id="stage-outer">
+    <div id="stage"></div>
+  </div>
+
+  <div id="bar">
+    <div class="row" id="variant-row"></div>
+    <div class="row" id="state-row"></div>
+  </div>
+
+<script>
+/* ---------------- shared content ---------------- */
+const TASK1 = 'upload the quarterly report and confirm it went through';
+const ACTIONS1 = [
+  { t: '0:02', label: 'Opened tab: ~/upload', s: 'done' },
+  { t: '0:05', label: 'Clicked the "upload" button', s: 'done' },
+  { t: '0:09', label: 'Typed "me@pcstyle.dev" into the "recipient" field', s: 'done' },
+  { t: '0:13', label: 'Read the confirmation banner', s: 'done' },
+];
+const ANSWER1 = 'uploaded it; the confirmation banner shows 3 files processed.';
+const DURATION1 = '14s';
+
+const TASK2 = 'compare the pricing pages for vercel, netlify and fly and tell me which is cheapest for a hobby project';
+const ACTIONS2 = [
+  { t: '0:03', label: 'Opened tab: vercel.com/pricing', s: 'done' },
+  { t: '0:11', label: 'Opened tab: netlify.com/pricing', s: 'done' },
+  { t: '0:19', label: 'Opened tab: fly.io/pricing', s: 'running' },
+];
+const ANSWER2_LINES = [
+  'Netlify is cheapest for a hobby project.',
+  'Vercel Hobby: free, but commercial use needs Pro ($20/mo)',
+  'Netlify Free: 100GB bandwidth, no card required',
+  'Fly.io: pay-as-you-go, ~$1.94/mo minimum even at low usage',
+  "Netlify's free tier has the most headroom before you hit a paywall.",
+];
+
+const APPROVAL_ACTION = 'submit the $89.00 order';
+const BLOCKED_REASON = "the checkout page's CAPTCHA failed twice; the site is refusing another attempt.";
+const CRED_NOTE_A = 'you are typing directly into the page — the agent cannot see what you type here.';
+
+const VARIANTS = [
+  { key: 'a', name: 'Operator console' },
+  { key: 'b', name: 'Answer-first editorial' },
+  { key: 'c', name: 'Task board' },
+  { key: 'd', name: 'Instrument' },
+  { key: 'e', name: 'Conversational minimal' },
+];
+const STATES = [
+  { n: 1, name: 'Empty' },
+  { n: 2, name: 'In flight' },
+  { n: 3, name: 'Finished' },
+  { n: 4, name: 'Approval' },
+  { n: 5, name: 'Credential' },
+  { n: 6, name: 'Blocked' },
+];
+
+const CAPTIONS = {
+  a: { title: 'A — Operator console', body: '<span class="row"><strong>Type:</strong> JetBrains Mono, structural — used for labels, timestamps and body text, not decoration. <strong>Palette:</strong> near-black neutral with amber-for-running / green-for-done semantic signal only. <strong>Signature:</strong> the log never collapses; the answer is just the final block in the same monospace stream.</span>' },
+  b: { title: 'B — Answer-first editorial', body: '<span class="row"><strong>Type:</strong> Source Serif 4 for the answer headline, Public Sans for chrome — serif-for-hero/sans-for-meta contrast. <strong>Palette:</strong> cool paper white, ink text, one brick-red accent (no cream, no sage). <strong>Signature:</strong> the answer renders as a headline first; the whole action log hides behind one line that expands.</span>' },
+  c: { title: 'C — Task board', body: '<span class="row"><strong>Type:</strong> Manrope for labels, IBM Plex Mono for counters/time — a SaaS-status pairing. <strong>Palette:</strong> cool light gray surface, blue (hue 220, outside the indigo band) plus red/amber/green status chips. <strong>Signature:</strong> the run is three task rows with live status dots and elapsed time — no transcript at all.</span>' },
+  d: { title: 'D — Instrument', body: '<span class="row"><strong>Type:</strong> Space Mono for tabular numeric readouts, Barlow Condensed for labels — a hardware-panel pairing. <strong>Palette:</strong> true near-black/near-white, zero color except red/green status LEDs. <strong>Signature:</strong> a fixed readout strip (steps / elapsed / cost / tokens / tab) runs across every state like instrumentation.</span>' },
+  e: { title: 'E — Conversational minimal', body: '<span class="row"><strong>Type:</strong> Libre Franklin only, one face, deliberate restraint. <strong>Palette:</strong> plain white, near-black ink, a single small blue-gray accent dot. <strong>Signature:</strong> the agent\'s work is grey inline text woven into the conversation, then one quiet italic line when done — no card ever appears for it.</span>' },
+};
+
+/* ---------------- state ---------------- */
+const params = new URLSearchParams(location.search);
+let curVariant = VARIANTS.some(v => v.key === params.get('variant')) ? params.get('variant') : 'a';
+let curState = STATES.some(s => String(s.n) === params.get('state')) ? Number(params.get('state')) : 1;
+let narrow = params.get('narrow') === '1';
+let tickHandle = null;
+const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function startTickers(){
+  if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+  if (curVariant === 'd' && curState === 2) {
+    let sec = 21, cost = 0.02, tok = 4100;
+    tickHandle = setInterval(() => {
+      sec += 1; cost += 0.002; tok += 90;
+      const elapsedEl = document.getElementById('d-elapsed');
+      const costEl = document.getElementById('d-cost');
+      const tokEl = document.getElementById('d-tokens');
+      if (!elapsedEl) { clearInterval(tickHandle); tickHandle = null; return; }
+      const m = Math.floor(sec / 60), s = sec % 60;
+      elapsedEl.textContent = `${m}:${String(s).padStart(2, '0')}`;
+      costEl.textContent = `$${cost.toFixed(2)}`;
+      tokEl.textContent = `${(tok / 1000).toFixed(1)}K`;
+      if (!reduceMotion) {
+        [elapsedEl, costEl, tokEl].forEach(el => { el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); });
+      }
+    }, 1000);
+  } else if (curVariant === 'e' && curState === 2) {
+    const phrases = ['opened vercel.com/pricing', 'opened netlify.com/pricing', 'now reading fly.io/pricing'];
+    let i = 0;
+    tickHandle = setInterval(() => {
+      const el = document.getElementById('e-loop');
+      if (!el) { clearInterval(tickHandle); tickHandle = null; return; }
+      i = (i + 1) % phrases.length;
+      el.style.opacity = '0';
+      setTimeout(() => {
+        const el2 = document.getElementById('e-loop');
+        if (el2) { el2.textContent = phrases[i]; el2.style.opacity = '1'; }
+      }, reduceMotion ? 0 : 180);
+    }, 1800);
+  }
+}
+
+function cap(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
+
+/* ---------------- renderers ---------------- */
+function actionRowsHtml(cls, actions, timeCol){
+  return actions.map(a => `<div class="${cls} ${a.s}"><div class="t">${a.t}</div><div class="s">${a.s==='done'?'✓':a.s==='running'?'…':'✗'}</div><div class="txt">${a.label}</div></div>`).join('');
+}
+
+function renderA(state){
+  let body = '';
+  if (state === 1) {
+    body = `<div class="a-task">$ checkto <span class="p">&gt;</span> <span style="opacity:.4">awaiting instruction_</span></div>`;
+  } else if (state === 2) {
+    body = `<div class="a-task">task &gt; ${TASK2}</div>
+      <div class="a-log">${actionRowsHtml('a-row', ACTIONS2)}</div>
+      <div class="a-meta"><span>elapsed 0:21</span><span>step 3/~5</span><span>tab: fly.io/pricing</span></div>`;
+  } else if (state === 3) {
+    body = `<div class="a-task">task &gt; ${TASK1}</div>
+      <div class="a-log">${actionRowsHtml('a-row', ACTIONS1)}</div>
+      <div class="a-answer"><div class="lbl">result</div>${ANSWER1}</div>
+      <div class="a-meta"><span>duration ${DURATION1}</span><span>4 actions</span><span>exit 0</span></div>`;
+  } else if (state === 4) {
+    body = `<div class="a-task">task &gt; buy the cheapest hobby plan (netlify)</div>
+      <div class="a-log">${actionRowsHtml('a-row', ACTIONS2.map(x=>({...x,s:'done'})))}</div>
+      <div class="a-card"><div class="h">⚠ approval required</div>
+        about to ${APPROVAL_ACTION}. this action cannot be undone.
+        <div class="a-scopes">
+          <button>[1] allow once</button>
+          <button>[2] allow for this conversation</button>
+          <button>[3] always allow this action</button>
+        </div>
+        <button class="a-deny-btn">[esc] deny</button>
+      </div>`;
+  } else if (state === 5) {
+    body = `<div class="a-task">task &gt; ${TASK1}</div>
+      <div class="a-log">${actionRowsHtml('a-row', ACTIONS1.slice(0,1))}</div>
+      <div class="a-cred">
+        <div class="lbl" style="text-transform:uppercase;font-size:10px;color:oklch(0.55 0.01 260)">sign-in required — handed to you</div>
+        <label>username</label><input placeholder="you@company.com">
+        <label>password</label><input type="password" placeholder="••••••••">
+        <div class="note">${CRED_NOTE_A}</div>
+      </div>`;
+  } else if (state === 6) {
+    body = `<div class="a-task">task &gt; buy the cheapest hobby plan (netlify)</div>
+      <div class="a-log">${actionRowsHtml('a-row', [
+        {t:'0:04',label:'Opened tab: netlify.com/checkout',s:'done'},
+        {t:'0:08',label:'Filled billing details',s:'done'},
+        {t:'0:15',label:'Failed CAPTCHA challenge (attempt 1)',s:'failed'},
+        {t:'0:22',label:'Failed CAPTCHA challenge (attempt 2)',s:'failed'},
+      ])}</div>
+      <div class="a-card deny"><div class="h">✗ blocked by site</div>${BLOCKED_REASON}
+        <button class="a-retry" style="margin-top:8px">retake it yourself in this tab</button></div>`;
+  }
+  const composerDisabled = state === 4 || state === 5;
+  return `<div class="a-head"><span>checkto://session</span><span>${state===2?'● running':state===3?'○ idle':state===6?'○ blocked':state===4?'○ paused':'○ idle'}</span></div>
+    <div class="a-body">${body}</div>
+    <div class="a-composer"><input ${composerDisabled?'disabled':''} placeholder="ask checkto to do something..."><button class="a-run-btn">run</button></div>`;
+}
+
+function renderB(state){
+  let body = '';
+  if (state === 1) {
+    body = `<div class="b-eyebrow">checkto</div>
+      <div class="b-empty-h">What should I do in your browser?</div>
+      <div class="b-empty-p">Tell it in plain language. It drives your own tabs and reports back what it did.</div>`;
+  } else if (state === 2) {
+    body = `<div class="b-task">${TASK2}</div>
+      <div class="b-live">Opened vercel.com/pricing, then netlify.com/pricing. Now reading <span class="cur">fly.io/pricing…</span></div>`;
+  } else if (state === 3) {
+    body = `<div class="b-eyebrow">Answer</div>
+      <div class="b-answer">${ANSWER1}</div>
+      <div class="b-trace"><span class="arrow">›</span>traced via 4 actions · ${DURATION1}</div>
+      <div class="b-log-wrap"><div class="b-log">${ACTIONS1.map(a=>`<div><span class="t">${a.t}</span>${a.label}</div>`).join('')}</div></div>`;
+  } else if (state === 4) {
+    body = `<div class="b-eyebrow">Before it continues</div>
+      <div class="b-card"><div class="h">Approve this action?</div>
+        <p>The agent wants to ${APPROVAL_ACTION}. This cannot be undone once sent.</p>
+        <div class="b-scopes">
+          <button class="primary">Allow once</button>
+          <button>Allow for this conversation</button>
+          <button>Always allow this action</button>
+        </div>
+        <button class="b-deny">Deny</button>
+      </div>`;
+  } else if (state === 5) {
+    body = `<div class="b-eyebrow">Your turn</div>
+      <div class="b-card"><div class="h">Sign in to continue</div>
+        <p>Checkto hit a sign-in wall and handed the form back to you.</p>
+        <div class="b-cred">
+          <label>Username</label><input placeholder="you@company.com">
+          <label>Password</label><input type="password" placeholder="••••••••">
+          <div class="note">${cap(CRED_NOTE_A)}</div>
+        </div>
+      </div>`;
+  } else if (state === 6) {
+    body = `<div class="b-eyebrow">Stopped</div>
+      <div class="b-blocked-h">The site blocked this one.</div>
+      <p style="font-size:13px;color:oklch(0.42 0.02 260);line-height:1.6;max-width:32ch;margin-top:8px">${cap(BLOCKED_REASON)}</p>
+      <div class="b-trace open" style="margin-top:14px"><span class="arrow">›</span>traced via 4 actions · 0:22</div>
+      <div class="b-log-wrap"><div class="b-log">${[
+        {t:'0:04',l:'Opened tab: netlify.com/checkout'},
+        {t:'0:08',l:'Filled billing details'},
+        {t:'0:15',l:'Failed CAPTCHA challenge (attempt 1)'},
+        {t:'0:22',l:'Failed CAPTCHA challenge (attempt 2)'},
+      ].map(a=>`<div><span class="t">${a.t}</span>${a.l}</div>`).join('')}</div></div>`;
+  }
+  return `<div class="b-body">${body}</div>
+    <div class="b-composer"><div class="b-composer-inner"><input placeholder="What should checkto do?"><button>Go</button></div></div>`;
+}
+
+function renderC(state){
+  let composer = `<div class="c-composer"><input placeholder="ask checkto..."><button>Run</button></div>`;
+  let content = '';
+  if (state === 1) {
+    content = `<div class="c-empty"><div class="ic"></div><p>No task running. Type one below and it shows up here as a task row.</p></div>`;
+  } else if (state === 2) {
+    content = `<div class="c-board">
+      <div class="c-boardhead"><span>${TASK2.slice(0,42)}…</span><span>0:21</span></div>
+      ${ACTIONS2.map(a=>`<div class="c-row ${a.s}"><div class="c-dot"></div><div><div class="c-txt">${a.label}</div><div class="c-sub">${a.s==='running'?'reading page content':'tab opened'}</div></div><div class="c-chip ${a.s}">${a.s}</div></div>`).join('')}
+      <div class="c-summary"><span>2 done</span><span>1 running</span><span>0 failed</span></div>
+    </div>`;
+  } else if (state === 3) {
+    content = `<div class="c-board">
+      <div class="c-boardhead"><span>${TASK1}</span><span>${DURATION1}</span></div>
+      ${ACTIONS1.map(a=>`<div class="c-row done"><div class="c-dot"></div><div class="c-txt">${a.label}</div><div class="c-chip done">done</div></div>`).join('')}
+      <div class="c-summary"><span>4 done</span><span>0 running</span><span>0 failed</span></div>
+      <div class="c-answer-card"><div class="lbl">answer</div><p>${ANSWER1}</p></div>
+    </div>`;
+  } else if (state === 4) {
+    content = `<div class="c-board">
+      <div class="c-boardhead"><span>buy the cheapest hobby plan</span><span>0:26</span></div>
+      ${ACTIONS2.map(a=>`<div class="c-row done"><div class="c-dot"></div><div class="c-txt">${a.label}</div><div class="c-chip done">done</div></div>`).join('')}
+      <div class="c-card"><div class="h">Approval needed</div><p>Ready to ${APPROVAL_ACTION}. Irreversible once sent.</p>
+        <div class="c-scopes">
+          <button class="primary">Allow once</button>
+          <button>Allow for this conversation</button>
+          <button>Always allow</button>
+        </div>
+        <button class="c-deny">Deny</button>
+      </div>
+    </div>`;
+  } else if (state === 5) {
+    content = `<div class="c-board">
+      <div class="c-boardhead"><span>${TASK1}</span><span>0:06</span></div>
+      <div class="c-row running"><div class="c-dot"></div><div class="c-txt">Waiting on sign-in</div><div class="c-chip running">paused</div></div>
+      <div class="c-card"><div class="h">Sign in</div>
+        <div class="c-cred"><label>Username</label><input placeholder="you@company.com">
+        <label>Password</label><input type="password" placeholder="••••••••">
+        <div class="note">${cap(CRED_NOTE_A)}</div></div>
+      </div>
+    </div>`;
+  } else if (state === 6) {
+    content = `<div class="c-board">
+      <div class="c-boardhead"><span>buy the cheapest hobby plan</span><span>0:22</span></div>
+      ${[
+        {label:'Opened tab: netlify.com/checkout',s:'done'},
+        {label:'Filled billing details',s:'done'},
+        {label:'CAPTCHA challenge',s:'failed'},
+      ].map(a=>`<div class="c-row ${a.s}"><div class="c-dot"></div><div class="c-txt">${a.label}</div><div class="c-chip ${a.s}">${a.s}</div></div>`).join('')}
+      <div class="c-card failed"><div class="h">Blocked by site</div><p>${cap(BLOCKED_REASON)}</p>
+        <button class="c-retry">Take over this tab</button></div>
+    </div>`;
+  }
+  if (state === 4 || state === 5) composer = `<div class="c-composer"><input disabled placeholder="waiting on you..."><button disabled>Run</button></div>`;
+  return `${composer}${content}`;
+}
+
+function renderD(state){
+  const strip = (steps, elapsed, cost, tokens, tab) => `<div class="d-strip">
+    <div class="cell"><div class="lbl">steps</div><div class="val">${steps}</div></div>
+    <div class="cell"><div class="lbl">elapsed</div><div class="val ${state===2?'live':''}" ${state===2?'id="d-elapsed"':''}>${elapsed}</div></div>
+    <div class="cell"><div class="lbl">cost</div><div class="val" ${state===2?'id="d-cost"':''}>${cost}</div></div>
+    <div class="cell"><div class="lbl">tokens</div><div class="val" ${state===2?'id="d-tokens"':''}>${tokens}</div></div>
+    <div class="cell"><div class="lbl">tab</div><div class="val" style="font-size:10px">${tab}</div></div>
+  </div>`;
+  let body = '';
+  if (state === 1) {
+    body = strip('000', '0:00', '$0.00', '0', '—') + `<div class="d-empty"><div class="glyph">▢</div><p>Standing by.</p></div>`;
+  } else if (state === 2) {
+    body = strip('003', '0:21', '$0.02', '4.1K', 'fly.io') + `<div class="d-body">
+      <div class="d-task">${TASK2}</div>
+      ${ACTIONS2.map(a=>`<div class="d-row ${a.s}"><div class="t">${a.t}</div><div class="txt">${a.label}</div><div class="led"></div></div>`).join('')}
+    </div>`;
+  } else if (state === 3) {
+    body = strip('004', DURATION1, '$0.01', '2.3K', 'closed') + `<div class="d-body">
+      <div class="d-task">${TASK1}</div>
+      ${ACTIONS1.map(a=>`<div class="d-row done"><div class="t">${a.t}</div><div class="txt">${a.label}</div><div class="led"></div></div>`).join('')}
+      <div class="d-answer"><div class="lbl">OUTPUT</div><p>${ANSWER1}</p></div>
+    </div>`;
+  } else if (state === 4) {
+    body = strip('003', '0:26', '$0.04', '5.0K', 'netlify') + `<div class="d-body">
+      <div class="d-task">buy the cheapest hobby plan</div>
+      <div class="d-card"><div class="h">hold — approval required</div>
+        <p>${cap(APPROVAL_ACTION)}. irreversible.</p>
+        <div class="d-scopes">
+          <button>[ 1 ] allow once</button>
+          <button>[ 2 ] allow this conversation</button>
+          <button>[ 3 ] always allow</button>
+        </div>
+        <button class="d-deny">[ esc ] deny</button>
+      </div>
+    </div>`;
+  } else if (state === 5) {
+    body = strip('001', '0:06', '$0.00', '900', 'sign-in') + `<div class="d-body">
+      <div class="d-task">${TASK1}</div>
+      <div class="d-cred">
+        <label>username</label><input placeholder="you@company.com">
+        <label>password</label><input type="password" placeholder="••••••••">
+        <div class="note">${CRED_NOTE_A}</div>
+      </div>
+    </div>`;
+  } else if (state === 6) {
+    body = strip('004', '0:22', '$0.03', '3.8K', 'checkout') + `<div class="d-body">
+      <div class="d-task">buy the cheapest hobby plan</div>
+      ${[
+        {t:'0:04',label:'Opened tab: netlify.com/checkout',s:'done'},
+        {t:'0:15',label:'Failed CAPTCHA challenge (attempt 1)',s:'failed'},
+        {t:'0:22',label:'Failed CAPTCHA challenge (attempt 2)',s:'failed'},
+      ].map(a=>`<div class="d-row ${a.s}"><div class="t">${a.t}</div><div class="txt">${a.label}</div><div class="led"></div></div>`).join('')}
+      <div class="d-card deny"><div class="h">stopped</div><p>${cap(BLOCKED_REASON)}</p>
+        <button class="d-retry">take the tab yourself</button></div>
+    </div>`;
+  }
+  const disabled = state === 4 || state === 5;
+  return `${body}<div class="d-composer"><input ${disabled?'disabled':''} placeholder="TASK ›"><button>RUN</button></div>`;
+}
+
+function renderE(state){
+  let body = '';
+  if (state === 1) {
+    body = `<div class="e-empty"><p>Tell it what to do. It'll work in your tabs and check back in.</p></div>`;
+  } else if (state === 2) {
+    body = `<div class="e-msg-you"><span class="who">you</span>${TASK2}</div>
+      <div class="e-inline"><span id="e-loop" class="cur">opened vercel.com/pricing</span></div>`;
+  } else if (state === 3) {
+    body = `<div class="e-msg-you"><span class="who">you</span>${TASK1}</div>
+      <div class="e-done-line">worked for ${DURATION1} · 4 actions — tap to expand</div>
+      <div class="e-answer">${ANSWER1}</div>`;
+  } else if (state === 4) {
+    body = `<div class="e-msg-you"><span class="who">you</span>buy the cheapest hobby plan</div>
+      <div class="e-inline">compared vercel, netlify and fly — netlify wins on price</div>
+      <div class="e-card"><div class="h">One more thing</div>
+        <p>Before it can ${APPROVAL_ACTION}, it needs your go-ahead. Can't be undone.</p>
+        <div class="e-scopes">
+          <button class="primary">Allow once</button>
+          <button>This conversation</button>
+          <button>Always</button>
+        </div>
+        <button class="e-deny">Deny</button>
+      </div>`;
+  } else if (state === 5) {
+    body = `<div class="e-msg-you"><span class="who">you</span>${TASK1}</div>
+      <div class="e-inline">hit a sign-in page and stopped there</div>
+      <div class="e-card"><div class="h">Sign in</div>
+        <div class="e-cred"><label>Username</label><input placeholder="you@company.com">
+        <label>Password</label><input type="password" placeholder="••••••••">
+        <div class="note">${CRED_NOTE_A}</div></div>
+      </div>`;
+  } else if (state === 6) {
+    body = `<div class="e-msg-you"><span class="who">you</span>buy the cheapest hobby plan</div>
+      <div class="e-inline">opened checkout, filled billing details</div>
+      <div class="e-blocked">Stopped — ${BLOCKED_REASON}</div>
+      <div class="e-scopes" style="margin-top:10px"><button class="primary">Take over this tab</button></div>`;
+  }
+  return `<div class="e-body">${body}</div>
+    <div class="e-composer"><div class="e-composer-pill"><input placeholder="Message checkto"><button>↑</button></div></div>`;
+}
+
+const RENDERERS = { a: renderA, b: renderB, c: renderC, d: renderD, e: renderE };
+
+/* ---------------- shell / bar / render ---------------- */
+function renderBar(){
+  const vrow = document.getElementById('variant-row');
+  vrow.innerHTML = `<button class="arrow" id="v-prev">←</button>` +
+    VARIANTS.map(v => `<button data-v="${v.key}" class="${v.key===curVariant?'active':''}">${v.key.toUpperCase()} · ${v.name}</button>`).join('') +
+    `<button class="arrow" id="v-next">→</button>` +
+    `<span class="divider"></span>` +
+    `<button id="width-toggle">${narrow ? '320px → 400px' : '400px → 320px'}</button>`;
+  const srow = document.getElementById('state-row');
+  srow.innerHTML = `<span class="lbl">state</span>` + STATES.map(s => `<button data-s="${s.n}" class="${s.n===curState?'active':''}">${s.n} ${s.name}</button>`).join('');
+
+  vrow.querySelectorAll('button[data-v]').forEach(b => b.addEventListener('click', () => setVariant(b.dataset.v)));
+  srow.querySelectorAll('button[data-s]').forEach(b => b.addEventListener('click', () => setState(Number(b.dataset.s))));
+  document.getElementById('v-prev').addEventListener('click', () => cycleVariant(-1));
+  document.getElementById('v-next').addEventListener('click', () => cycleVariant(1));
+  document.getElementById('width-toggle').addEventListener('click', toggleWidth);
+}
+
+function cycleVariant(dir){
+  const idx = VARIANTS.findIndex(v => v.key === curVariant);
+  const next = VARIANTS[(idx + dir + VARIANTS.length) % VARIANTS.length];
+  setVariant(next.key);
+}
+function setVariant(key){ curVariant = key; syncUrl(); render(); }
+function setState(n){ curState = n; syncUrl(); render(); }
+function toggleWidth(){
+  narrow = !narrow;
+  document.getElementById('stage-outer').classList.toggle('narrow', narrow);
+  syncUrl();
+  renderBar();
+}
+function syncUrl(){
+  const p = new URLSearchParams();
+  p.set('variant', curVariant);
+  p.set('state', String(curState));
+  if (narrow) p.set('narrow', '1');
+  history.replaceState(null, '', '?' + p.toString());
+}
+
+function render(){
+  const stage = document.getElementById('stage');
+  stage.className = 'stage-' + curVariant;
+  const c = CAPTIONS[curVariant];
+  const captionHtml = `<div class="caption"><b>${c.title}</b>${c.body}</div>`;
+  stage.innerHTML = captionHtml + RENDERERS[curVariant](curState);
+  stage.scrollTop = 0;
+  stage.querySelectorAll('.b-trace').forEach(el => el.addEventListener('click', () => el.classList.toggle('open')));
+  startTickers();
+  document.getElementById('stage-outer').classList.toggle('narrow', narrow);
+  document.getElementById('meta-sub').textContent =
+    `variant ${curVariant.toUpperCase()} (${VARIANTS.find(v=>v.key===curVariant).name}) · state ${curState} (${STATES.find(s=>s.n===curState).name}) · ${narrow?'320px':'400px'} wide`;
+  renderBar();
+}
+
+document.addEventListener('keydown', (e) => {
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+  if (e.key === 'ArrowLeft') cycleVariant(-1);
+  if (e.key === 'ArrowRight') cycleVariant(1);
+});
+
+syncUrl();
+render();
+</script>
+</body>
+</html>
