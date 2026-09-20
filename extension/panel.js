@@ -190,6 +190,7 @@ function requestCard(pending) {
   const actions = el('div', 'request-actions');
   // Three scopes, not yes/no. The widest one is confirmed a second time with the warning spelled out.
   if (pending.scopes?.length) {
+    actions.classList.add('request-scopes');
     for (const scope of pending.scopes) {
       const button = el('button', scope.id === 'once' ? undefined : 'secondary', scope.label);
       button.type = 'button'; button.dataset.scope = scope.id;
@@ -265,7 +266,7 @@ function requestCard(pending) {
 }
 function renderRequest(state, pending) {
   const reason = blockedText(state.blockedReason);
-  $('#blocked').textContent = reason || '';
+  $('#blocked-text').textContent = reason || '';
   $('#blocked').hidden = running || !reason;
   // An answer already on its way keeps its card exactly as it is: redrawing it would re-enable the
   // buttons the user just used and throw away what they typed into it.
