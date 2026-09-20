@@ -46,14 +46,14 @@ const finished = {
   ],
 };
 
-async function panel(state, { width, configured = true } = {}) {
+async function panel(state, { width, configured = true, voice } = {}) {
   const page = await browser.newPage(width ? { viewport: { width, height: 720 } } : undefined);
   await page.addInitScript(cfg => {
     const ev = () => ({ addListener() {}, removeListener() {} });
     window.chrome = {
       runtime: {
         sendMessage: async message => (message.type === 'getState'
-          ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: cfg.configured, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0 }
+          ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: cfg.configured, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0, voice: cfg.voice }
           : message.type === 'clear'
             ? { ok: true, state: { running: false, messages: [], steps: [], status: 'ready' }, seq: 999 }
             : { ok: true }),
@@ -62,7 +62,7 @@ async function panel(state, { width, configured = true } = {}) {
       tabs: { query: async () => [{ id: 1, url: 'https://example.test/', title: 'Example', active: true, windowId: 1, index: 0 }], onCreated: ev(), onRemoved: ev(), onUpdated: ev(), onActivated: ev() },
       storage: { onChanged: ev() },
     };
-  }, { configured });
+  }, { configured, voice });
   await page.goto(`${base}/panel.html`);
   await page.waitForFunction(() => window.onState);
   // A live run's age is measured against the page's own clock at the moment it renders, so a test
@@ -646,5 +646,197 @@ test('an unconfigured first run shows the connect-a-model notice as a real card,
   // actually be in view on load, not scrolled off above a hero taller than the viewport.
   const box = await setup.boundingBox();
   assert.ok(box.y >= 0, `#setup should be visible at the top of the panel on load, got y=${box.y}`);
+  await page.close();
+});
+
+test('a voice partial does not overwrite the composer after the user starts typing', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  await page.locator('#mic').click();
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk' } },
+  }));
+  assert.equal(await page.locator('#goal').inputValue(), 'buy milk');
+  await page.locator('#goal').fill('I typed this myself');
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk now please' } },
+  }));
+  assert.equal(await page.locator('#goal').inputValue(), 'I typed this myself');
+  await page.close();
+});
+
+// A single chunk that fails to transcribe is not fatal to the session (see extension/offscreen.js
+// handleChunk: the mic stays on, the next chunk sends another partial), so the panel really does see
+// listening → error → listening inside ONE dictation session. That flicker is not a new session and
+// must not re-claim the composer: the user typed over the transcript, and the next partial used to
+// land on top of their text.
+test('a partial after a mid-session transcription error does not overwrite text the user typed over the transcript', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  const goal = page.locator('#goal');
+  // Pointerdown opens the session and there is no pointerup, so the panel still considers the
+  // dictation session it started live for the rest of this test — what holding the key does.
+  await page.locator('#mic').dispatchEvent('pointerdown');
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk' } },
+  }));
+  assert.equal(await goal.inputValue(), 'buy milk');
+  await goal.fill('I typed this myself');
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'error', error: 'that chunk did not transcribe' } },
+  }));
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 4,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk now please' } },
+  }));
+  assert.equal(await goal.inputValue(), 'I typed this myself');
+  await page.locator('#mic').dispatchEvent('pointerup');
+  await page.close();
+});
+
+// background.js writes and broadcasts state.dictation before it answers dictation:start, so the
+// listening state — and the first partial right behind it — can reach the panel before the start
+// request's own reply does. Ownership is claimed before the request is made, not after its reply, so
+// that first partial still lands.
+test('the first partial of a session the panel started lands even when it arrives before the dictation:start reply', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  await page.evaluate(() => {
+    const send = chrome.runtime.sendMessage;
+    let release;
+    window.__releaseStart = () => release();
+    chrome.runtime.sendMessage = async message => {
+      if (message.type !== 'dictation:start') return send(message);
+      await new Promise(resolve => { release = resolve; });
+      return { ok: true };
+    };
+  });
+  await page.locator('#mic').dispatchEvent('pointerdown');
+  await page.evaluate(() => {
+    window.onState({ type: 'state', seq: 2, state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: '' } } });
+    window.onState({ type: 'state', seq: 3, state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk' } } });
+  });
+  assert.equal(await page.locator('#goal').inputValue(), 'buy milk');
+  await page.evaluate(() => window.__releaseStart());
+  await page.locator('#mic').dispatchEvent('pointerup');
+  await page.close();
+});
+
+// A start that never opened a mic must not leave dictation owning the composer. The panel's only
+// visible use of that ownership is whether a dictation state is allowed to write #goal, so this
+// drives the one state shape that exposes it: a transcript arriving with no listening session behind
+// it must not land. (Ownership is claimed before the dictation:start request and dropped again on
+// every failure path; dropping it on failure is the line this guards.)
+test('a dictation start that fails does not leave the composer owned by dictation', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'dictate', capability: { canTranscribe: true } },
+  });
+  await page.evaluate(() => {
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = async message => (message.type === 'dictation:start' ? { ok: false, error: 'the mic was denied' } : send(message));
+  });
+  await page.locator('#mic').dispatchEvent('pointerdown');
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'idle', text: 'a transcript from no session at all' } },
+  }));
+  assert.equal(await page.locator('#goal').inputValue(), '');
+  await page.locator('#mic').dispatchEvent('pointerup');
+  await page.close();
+});
+
+// Ownership belongs to whoever owns the listening session, not to whoever pressed last. A panel mic
+// press whose start fails must not take the composer away from a session the panel did not start (the
+// global shortcut, or its hands-free latch — claimed by the listening transition in render()), or that
+// session's remaining partials and its final transcript stop reaching the composer until the next one.
+test('a failed panel mic press does not steal the composer from a session the panel did not start', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  const goal = page.locator('#goal');
+  // A listening session with no panel press behind it: the shortcut session, which claims the composer
+  // for itself at this transition (asserted here, since that is the ownership the failed press must not
+  // give away).
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk' } },
+  }));
+  assert.equal(await goal.inputValue(), 'buy milk');
+  // The panel's own mic press now starts a second session, and that start fails.
+  await page.evaluate(() => {
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = async message => (message.type === 'dictation:start' ? { ok: false, error: 'the mic was denied' } : send(message));
+  });
+  await page.locator('#mic').dispatchEvent('pointerdown');
+  // The shortcut session is still listening, so its next partial still reaches the composer.
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk and eggs' } },
+  }));
+  assert.equal(await goal.inputValue(), 'buy milk and eggs');
+  await page.locator('#mic').dispatchEvent('pointerup');
+  await page.close();
+});
+
+// The same flicker, in a session the panel did not start (the global shortcut, or its hands-free
+// latch). That session has no press behind it, so `dictationSessionActive` is false for it: the old
+// listening-transition rule re-claimed the composer on every pass back through 'error', and the next
+// partial landed on top of text the user had typed over the transcript.
+test('a partial after a mid-session error does not overwrite text typed over a session the panel did not start', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  const goal = page.locator('#goal');
+  // No mic press at all: the shortcut's own session, which takes the composer at its first listening
+  // state (asserted here, since that is the ownership the flicker must not give back and re-take).
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk', sessionId: 'session-1' } },
+  }));
+  assert.equal(await goal.inputValue(), 'buy milk');
+  await goal.fill('I typed this myself');
+  // One chunk fails to transcribe; the mic stays on, so the next partial belongs to the same session.
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'error', error: 'that chunk did not transcribe', partialText: 'buy milk', sessionId: 'session-1' } },
+  }));
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 4,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk now please', sessionId: 'session-1' } },
+  }));
+  assert.equal(await goal.inputValue(), 'I typed this myself');
+  await page.close();
+});
+
+// The guard above must not cost dictation the composer for the rest of the panel's life: a genuinely
+// new session (its own id, see background.js dictation:start) takes it again.
+test('a new dictation session takes the composer again after the previous one ended', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  const goal = page.locator('#goal');
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'first session', sessionId: 'session-1' } },
+  }));
+  assert.equal(await goal.inputValue(), 'first session');
+  await goal.fill('I typed this myself');
+  // That session ends, then the shortcut opens a new one with its own id.
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'idle', text: 'first session', sessionId: 'session-1' } },
+  }));
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 4,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'second session', sessionId: 'session-2' } },
+  }));
+  assert.equal(await goal.inputValue(), 'second session');
   await page.close();
 });

@@ -202,6 +202,10 @@ async function maybeAutoRunFromDictation({ text, isFinal }) {
   if (!tab || !Number.isInteger(tab.id)) return;
   dictationTriggered = true;
   try {
+    // A voice-triggered run is a new turn, never a resume: it takes the mode the user has in settings
+    // right now. `state.mode` is whatever the run before it used and outlives that run, so preferring
+    // it here would start a dictation run in a mode the user has since switched away from. Only the
+    // 'answer' handler's resume carries the paused run's own mode.
     const reply = await handle({ type: 'run', tabId: tab.id, goal, mode: settings.mode });
     if (!reply?.ok) { dictationTriggered = false; return; }
     // The run starting ends hands-free listening, per the owner's spec, and the mic itself: nothing
@@ -430,6 +434,29 @@ async function submitCredentials(request, values) {
     await setFeedback(page.tabId, { cursor: undefined });
   }
 }
+// The site a request is about, as a bare host. The planner writes `origin` as a URL
+// ("https://site.example", see planner.ts) but a bare host it might write instead must not read as a
+// different site. An unparseable value keeps whatever it names, slashes and all stripped.
+function hostOf(value) {
+  const raw = String(value || '').trim();
+  try { return new URL(raw).hostname.toLowerCase(); } catch { return raw.toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/[/?#].*$/, ''); }
+}
+/**
+ * Is this tab still on the page a paused request was about? The same check submitCredentials makes
+ * for the sign-in handoff, for the same reason: a card sits on screen while the user decides, the tab
+ * behind it can navigate, and the action wording it carries can match a same-named control on
+ * whatever site it landed on. A request with no origin, or "*", was asked about every site and is not
+ * tied to one page at all.
+ */
+async function pageStillHolds(tabId, origin) {
+  const wanted = String(origin || '').trim();
+  if (!wanted || wanted === '*') return true;
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  return Boolean(tab?.url) && supportedUrl(tab.url) && hostOf(tab.url) === hostOf(wanted);
+}
+// Said instead of acting: nothing was answered, so the card stays up for an answer about the page the
+// user is actually looking at.
+const movedPageError = origin => new Error(`that tab moved to a different site, so nothing was approved. answer again when it is back on ${origin}.`);
 async function stop() {
   const run = active;
   if (!run) return;
@@ -509,7 +536,7 @@ async function execute(run, message) {
   chrome.debugger.onDetach.addListener(detached);
   try {
     settings = await readSettings();
-    const mode = message.mode === 'fast' ? 'fast' : 'careful';
+    const mode = (message.mode || state.mode) === 'fast' ? 'fast' : 'careful';
     validateSettings(settings, mode);
     configure(settings);
     // Pick the tabs the last turn handed back up where they stand, rather than starting cold.
@@ -528,7 +555,7 @@ async function execute(run, message) {
     // the paused step count, but a step that only asks and pauses never advances it, so a planner
     // that re-raised the identical grantable approval every step without otherwise progressing would
     // spin forever without MAX_AUTO_APPROVALS -- the same idea as DENIAL_LIMIT, for grants.
-    let goal = message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : '');
+    const goal = message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : '');
     let resume = message.resume;
     let autoApprovals = 0;
     for (;;) {
@@ -544,8 +571,6 @@ async function execute(run, message) {
           currentId: p => p.tabId,
         },
       }, event => {
-        // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
-        if (event.type === 'mark') { markTab(event.tabId, event.disposition); return; }
         if (event.type === 'step') {
           state.steps.push({ step: event.step, action: event.action, log: event.log, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
           state.cost = (state.cost || 0) + event.costUsd;
@@ -557,11 +582,18 @@ async function execute(run, message) {
       const blocking = outcome?.status === 'needs_input' ? pickBlocking(outcome.requests || []) : undefined;
       const isApproval = blocking && (blocking.type === RequestType.APPROVAL || blocking.type === RequestType.PERMISSION_REQUEST);
       if (!isApproval || !isGranted(blocking) || ++autoApprovals > MAX_AUTO_APPROVALS) break;
+      // The stored grant covers the action, but only on the site it was given for: the run can have
+      // switched tabs since the ask was raised, and the same wording on another site is not the
+      // control the user allowed. Refusing to auto-resume here leaves the card up for a real answer.
+      if (!(await pageStillHolds(page.tabId, blocking.origin))) break;
       const denials = { ...(state.denials || {}) };
       delete denials[denialKey(blocking)];
       state.denials = denials;
-      goal = 'go on';
-      resume = outcome.resumeState;
+      const grant = state.grants?.[grantKey(blocking)] || persistentGrants[grantKey(blocking)];
+      resume = {
+        ...(outcome.resumeState || {}),
+        resolution: { kind: 'approved', action: String(blocking.action || ''), scope: grant?.scope || ApprovalScope.CONVERSATION },
+      };
     }
   } catch (err) {
     outcome = { status: controller.signal.aborted && !run.popupError ? 'stopped' : 'error', message: controller.signal.aborted && !run.popupError ? 'stopped' : safeError(err, settings) };
@@ -572,12 +604,24 @@ async function execute(run, message) {
     chrome.debugger.onDetach.removeListener(detached);
     // Any attach that was already in flight must finish before the final detach.
     await Promise.allSettled([...attachments]);
+    // A popup that could not be attached is this run failing, and this await is where that surfaces.
+    // It has to be normalized before the done-only marks below: normalizing after them let an attach
+    // that failed in this window leave green result tabs behind on a run that ends as an error.
+    if (run.popupError) outcome = { ...outcome, status: 'error', answer: undefined, message: safeError(run.popupError, settings) };
+    // A finished run's still-attached tabs that we opened are the result, including popups that
+    // followed off the original tab. Mark before the final detach so "still attached" means the
+    // run still had the page, not that teardown hasn't run yet. A popup the run already detached
+    // from stays unmarked and may close.
+    if (outcome?.status === 'done') {
+      for (const p of pages) {
+        if (p.attached && lease.get(p.tabId)?.openedByUs) markTab(p.tabId, Disposition.DELIVERABLE);
+      }
+    }
     await Promise.allSettled(pages.map(p => p.detach()));
     // Unmuting reads the lease, so it has to happen before the contract below releases them.
     await Promise.allSettled(pages.map(p => unmuteIfOurs(p.tabId)));
-    if (run.popupError) outcome = { ...outcome, status: 'error', answer: undefined, message: safeError(run.popupError, settings) };
     // The agent reports an aborted run as "stopped" whether the user or Chrome ended it; only the user's stop is a plain stop.
-    else if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
+    if (outcome?.status === 'stopped' && run.detached && !run.userStopped) outcome = { ...outcome, status: 'blocked', answer: undefined, message: detachMessage(run.detached) };
     // A run waiting on the user is waiting on that very tab, so it is handed over, never closed under them.
     if (waitingOnUser(outcome?.status) && Number.isInteger(state.tabId)) markTab(state.tabId, Disposition.HANDOFF);
     const ending = await endRun(run.sessionId).catch(() => undefined);
@@ -675,10 +719,10 @@ async function handle(message) {
       await persist();
       return { ok: true };
     }
-    let resume = 'go on';
+    let resolution;
     if (request.kind === 'credential' && message.outcome === RequestOutcome.USER_TOOK_OVER) {
       state.requests = [];
-      resume = 'check whether the sign-in worked and carry on with the task';
+      resolution = { kind: 'signed_in' };
     } else if (request.kind === 'credential') {
       // `values` is used here and nowhere else: it is not stored, persisted, or passed to the agent.
       const outcome = await submitCredentials(request, message.values || {});
@@ -691,13 +735,17 @@ async function handle(message) {
       }[outcome] ?? 'the sign-in form would not accept that, so nothing was submitted.' });
       state.requests = [];
       if (outcome !== RequestOutcome.SUBMITTED) { state.status = 'ready'; await persist(); return { ok: true, outcome }; }
-      resume = 'check whether the sign-in worked and carry on with the task';
+      resolution = { kind: 'signed_in' };
     } else if (request.type === RequestType.APPROVAL || request.type === RequestType.PERMISSION_REQUEST) {
       // "once" authorizes only this single click and stores nothing; a repeat asks again. The other
       // two scopes are stored under grantKey (never denialKey: see requests.js) so the auto-skip
       // loop in execute() can find them for a materially identical future request, and nothing
       // broader than that.
       const scope = message.scope === ApprovalScope.ALWAYS || message.scope === ApprovalScope.CONVERSATION ? message.scope : ApprovalScope.ONCE;
+      // An approval is for a page, not just for an action: the card sat there while the user decided,
+      // and the tab behind it can have navigated since. Nothing is stored and nothing resumes unless
+      // that tab is still on the site the user was asked about.
+      if (!(await pageStillHolds(state.tabId, request.origin))) throw movedPageError(request.origin);
       if (scope === ApprovalScope.CONVERSATION) {
         state.grants = { ...(state.grants || {}), [grantKey(request)]: grantRecord(request, scope) };
       } else if (scope === ApprovalScope.ALWAYS) {
@@ -705,17 +753,34 @@ async function handle(message) {
         await persistGrants();
       }
       state.requests = [];
+      resolution = { kind: 'approved', action: String(request.action || ''), scope };
     } else {
-      resume = String(message.text || message.choice || '').trim() || 'go on';
+      const text = String(message.text || message.choice || '').trim();
       state.requests = [];
+      resolution = { kind: 'answer', text };
     }
     const denials = { ...(state.denials || {}) };
     delete denials[denialKey(request)];
     state.denials = denials;
     await persist();
-    // Whatever kind of request this answered, the run resumes with the coverage/failure guards it
-    // paused with — a pause must never reset those just because a different kind of request raised it.
-    return handle({ type: 'run', tabId: state.tabId, goal: resume, mode: (await readSettings()).mode, resume: state.resumeState });
+    // The storage writes above are their own awaits, so the page is confirmed once more on the way to
+    // the resume: an approval only ever resumes onto the page the user answered about. Nothing was
+    // answered, so the question goes back up rather than being dropped into a resume that must not
+    // happen.
+    if (resolution.kind === 'approved' && !(await pageStillHolds(state.tabId, request.origin))) {
+      state.requests = [request];
+      await persist();
+      throw movedPageError(request.origin);
+    }
+    // Same pause, plus the sanitized resolution. Original task stays on resumeState.goal; the run's
+    // own mode stays on state.mode. Never a synthetic "go on" goal or settings-default mode.
+    return handle({
+      type: 'run',
+      tabId: state.tabId,
+      goal: state.resumeState?.goal || state.messages.find(m => m.role === 'user')?.text || 'continue',
+      mode: state.mode,
+      resume: { ...(state.resumeState || {}), resolution },
+    });
   }
   if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
@@ -729,10 +794,19 @@ async function handle(message) {
     const sessionId = state.sessionId || crypto.randomUUID();
     const run = { controller: new AbortController(), pages: [], attaching: new Set(), sessionId, turnId: crypto.randomUUID() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined, requests: [], blockedReason: undefined, resumeState: undefined };
-    state.messages.push({ role: 'user', text: message.goal.trim() });
+    const mode = message.mode === 'fast' ? 'fast' : 'careful';
+    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined, requests: [], blockedReason: undefined, resumeState: undefined, mode };
+    if (message.resume) {
+      const r = message.resume.resolution;
+      if (r?.kind === 'answer') {
+        const text = String(r.text || '').trim();
+        if (text && text !== 'go on') state.messages.push({ role: 'user', text });
+      }
+    } else {
+      state.messages.push({ role: 'user', text: message.goal.trim() });
+    }
     void persist().catch(() => {});
-    void execute(run, { ...message, goal: message.goal.trim() });
+    void execute(run, { ...message, goal: message.goal.trim(), mode });
     return { ok: true };
   }
   // Voice dictation: start capture (creates the offscreen document if needed), forward the command,
@@ -758,7 +832,10 @@ async function handle(message) {
       return { ok: false, error, needsPermissionTab };
     }
     dictationTriggered = false; // a fresh session: eager/prewarm may auto-run again for it
-    state.dictation = { status: 'listening', partialText: '' };
+    // `sessionId` is the one thing that tells a session apart from the one before it. A nonfatal chunk
+    // failure leaves the mic on and the state shape otherwise identical (status flickers to 'error' and
+    // back), so without it a listener that owns the composer cannot tell a new session from a flicker.
+    state.dictation = { status: 'listening', partialText: '', sessionId: crypto.randomUUID() };
     await persist();
     return { ok: true };
   }
