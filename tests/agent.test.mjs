@@ -639,6 +639,54 @@ test('a blocked type-and-enter says the Enter was never observed, not that nothi
   } finally { snapFn = origSnap; typeTextFn = origType; }
 });
 
+// snapshot.js clips every control value at 80 characters, so a field holding the first 80 characters of
+// a 120-character write reads exactly like one holding the whole thing. A read that reaches the clip
+// proves a prefix, not the write: it cannot confirm a longer value landed.
+test('a type clipped at the snapshot limit does not confirm a longer write', async () => {
+  const [origSnap, origType] = [snapFn, typeTextFn];
+  const long = 'the quick brown fox jumps over the lazy dog and then keeps going for another lap or two';
+  assert.ok(long.length > 80, 'fixture must be longer than the snapshot clip');
+  let present = '';
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Notes', kind: 'type', inViewport: true, value: present },
+  ] });
+  // The write lands only the prefix the snapshot can see, then throws.
+  typeTextFn = async () => { present = long.slice(0, 80); throw new Error('the control is covered or not visible'); };
+  try {
+    plans = [
+      { status: 'continue', next: 'type the note' },
+      { status: 'done', answer: 'typed the note' },
+      { status: 'done', answer: 'typed the note' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' }, type_value: { choice: 'text_0' } }];
+    const result = await run(true, 6, { values: [long] });
+    assert.equal(result.status, 'blocked', 'a clipped 80-character read cannot prove a longer write landed');
+  } finally { snapFn = origSnap; typeTextFn = origType; }
+});
+
+// The failure sentence has to come from the snapshot, not from the action that threw. This
+// TYPE_AND_ENTER throws before the field ever changed, so the field is still empty: the run cannot say
+// the text landed, and both halves of the step are unconfirmed.
+test('a blocked type-and-enter whose field never changed does not claim the text landed', async () => {
+  const [origSnap, origType] = [snapFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Search', kind: 'type', inViewport: true, value: '' },
+  ] });
+  typeTextFn = async () => { throw new Error('the control is covered or not visible'); };
+  try {
+    plans = [
+      { status: 'continue', next: 'search for hello' },
+      { status: 'done', answer: 'searched for hello' },
+      { status: 'done', answer: 'searched for hello' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_AND_ENTER' }, type_target: { choice: 'el_1' }, type_value: { choice: 'text_0' } }];
+    const result = await run(true, 6, { values: ['hello'] });
+    assert.equal(result.status, 'blocked');
+    assert.doesNotMatch(result.message, /the text landed in the field/, 'the snapshot never showed that text');
+    assert.match(result.message, /neither the typing nor the Enter/);
+  } finally { snapFn = origSnap; typeTextFn = origType; }
+});
+
 test('a click that failed still blocks done even if a later snapshot shows the page changed', async () => {
   const [origSnap, origClick] = [snapFn, clickFn];
   let clicks = 0;

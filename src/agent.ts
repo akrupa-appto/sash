@@ -222,9 +222,30 @@ function quotedStrings(goal: string): string[] {
   return out;
 }
 
+// snapshot.js clips every control value it reads at this length. A comparison that reaches the clip is a
+// prefix comparison in disguise: a write that landed only the first 80 of 120 characters reads exactly
+// like a complete one, so only values that come in under the clip can be compared for equality.
+const SNAPSHOT_VALUE_LIMIT = 80;
+
 // Same normalisation snapshot.js uses on control values, so a later read can be compared exactly.
-function snapshotClean(s: string): string {
-  return (s || "").replace(/\s+/g, " ").trim().slice(0, 80);
+function normalizedValue(s: string): string {
+  return (s || "").replace(/\s+/g, " ").trim();
+}
+
+// Whether a later snapshot read this control back holding the full intended value. A read at or past the
+// snapshot clip, or an intended value that long, proves a prefix at best: the snapshot cannot show that
+// the rest of the write landed, so the failure stays unresolved rather than looking confirmed.
+function snapshotShowsValue(failure: PendingFailure, elements: { role: string; name: string; value?: string }[]): boolean {
+  if (failure.elementKey === undefined || failure.intended === undefined) return false;
+  const wanted = normalizedValue(failure.intended);
+  if (!wanted || wanted.length >= SNAPSHOT_VALUE_LIMIT) return false;
+  // role+name is not an identity: two "Email" boxes or two rows of the same form share a key, and the
+  // first one is not necessarily the control that threw. Only exactly one match proves anything —
+  // otherwise a look-alike holding the value would settle a failure the run never actually resolved.
+  const matches = elements.filter((e) => elementKey(e) === failure.elementKey);
+  if (matches.length !== 1) return false;
+  const read = normalizedValue(matches[0].value ?? "");
+  return read.length < SNAPSHOT_VALUE_LIMIT && read === wanted;
 }
 
 function resolutionHistoryLine(step: number, resolution: ResumeResolution | undefined): string {
@@ -252,24 +273,21 @@ function evidenceClearsFailure(failure: PendingFailure, elements: { role: string
   // TYPE_AND_ENTER is deliberately absent: the field's value proves the typing landed, not that the
   // Enter submitted anything, and a run may not report a submission it never observed.
   if (failure.op !== "TYPE_TEXT" && failure.op !== "SELECT") return false;
-  if (failure.elementKey === undefined || failure.intended === undefined) return false;
-  const wanted = snapshotClean(failure.intended);
-  if (!wanted) return false;
-  // role+name is not an identity: two "Email" boxes or two rows of the same form share a key, and the
-  // first one is not necessarily the control that threw. Only exactly one match proves anything —
-  // otherwise a look-alike holding the value would settle a failure the run never actually resolved.
-  const matches = elements.filter((e) => elementKey(e) === failure.elementKey);
-  return matches.length === 1 && snapshotClean(matches[0].value ?? "") === wanted;
+  return snapshotShowsValue(failure, elements);
 }
 
 // The blocked sentence has to match what the failure actually proved, because the run reports what it
-// read. A TYPE_AND_ENTER that threw after its typing left the text in the field: "nothing on the page
-// showed that change" is false while the user is looking at that text, and the only thing never
-// observed is the Enter. Every other op keeps the sentence it had.
-function unconfirmedMessage(failure: PendingFailure): string {
-  if (failure.op === "TYPE_AND_ENTER")
+// read, so the snapshot decides the wording. A TYPE_AND_ENTER that threw after its typing left the text
+// in the field: "nothing on the page showed that change" is false while the user is looking at that
+// text, and the only thing never observed is the Enter. A throw before the field changed (or a read the
+// snapshot clipped) never showed that text at all, and then neither the typing nor the Enter may be
+// claimed. Every other op keeps the sentence it had.
+function unconfirmedMessage(failure: PendingFailure, elements: { role: string; name: string; value?: string }[]): string {
+  if (failure.op !== "TYPE_AND_ENTER")
+    return `i could not confirm this worked: step ${failure.step} failed (${failure.note}) and nothing on the page since then showed that change applied.`;
+  if (snapshotShowsValue(failure, elements))
     return `i could not confirm this worked: step ${failure.step} failed (${failure.note}); the text landed in the field, but i never saw the Enter go through, so the submit is unconfirmed.`;
-  return `i could not confirm this worked: step ${failure.step} failed (${failure.note}) and nothing on the page since then showed that change applied.`;
+  return `i could not confirm this worked: step ${failure.step} failed (${failure.note}); the page never showed that text in the field, so neither the typing nor the Enter is confirmed.`;
 }
 
 // A final "done" answer that names something the run never actually saw (a PR/run/file number, a quoted
@@ -472,7 +490,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           // A step that threw never applied its change. Force one re-check of the page before the
           // planner's success is believed, and refuse it if the re-check still shows nothing.
           if (pendingFailure) {
-            if (failureRecheckAsked) return end("blocked", unconfirmedMessage(pendingFailure));
+            if (failureRecheckAsked) return end("blocked", unconfirmedMessage(pendingFailure, snap.elements));
             failureRecheckAsked = true;
             history.push(`step ${step}: claimed the task was done, but step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing confirmed that change; re-reading the page before reporting success`);
             continue;
@@ -835,7 +853,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // Same order as the planner's `done`: an unconfirmed failed step before the coverage floor.
         // Jev has no re-check pass (the planner's path is the one that re-reads); a still-pending
         // failure ends the run here.
-        if (pendingFailure) return end("blocked", unconfirmedMessage(pendingFailure));
+        if (pendingFailure) return end("blocked", unconfirmedMessage(pendingFailure, snap.elements));
         const shallow = tooShallow();
         if (shallow) {
           coverageWarning = shallow;
