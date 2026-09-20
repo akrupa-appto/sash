@@ -324,8 +324,11 @@ export async function listModels(provider: ProviderId, signal?: AbortSignal): Pr
 // so this is a separate list, and OpenRouter's own catalog is its source of truth (AGENTS.md: no
 // hardcoded model lists in the server or the UI). The filter below is the API's own query for it.
 // Same key, same mapping and therefore the same errors as listModels, so a caller handles one shape.
-export async function listTranscriptionModels(signal?: AbortSignal): Promise<ModelInfo[]> {
-  const key = providerKey("openrouter");
+// `key` is an explicit parameter and defaults to the configured OpenRouter key, which is what every
+// caller that goes through env wants. A caller holding a key the environment does not have yet — the
+// settings page reading its own form, before anything is saved — passes it, so the request is made
+// with the key it is showing the user rather than with whatever was configured earlier.
+export async function listTranscriptionModels(signal?: AbortSignal, key: string | undefined = providerKey("openrouter")): Promise<ModelInfo[]> {
   const json = await fetchJson("openrouter", "https://openrouter.ai/api/v1/models?output_modalities=transcription", { signal, headers: key ? { Authorization: `Bearer ${key}` } : {} });
   return openrouterModelInfo(json);
 }

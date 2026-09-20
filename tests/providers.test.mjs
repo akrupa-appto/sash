@@ -154,6 +154,16 @@ test('the transcription catalog is its own request: the output-modality filter, 
     // An error is the same ProviderError listModels raises, not a swallowed empty list: the caller
     // decides what to show when the catalog cannot be read.
     await assert.rejects(withKeys({ OPENROUTER_API_KEY: 'or-key' }, () => listTranscriptionModels()), /OpenRouter 429: rate limited/);
+    // The key is a parameter, not a second read of the environment: a caller holding a key that is
+    // not configured yet — the settings page, whose key is typed but not saved — gets a request made
+    // with the key it passed, even with no OpenRouter key in the env at all.
+    const typed = await withKeys({ OPENROUTER_API_KEY: undefined }, () => listTranscriptionModels(undefined, 'typed-key'));
+    assert.equal(calls[2].headers.Authorization, 'Bearer typed-key');
+    assert.equal(calls[2].url, 'https://openrouter.ai/api/v1/models?output_modalities=transcription');
+    assert.deepEqual(typed.map(model => model.id), ['openai/gpt-transcribe', 'deepgram/nova-3']);
+    // And omitting it keeps the old behaviour: the configured key, which is what every env caller wants.
+    await withKeys({ OPENROUTER_API_KEY: 'or-key' }, () => listTranscriptionModels());
+    assert.equal(calls[3].headers.Authorization, 'Bearer or-key');
   } finally { fetchMock.mock.restore(); }
 });
 

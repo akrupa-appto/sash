@@ -46,6 +46,12 @@ const LIVE_CATALOG = [
   { id: 'openai/gpt-4o-transcribe', name: 'OpenAI: GPT-4o Transcribe', context_length: 128000, pricing: { prompt: '0.0000025', completion: '0.00001' } },
   { id: 'openai/gpt-4o-mini-transcribe', name: 'OpenAI: GPT-4o Mini Transcribe', context_length: 128000, pricing: { prompt: '0.00000125', completion: '0.000005' } },
 ];
+// One synthetic row, and deliberately the only one: the token-priced sentence in catalogFacts is not
+// reachable from the real catalog today, because its two token-priced entries are the deprecated
+// OpenAI ids this picker refuses to offer. The branch is still worth asserting — the catalog gains
+// speech models — but not by putting a made-up completion price on a real model's name, so the row
+// carries an id no catalog claims, in the same shape the API publishes.
+const TOKEN_PRICED = { id: 'example/token-priced-transcribe', name: 'Example: Token Priced Transcribe', context_length: 64000, pricing: { prompt: '0.0000025', completion: '0.00001' } };
 // Offline: the request fails before it reaches a server, the same shape as no network.
 const offline = route => route.abort('failed');
 // A catalog that answers, optionally late enough that the state before it lands can be read.
@@ -165,7 +171,7 @@ test('speech-to-text is a separate picker: only configured providers are offered
 });
 
 test('the OpenRouter speech list is its live catalog: recommended first, catalog names, official-API rows kept, selection held across the swap', { skip }, async () => {
-  const { page, errors } = await settingsPage({ transcription: served(LIVE_CATALOG, 300) });
+  const { page, errors } = await settingsPage({ transcription: served([...LIVE_CATALOG, TOKEN_PRICED], 300) });
   await page.locator('#openaiKey').fill('openai-test-key');
   await page.locator('#geminiKey').fill('gemini-test-key');
   await page.locator('#openrouterKey').fill('openrouter-test-key');
@@ -180,6 +186,7 @@ test('the OpenRouter speech list is its live catalog: recommended first, catalog
   // rows for the keys typed above are still there.
   assert.deepEqual(await optionValues(page), [
     '', 'openai/gpt-transcribe', 'meta/muse-voice-transcribe-1.0', 'microsoft/mai-transcribe-2', 'deepgram/nova-3', 'google/chirp-3',
+    'example/token-priced-transcribe',
     'openai:gpt-transcribe', 'gemini:gemini-3.5-transcribe',
   ]);
   assert.equal(await page.locator('#transcriptionModel').inputValue(), 'google/chirp-3', 'the swap must not change what is selected');
@@ -194,6 +201,14 @@ test('the OpenRouter speech list is its live catalog: recommended first, catalog
   const detail = await page.locator('#transcription-detail').innerText();
   assert.match(detail, /MAI-Transcribe 2/);
   assert.match(detail, /\$0\.1 per second of audio/);
+  // Except when the price is not a per-second one: a row the catalog bills per token (it carries a
+  // non-zero completion price, which is the only signal the payload gives) says so, because its input
+  // figure is USD per 1M tokens and calling it a per-second rate would be wrong by orders of magnitude.
+  await page.locator('#transcriptionModel').selectOption('example/token-priced-transcribe');
+  const priced = await page.locator('#transcription-detail').innerText();
+  assert.match(priced, /\$2\.5 per 1M input tokens/);
+  assert.doesNotMatch(priced, /per second/);
+  assert.match(priced, /64000 token context/);
   // The recommended row keeps the sentence this page wrote about it.
   await page.locator('#transcriptionModel').selectOption('openai/gpt-transcribe');
   assert.match(await page.locator('#transcription-detail').innerText(), /best all-round choice/);

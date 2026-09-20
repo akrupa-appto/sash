@@ -118,14 +118,30 @@ function choiceOption(text, value) {
 }
 // 0.000075 as OpenRouter writes it, not 7.5e-5 and not a float's whole tail.
 const trimmed = value => String(value).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
-// What the catalog itself publishes about a live row, in the units it publishes them in: OpenRouter
-// prices audio by the second, so price (kept as USD per 1M units like every ModelInfo) comes back
-// down to one. Nothing is shown for a field the payload left out — an unlisted model gets its name
-// and no story.
+// What the catalog itself publishes about a live row, in the units it publishes them in. OpenRouter
+// prices most speech models by the second of audio, and price (kept as USD per 1M units like every
+// ModelInfo — see openrouterModelInfo in src/providers.ts) comes back down to one... but not for all
+// of them, so the sentence follows the price rather than one assumed unit.
+//
+// Checked against the live catalog and each vendor's own rate card on 2026-09-20:
+// openai/whisper-1 0.0001 (OpenAI $0.006/min), deepgram/nova-3 0.0000716667 (Deepgram $0.0043/min),
+// google/chirp-3 0.0002667 (Google $0.016/min) and openai/gpt-transcribe 0.000075 all divide out to
+// their vendor's per-minute rate over 60, so "per second of audio" is literally true for them. The
+// exception is a speech model billed **per token**: those are the only catalog entries carrying a
+// non-zero completion price, and OpenRouter's own description for them says "priced per token"
+// (openai/gpt-4o-transcribe, openai/gpt-4o-mini-transcribe — both deprecated speech models this page
+// refuses to offer, so this branch is for the next token-priced row the catalog gains). Their input
+// price is therefore already USD per 1M tokens, and calling it a per-second rate would understate it
+// by orders of magnitude.
+// So: non-zero completion price means per-token wording, everything else keeps per-second. Do not
+// fold the two back into one unit. Nothing is shown for a field the payload left out, or for a zero
+// price — an unlisted or free model gets its name and no story.
 function catalogFacts(model) {
   const facts = [];
   const perSecond = model.price ? model.price.input / 1e6 : 0;
-  if (perSecond) facts.push(`$${trimmed(perSecond)} per second of audio`);
+  const perMillionTokens = model.price && model.price.output > 0 ? model.price.input : 0;
+  if (perMillionTokens) facts.push(`$${trimmed(perMillionTokens)} per 1M input tokens`);
+  else if (perSecond) facts.push(`$${trimmed(perSecond)} per second of audio`);
   if (model.context) facts.push(`${model.context} token context`);
   return facts.join(' · ');
 }
@@ -154,8 +170,10 @@ function openrouterRows() {
   }));
 }
 // Fetched with whichever OpenRouter key is typed above, and only when one is: a page with no key has
-// nothing to list. Typing a key fires this per keystroke, so a newer request aborts the one before
-// it, and a reply that arrives after that is dropped rather than painted. A failure leaves the
+// nothing to list. The typed key is handed to listTranscriptionModels as well as gating the call —
+// nothing here is saved until "save settings", so a key that only the env knows about is not the key
+// this page is showing. Typing a key fires this per keystroke, so a newer request aborts the one
+// before it, and a reply that arrives after that is dropped rather than painted. A failure leaves the
 // fallback rows exactly as they were — a stale list is fine, a broken picker is not.
 function refreshTranscriptionModels() {
   const key = form.elements.openrouterKey.value.trim();
@@ -165,7 +183,7 @@ function refreshTranscriptionModels() {
   liveTranscriptionRequest?.abort();
   const request = new AbortController();
   liveTranscriptionRequest = request;
-  listTranscriptionModels(request.signal).then(models => {
+  listTranscriptionModels(request.signal, key).then(models => {
     if (request.signal.aborted) return;
     liveTranscription = models;
     // Re-rendered under the same rule as the first paint, so the swap cannot change what is selected
