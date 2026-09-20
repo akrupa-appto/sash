@@ -2,7 +2,7 @@ import { defaults, normalizeSettings, readSettings, validateSettings, PROVIDER_K
 import { createModelPicker } from '../public/model-picker.js';
 import { listModels, PROVIDERS, providerLabel } from '../src/providers.ts';
 import { configure, clearConfig } from '../src/env.ts';
-import { transcribeCapability } from '../src/transcribe.ts';
+import { defaultTranscriptionSpec, transcribeCapability } from '../src/transcribe.ts';
 import { VOICE_MODE_ORDER, VOICE_MODES, supportedVoiceModes } from './voice.js';
 import { mountAccessSettings } from './access-settings.js';
 mountAccessSettings();
@@ -56,7 +56,7 @@ function currentVoiceCapability() {
   configure(normalizeSettings(Object.fromEntries(new FormData(form))));
   try {
     const provider = form.elements.voiceProvider.value;
-    return transcribeCapability(provider ? `${PROVIDERS[provider].prefix}x` : undefined);
+    return transcribeCapability(provider ? defaultTranscriptionSpec(provider) : undefined);
   } finally { clearConfig(); }
 }
 // One button per mode, in VOICE_MODE_ORDER, each showing its real behaviour — never a mode the

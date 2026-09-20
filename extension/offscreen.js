@@ -5,14 +5,14 @@
 // Transcription runs here, not in the service worker, so raw audio never crosses a runtime message:
 // only the resulting text (and partials) are sent back to background.js, which broadcasts it into
 // `state` the same way every other agent event is broadcast.
-import { transcribe } from '../src/transcribe.ts';
-import { readSettings } from './settings.js';
+import { defaultTranscriptionSpec, transcribe } from '../src/transcribe.ts';
 import { configure, clearConfig } from './config.js';
 
 let stream;
 let recorder;
 let chunks = [];
 let chunkMs;
+let sessionSettings;
 // Bumped every time a session ends (teardown). A chunk transcription captures the id it was
 // enqueued under; if that no longer matches by the time the request resolves, the session it was
 // for has since stopped or restarted, and the result is dropped rather than overwriting whatever
@@ -22,6 +22,18 @@ let sessionId = 0;
 // tick's work is appended here rather than fired independently, so results can't complete out of
 // order or pile up as concurrent requests.
 let chunkQueue = Promise.resolve();
+
+function voiceSpec(settings) {
+  return settings?.voiceProvider ? defaultTranscriptionSpec(settings.voiceProvider) : undefined;
+}
+
+function safeError(error, settings = sessionSettings || {}) {
+  let text = String(error?.message || error || 'something went wrong');
+  for (const key of [settings.openrouterKey, settings.typesafeKey, settings.openaiKey, settings.geminiKey, settings.customKey]) {
+    if (key) text = text.split(key).join('[redacted]');
+  }
+  return text.slice(0, 12000);
+}
 
 function pickMimeType() {
   const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
@@ -37,14 +49,14 @@ function teardown() {
   recorder = undefined;
   chunks = [];
   chunkMs = undefined;
+  sessionSettings = undefined;
   sessionId++; // invalidate any chunk transcription still in flight (or queued) for this session
 }
 
-async function transcribeBlob(blob) {
-  const settings = await readSettings();
-  configure(settings);
+async function transcribeBlob(blob, settings = sessionSettings) {
+  configure(settings || {});
   try {
-    return await transcribe({ audio: blob, mimeType: blob.type || 'audio/webm' });
+    return await transcribe({ spec: voiceSpec(settings), audio: blob, mimeType: blob.type || 'audio/webm' });
   } finally {
     clearConfig();
   }
@@ -73,7 +85,7 @@ function handleChunk(data, mimeType) {
       if (text) await chrome.runtime.sendMessage({ type: 'dictation:partial', text }).catch(() => {});
     } catch (err) {
       if (session !== sessionId) return;
-      await chrome.runtime.sendMessage({ type: 'dictation:error', error: String(err?.message || err) }).catch(() => {});
+      await chrome.runtime.sendMessage({ type: 'dictation:error', error: safeError(err) }).catch(() => {});
     }
   });
 }
@@ -86,13 +98,15 @@ async function start(options = {}) {
   const mimeType = pickMimeType();
   chunks = [];
   chunkMs = Number.isFinite(options.chunkMs) && options.chunkMs > 0 ? options.chunkMs : undefined;
+  sessionSettings = options.settings || {};
   recorder = new MediaRecorder(stream, { mimeType });
   recorder.addEventListener('dataavailable', event => { void handleChunk(event.data, mimeType); });
   // A MediaRecorder error is terminal: the recorder stops itself. Release the mic immediately
   // rather than leaving a dead stream held open, and flag it fatal so background closes this
   // document too — unlike a single failed chunk transcription, which is not fatal to the session.
   recorder.addEventListener('error', event => {
-    const message = String(event.error?.message || event.error || 'recording error');
+    const settings = sessionSettings;
+    const message = safeError(event.error || 'recording error', settings);
     teardown();
     void chrome.runtime.sendMessage({ type: 'dictation:error', error: message, fatal: true }).catch(() => {});
   });
@@ -109,23 +123,25 @@ async function stop() {
   recorder.stop();
   await finished;
   const finalChunks = chunks;
+  const finalSettings = sessionSettings;
   teardown();
   if (!finalChunks.length) return { text: '' };
   try {
-    const { text } = await transcribeBlob(new Blob(finalChunks, { type: mimeType }));
+    const { text } = await transcribeBlob(new Blob(finalChunks, { type: mimeType }), finalSettings);
     return { text };
   } catch (err) {
-    return { error: String(err?.message || err) };
+    return { error: safeError(err, finalSettings) };
   }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   if (message?.type === 'offscreen:start') {
-    start(message).then(reply, err => reply({ error: String(err?.message || err) }));
+    start(message).then(reply, err => reply({ error: safeError(err, message.settings) }));
     return true;
   }
   if (message?.type === 'offscreen:stop') {
-    stop().then(reply, err => reply({ error: String(err?.message || err) }));
+    const settings = sessionSettings;
+    stop().then(reply, err => reply({ error: safeError(err, settings) }));
     return true;
   }
   return false;

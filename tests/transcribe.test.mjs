@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { transcribe, transcribeCapability, TranscribeUnsupportedError } from '../src/transcribe.ts';
+import { defaultTranscriptionSpec, transcribe, transcribeCapability, TranscribeUnsupportedError } from '../src/transcribe.ts';
 
 // Always starts from every provider key cleared, then applies the overrides given, so a test that
 // only names the keys it cares about is not at the mercy of whatever else happens to be in the
@@ -14,6 +14,13 @@ const withKeys = async (keys, fn) => {
 };
 const clip = { audio: new Uint8Array([1, 2, 3, 4]), mimeType: 'audio/webm;codecs=opus' };
 const ok = (body, init) => new Response(JSON.stringify(body), init);
+
+test('provider-only voice choices resolve to stock transcription model specs', () => {
+  assert.equal(defaultTranscriptionSpec('openrouter'), 'openai/whisper-1');
+  assert.equal(defaultTranscriptionSpec('openai'), 'openai:whisper-1');
+  assert.equal(defaultTranscriptionSpec('gemini'), 'gemini:gemini-2.5-flash');
+  assert.equal(defaultTranscriptionSpec('custom'), 'custom:whisper-1');
+});
 
 test('OpenRouter transcribes with the default whisper model, multipart, at its own endpoint', async () => {
   let call;
@@ -86,6 +93,7 @@ test('a custom server that does implement the endpoint transcribes normally', as
     const result = await withKeys({ CUSTOM_API_BASE: 'https://api.groq.com/openai/v1', CUSTOM_API_KEY: 'gsk-test' }, () => transcribe(clip));
     assert.equal(result.text, 'it works');
     assert.equal(call.url, 'https://api.groq.com/openai/v1/audio/transcriptions');
+    assert.equal(call.init.body.get('model'), 'whisper-1');
   } finally { globalThis.fetch = realFetch; }
 });
 

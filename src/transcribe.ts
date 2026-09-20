@@ -47,6 +47,13 @@ const DEFAULT_MODEL: Record<ProviderId, string> = {
   custom: "whisper-1",
 };
 
+// A provider-only voice choice still needs to become a real model spec before it crosses the
+// extension boundary. Keep that resolution here, beside the defaults used by transcribe(), so UI
+// capability probes and actual audio requests cannot drift or substitute a sentinel as a model.
+export function defaultTranscriptionSpec(provider: ProviderId): string {
+  return `${PROVIDERS[provider].prefix}${DEFAULT_MODEL[provider]}`;
+}
+
 // What the UI can ask, cheaply and synchronously, to decide whether to offer voice dictation at
 // all and which eagerness modes to allow. Derived entirely from which provider is configured; no
 // network round trip. `streaming` is always false in this stage: true mid-sentence partials need

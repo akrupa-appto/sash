@@ -28,11 +28,16 @@ let lastInput;
 let offscreenDocs = 0;
 let offscreenStartResult = { ok: true };
 let offscreenStopResult = { text: 'hello from the mic' };
+let storageFails = false; // proves a failed settings read can never strand a hot mic
 const tabsCreated = [];
 
 globalThis.chrome = {
   storage: { local: {
-    setAccessLevel: async () => {}, get: async key => ({ [key]: structuredClone(data[key]) }),
+    setAccessLevel: async () => {},
+    get: async key => {
+      if (storageFails) throw new Error('storage read failed');
+      return { [key]: structuredClone(data[key]) };
+    },
     set: async values => Object.assign(data, structuredClone(values)),
   } },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
@@ -86,6 +91,12 @@ globalThis.chrome = {
 // environment variables; transcribeCapability's own provider-resolution logic has its coverage in
 // tests/transcribe.test.mjs.
 mock.module('../src/transcribe.ts', { namedExports: {
+  defaultTranscriptionSpec: provider => ({
+    openrouter: 'openai/whisper-1',
+    openai: 'openai:whisper-1',
+    gemini: 'gemini:gemini-2.5-flash',
+    custom: 'custom:whisper-1',
+  })[provider],
   transcribeCapability: spec => {
     const provider = spec?.startsWith('openai:') ? 'openai' : spec?.startsWith('gemini:') ? 'gemini' : spec?.startsWith('custom:') ? 'custom' : 'openrouter';
     const key = { openrouter: data.settings.openrouterKey, openai: data.settings.openaiKey, gemini: data.settings.geminiKey, custom: data.settings.customKey }[provider];
@@ -466,6 +477,41 @@ test('stopping dictation tears the offscreen document down and returns the trans
   assert.equal(data.runState.dictation.text, 'buy oat milk');
 });
 
+test('only the chosen voice provider key crosses to the offscreen document, never the rest', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  Object.assign(data.settings, { openaiKey: 'voice-key', geminiKey: 'gemini-key', voiceProvider: 'openai' });
+  try {
+    await send({ type: 'dictation:start' });
+    const start = messages.filter(m => m.type === 'offscreen:start').at(-1);
+    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'voiceProvider'],
+      'the payload carries the chosen provider key, the model that resolves the provider, and nothing else');
+    assert.equal(start.settings.openaiKey, 'voice-key');
+    assert.equal(start.settings.openrouterKey, undefined, 'the planner key does not travel');
+    assert.equal(start.settings.geminiKey, undefined, 'an unused provider key does not travel');
+  } finally {
+    delete data.settings.openaiKey;
+    delete data.settings.geminiKey;
+    data.settings.voiceProvider = '';
+  }
+});
+
+test('a failed settings read cannot skip the teardown: stopping dictation always releases the mic', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  offscreenStopResult = { text: 'buy oat milk' };
+  await send({ type: 'dictation:start' });
+  assert.equal(offscreenDocs, 1);
+  storageFails = true;
+  try {
+    const reply = await send({ type: 'dictation:stop' });
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    assert.equal(offscreenDocs, 0, 'the offscreen document is closed even when settings could not be read');
+  } finally {
+    storageFails = false;
+  }
+});
+
 test('a mic permission failure on start opens the one-time full-tab grant page and tears the document down', async () => {
   offscreenDocs = 0;
   tabsCreated.length = 0;
@@ -643,6 +689,24 @@ test('a dictation:partial with no session behind it (voice disabled, or never st
   const reply = await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'buy oat milk now' }, offscreenSender, resolve));
   assert.equal(reply.ok, true);
   assert.equal(taskStarted, before, 'voice is off by default in this fixture, so this must never start a run');
+});
+
+test('voice errors are redacted before replies, broadcasts, and persisted state', async () => {
+  await withVoiceSettings({ openaiKey: 'voice-session-secret', voiceProvider: 'openai' }, async () => {
+    offscreenDocs = 0;
+    offscreenStartResult = { ok: true };
+    try {
+      offscreenStopResult = { error: 'upstream echoed voice-session-secret' };
+      await send({ type: 'dictation:start' });
+      const reply = await send({ type: 'dictation:stop' });
+      assert.equal(reply.error, 'upstream echoed [redacted]');
+      assert.equal(data.runState.dictation.error, 'upstream echoed [redacted]');
+      assert.doesNotMatch(JSON.stringify(data.runState), /voice-session-secret/);
+      assert.equal(messages.filter(message => message.type === 'state').at(-1).state.dictation.error, 'upstream echoed [redacted]');
+    } finally {
+      offscreenStopResult = { text: 'hello from the mic' };
+    }
+  });
 });
 
 // --- voice: the global "toggle-dictation" shortcut ----------------------------------------------
