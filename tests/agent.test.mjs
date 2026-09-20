@@ -434,6 +434,21 @@ test('a saved approval is scoped to the page it runs on, not to the site the pla
   assert.equal(everywhere.request.origin, '*', 'the deliberate every-site scope is kept as it was asked for');
 });
 
+// An opaque page (about:blank, data:, a chrome error page) has no origin, and the URL parser answers
+// the literal "null" for every one of them. Keying a saved grant on that would make a single "always"
+// click cover every opaque page the agent ever opens, so the page's own url is the key instead.
+test('an opaque page keeps its own grant key instead of the shared "null" origin', async () => {
+  const orig = snapFn;
+  snapFn = () => ({ ...snap(), url: 'about:blank' });
+  try {
+    plans = [{ status: 'approve', action: 'send the message', origin: 'about:blank' }];
+    decisions = [];
+    const result = await run(true);
+    assert.equal(result.status, 'needs_input');
+    assert.equal(result.request.origin, 'about:blank', 'an origin-less page is keyed by its url, never by "null"');
+  } finally { snapFn = orig; }
+});
+
 test('after repeated denials the turn ends saying so instead of asking a fourth time', async () => {
   const request = { status: 'approve', action: 'send the message', origin: 'https://example.test' };
   plans = [request]; decisions = [];

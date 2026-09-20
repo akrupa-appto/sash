@@ -89,7 +89,7 @@ test('"never ask" refuses the planner\'s own question instead of pausing the run
     process.env.APPROVAL_MODE = 'none';
     let calls = 0;
     stubFetch(async () => { calls++; return answer({ status: 'ask', question: 'which folder?' }); });
-    await assert.rejects(() => plan(ctx, undefined, 'provider/custom-model'), /invalid reply twice/);
+    await assert.rejects(() => plan(ctx, undefined, 'provider/custom-model'), /questions are turned off in settings/, 'the message names the setting, not a broken planner model');
     assert.equal(calls, 2, 'it retries once, then reports instead of waiting for an answer');
     mocks.pop()?.mock.restore();
 
