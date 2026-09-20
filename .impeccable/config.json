@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "extension/panel.html"
+        ],
+        "createdAt": "2026-09-20T06:08:18.347Z",
+        "reason": "Detector cannot resolve CSS custom-property padding (var(--sp-*) via calc()) on .notice/.run-status/.compose-box; verified via Playwright getComputedStyle: .notice=16px, .run-status=12/16px, .compose-box=8/8/8/16px, all real insets. .tab-card is the padded-children shape: 0 padding on the wrapper itself, but its only text-bearing child (.tab-card-foot) carries its own 12/16px padding, and .tab-card-shot has no text against its edge."
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "extension/panel.html"
+        ],
+        "createdAt": "2026-09-20T06:08:18.356Z",
+        "reason": "img#tab-card-icon starts hidden with no src by design; renderTabCard() in panel.js sets its src once a real tab favicon URL is known. Not an unfilled placeholder."
+      }
+    ]
+  }
+}
