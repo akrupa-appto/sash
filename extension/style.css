@@ -122,6 +122,15 @@ textarea{resize:vertical}
 .key-row button{padding:var(--sp-2) var(--sp-3);font-size:var(--text-2xs)}
 .save-row{margin-top:var(--sp-6);padding:var(--sp-5) 0 0}
 .save-row .status{margin-top:var(--sp-3)}
+#access-settings h3{font-size:var(--text-sm);margin:var(--sp-6) 0 var(--sp-2)}
+.access-row{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3) 0}
+.access-copy{flex:1;min-width:0;overflow-wrap:anywhere}
+.access-copy strong,.access-copy small{display:block}
+.access-copy small{margin-top:var(--sp-1);color:var(--text-3)}
+.access-row button{flex-shrink:0}
+.access-row.is-required .access-copy strong{color:var(--text-2)}
+.access-tag{flex-shrink:0;font-size:var(--text-2xs);font-weight:500;color:var(--text-3);background:var(--surface-1);border-radius:var(--r-8);padding:var(--sp-1) var(--sp-2)}
+.access-actions{margin-top:var(--sp-4)}
 .privacy{padding:var(--sp-4);background:var(--surface-1);border-radius:var(--r-12);margin:var(--sp-6) 0 0}
 .settings-page details summary{cursor:pointer;color:var(--text-3);margin-bottom:var(--sp-4)}
 .model-button{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);width:100%;text-align:left;font-weight:400}

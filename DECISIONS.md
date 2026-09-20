@@ -1,5 +1,11 @@
 # checkto reliability work
 
+## Priorities resumed (2026-09-20)
+
+- Adam approved working through the priorities in sequence: approval/site-access settings, tick-track design, voice verification/settings, core reliability verification, then the cursor overlay. Changes start in `/tmp/checkto-priorities` on `adam/access-settings`, based on `origin/main` at `57cf90e`. No merge or live-service restart is authorized.
+- Re-read source instead of trusting the handoff: `extension/settings.html` and `extension/options.js` already contain voice enable, provider, and mode controls. Verify those rather than building a duplicate surface. Approval and site-access settings remain absent at this checkpoint.
+- Tick-track source screenshots must be resent before that design pass. Real microphone/provider and user-device behavior remain unverified; mocked browser APIs are not evidence of those paths.
+
 - Branch adam/unslop-copy, based on local main 1886b8c. Remote: https://github.com/akrupa-appto/checkto (private).
 - Preserve fast (jev only) and careful (planner + jev). Do not silently switch modes.
 - User reported GitHub most-starred/raw README task failing in fast mode.

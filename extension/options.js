@@ -4,6 +4,8 @@ import { listModels, PROVIDERS, providerLabel } from '../src/providers.ts';
 import { configure, clearConfig } from '../src/env.ts';
 import { transcribeCapability } from '../src/transcribe.ts';
 import { VOICE_MODE_ORDER, VOICE_MODES, supportedVoiceModes } from './voice.js';
+import { mountAccessSettings } from './access-settings.js';
+mountAccessSettings();
 const form = document.querySelector('#settings');
 const status = document.querySelector('#status');
 function show(message, error = false) { status.textContent = message; status.classList.toggle('error', error); }
