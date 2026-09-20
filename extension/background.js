@@ -131,9 +131,17 @@ let seq = 0;
 // copy at startup (surviving a service-worker restart the same way seq/feedbackByTab do) and
 // written straight through on every change.
 let persistentGrants = {};
+// A concurrent "always" grant and a revoke can both fire before either's chrome.storage.local.set
+// resolves; those writes are not guaranteed to land in the order they were issued, so the later
+// logical write could be overwritten in storage by an earlier one finishing last. Chained the same
+// way `saving`/`persist()` already serializes runState writes: each write reads persistentGrants only
+// once its predecessor has actually completed, so storage always ends up matching the last call.
+let savingGrants = Promise.resolve();
 function persistGrants() {
-  return chrome.storage.local.set({ grants: persistentGrants });
+  savingGrants = savingGrants.catch(() => {}).then(() => chrome.storage.local.set({ grants: persistentGrants }));
+  return savingGrants;
 }
+const MAX_AUTO_APPROVALS = 20; // caps the grant-covered auto-resume loop in execute(); see its comment
 function grantRecord(request, scope) {
   return { scope, type: request.type, action: request.action, origin: request.origin, question: request.question, grantedAt: Date.now() };
 }
@@ -377,7 +385,7 @@ async function execute(run, message) {
     configure(settings);
     // Pick the tabs the last turn handed back up where they stand, rather than starting cold.
     await resumeHandoffIfPresent(run.sessionId, run.turnId);
-    const page = await selectTab(message.tabId);
+    let page = await selectTab(message.tabId);
     state.status = 'working';
     await persist();
     const previousTasks = state.messages.slice(0, -1).map(m => `${m.role}: ${m.text}`).slice(-12);
@@ -387,9 +395,13 @@ async function execute(run, message) {
     // above) never shows the card: it is answered the same way a manual "conversation"/"always"
     // click would, and the run carries straight on. Looping here (rather than ending this call and
     // letting the panel re-drive a new 'run') keeps that invisible to the user and to the tab
-    // contract below, which only runs once per execute().
+    // contract below, which only runs once per execute(). Bounded: a resumed "needs_input" carries
+    // the paused step count, but a step that only asks and pauses never advances it, so a planner
+    // that re-raised the identical grantable approval every step without otherwise progressing would
+    // spin forever without MAX_AUTO_APPROVALS -- the same idea as DENIAL_LIMIT, for grants.
     let goal = message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : '');
     let resume = message.resume;
+    let autoApprovals = 0;
     for (;;) {
       outcome = undefined;
       await runTask(page, {
@@ -397,7 +409,10 @@ async function execute(run, message) {
         reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true, denials: state.denials,
         browserTabs: {
           list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
-          select: selectTab, currentId: page => page.tabId,
+          // The agent can switch tabs mid-run; `page` has to track that so a grant-covered resume
+          // (below) restarts runTask on wherever the run actually left off, not the tab it opened on.
+          select: async id => { page = await selectTab(id); return page; },
+          currentId: p => p.tabId,
         },
       }, event => {
         // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
@@ -412,7 +427,7 @@ async function execute(run, message) {
       if (run.popupError) throw run.popupError;
       const blocking = outcome?.status === 'needs_input' ? pickBlocking(outcome.requests || []) : undefined;
       const isApproval = blocking && (blocking.type === RequestType.APPROVAL || blocking.type === RequestType.PERMISSION_REQUEST);
-      if (!isApproval || !isGranted(blocking)) break;
+      if (!isApproval || !isGranted(blocking) || ++autoApprovals > MAX_AUTO_APPROVALS) break;
       const denials = { ...(state.denials || {}) };
       delete denials[denialKey(blocking)];
       state.denials = denials;

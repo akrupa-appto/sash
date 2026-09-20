@@ -194,12 +194,15 @@ export function denialKey(request) {
  * origin and exact action it was given for. A planner's action text names its specifics (an amount,
  * an item, a recipient), so a materially different action also produces a different key here and is
  * asked about again — the intended, conservative failure mode for anything that authorizes a repeat.
+ * Unlike `denialKey`, the subject is never truncated: `denialKey`'s 120-character cut is fine for a
+ * tally where a false match just costs an extra ask, but two long actions that differ only past that
+ * cut (a different item further down the same sentence, say) must never collide into one grant.
  */
 export function grantKey(request) {
   if (!request?.type) return '';
   const origin = text(request.origin) || '*';
   const subject = text(request.action) || text(request.question) || '';
-  return `${request.type}:${origin}:${subject.toLowerCase().slice(0, 200)}`;
+  return `${request.type}:${origin}:${subject.toLowerCase()}`;
 }
 
 /** True once the user has turned the same request down DENIAL_LIMIT times. */

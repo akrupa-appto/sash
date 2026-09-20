@@ -34,6 +34,10 @@ function makeChrome(data) {
       get: async id => ({ id, url: 'https://shop.test', title: 'Shop' }),
       create: async opts => ({ id: 999, ...opts }),
       query: async () => [{ id: 12, windowId: 1, url: 'https://shop.test', active: true }],
+      // A run that switches tabs mid-flight keeps more than one page attached at once, which walks
+      // background.js's mute-the-tabs-not-being-watched path (syncTabMute) -- needed for real once a
+      // test drives that path, unlike the single-tab-at-a-time runs elsewhere in this file.
+      update: async (id, props) => ({ id, ...props }),
       sendMessage: async () => ({ ok: true }),
       onCreated: events(), onUpdated: events(), onActivated: events(), onRemoved: events(),
     },
@@ -53,6 +57,8 @@ globalThis.chrome = makeChrome(data);
 let taskStarted = 0;
 let nextOutcome; // a single 'end' event for the next runTask call
 let nextOutcomes = []; // a queue of 'end' events, for a chain of runTask calls inside one execute()
+let capturedPages = []; // tabId the `page` argument carried into each runTask call, in order
+let switchToTabId; // if set, the next runTask call switches tabs via browserTabs.select first
 
 mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
@@ -62,8 +68,10 @@ mock.module('../extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, _input, emit) => {
+mock.module('../src/agent.ts', { namedExports: { runTask: async (page, input, emit) => {
   taskStarted++;
+  capturedPages.push(page.tabId);
+  if (switchToTabId !== undefined) { const target = switchToTabId; switchToTabId = undefined; await input.browserTabs.select(target); }
   emit({ type: 'step', step: 1, action: 'CLICK [5] button "submit"', plan: 'submit', costUsd: 0 });
   const outcome = nextOutcomes.length ? nextOutcomes.shift() : nextOutcome;
   nextOutcome = undefined;
@@ -242,4 +250,46 @@ test('grants:list and grants:revoke expose stored grants for a future settings s
   await until(() => data.runState?.status === 'needs_input');
   assert.deepEqual(data.runState.requests.map(r => r.id), ['list-2']);
   await send({ type: 'answer', id: 'list-2', outcome: 'declined' });
+});
+
+test('a tab switch mid-run is carried into a grant-covered auto-resume, not the original tab', async () => {
+  await send({ type: 'clear' });
+  await resetGrants();
+  nextOutcome = paused(approval('switch-setup'));
+  await send({ type: 'run', tabId: 12, goal: 'submit the order', mode: 'fast' });
+  await until(() => data.runState?.status === 'needs_input');
+  nextOutcome = { status: 'done', message: 'done' };
+  await send({ type: 'answer', id: 'switch-setup', outcome: 'submitted', scope: 'always' });
+  await until(() => data.runState?.status === 'done');
+
+  capturedPages.length = 0;
+  switchToTabId = 77; // the first runTask call switches tabs before it pauses on the grant-covered ask
+  nextOutcomes = [paused(approval('switch-1')), { status: 'done', message: 'done after switch' }];
+  await send({ type: 'run', tabId: 12, goal: 'submit the order on the new tab', mode: 'fast' });
+  await until(() => data.runState?.status === 'done' && capturedPages.length === 2);
+  assert.deepEqual(capturedPages, [12, 77], 'the auto-resumed call used the tab the agent switched to, not the tab the run started on');
+  await resetGrants();
+});
+
+test('the auto-approve loop is capped instead of spinning forever on a repeating grantable ask', async () => {
+  await send({ type: 'clear' });
+  await resetGrants();
+  nextOutcome = paused(approval('cap-setup'));
+  await send({ type: 'run', tabId: 12, goal: 'submit the order', mode: 'fast' });
+  await until(() => data.runState?.status === 'needs_input');
+  nextOutcome = { status: 'done', message: 'done' };
+  await send({ type: 'answer', id: 'cap-setup', outcome: 'submitted', scope: 'always' });
+  await until(() => data.runState?.status === 'done');
+
+  // Every call keeps returning the identical grantable approval (same action + origin, so every one
+  // matches the stored grant): the loop must stop auto-resuming after MAX_AUTO_APPROVALS and show
+  // the card, rather than call runTask forever.
+  nextOutcomes = Array.from({ length: 25 }, (_v, i) => paused(approval(`cap-${i + 1}`)));
+  const before = taskStarted;
+  await send({ type: 'run', tabId: 12, goal: 'submit the order repeatedly', mode: 'fast' });
+  await until(() => data.runState?.status === 'needs_input');
+  assert.equal(taskStarted - before, 21, 'the loop stopped after MAX_AUTO_APPROVALS auto-resumes instead of consuming the whole queue');
+  assert.equal(data.runState.requests.length, 1, 'the card is finally shown once the cap is hit');
+  await send({ type: 'answer', id: data.runState.requests[0].id, outcome: 'declined' });
+  await resetGrants();
 });
