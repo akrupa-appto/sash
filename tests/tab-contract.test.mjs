@@ -147,7 +147,7 @@ test('the next turn resumes a surviving handoff tab and drops the one the user c
   let probe;
   const mark = calls.length;
   script = async () => {
-    probe = { resumed: structuredClone(lease.get(41)), dropped: lease.get(42) };
+    probe = { resumed: structuredClone(lease.get(41)), dropped: lease.get(42), stillOpen: open.has(41) };
     return { status: 'done', message: 'finished again' };
   };
   const before = turns;
@@ -157,7 +157,7 @@ test('the next turn resumes a surviving handoff tab and drops the one the user c
   assert.equal(probe.resumed.tabId, 41, 'the surviving handoff tab is still leased');
   assert.notEqual(probe.resumed.turnId, previousTurn, 'it is resumed under the new turn id');
   assert.equal(probe.resumed.disposition, undefined, 'and is no longer a tab that was left behind');
-  assert.equal(open.has(41), true, 'it is never reloaded or reopened, so origin and viewport survive');
+  assert.equal(probe.stillOpen, true, 'it is never reloaded or reopened, so origin and viewport survive');
   assert.equal(probe.dropped, undefined, 'the tab the user closed is dropped silently');
   const resumeCalls = calls.slice(mark);
   assert.equal(resumeCalls.some(c => c[0] === 'update' && c[1] === 41 && c[2].active === true), true, 'the active handoff tab is put back in front');

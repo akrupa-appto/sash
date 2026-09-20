@@ -251,8 +251,10 @@ function resolutionHistoryLine(step: number, resolution: ResumeResolution | unde
 function evidenceClearsFailure(failure: PendingFailure, elements: { role: string; name: string; value?: string }[]): boolean {
   if (failure.op !== "TYPE_TEXT" && failure.op !== "TYPE_AND_ENTER" && failure.op !== "SELECT") return false;
   if (failure.elementKey === undefined || failure.intended === undefined) return false;
+  const wanted = snapshotClean(failure.intended);
+  if (!wanted) return false;
   const match = elements.find((e) => elementKey(e) === failure.elementKey);
-  return match !== undefined && snapshotClean(match.value ?? "") === snapshotClean(failure.intended);
+  return match !== undefined && snapshotClean(match.value ?? "") === wanted;
 }
 
 // A final "done" answer that names something the run never actually saw (a PR/run/file number, a quoted
