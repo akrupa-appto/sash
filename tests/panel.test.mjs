@@ -810,6 +810,47 @@ test('a provider error reads as one actionable sentence, with the raw text kept 
   await page.close();
 });
 
+// A 403 is not proof the key is invalid: it is most often a valid key the account, plan, model or a
+// provider policy did not authorise. The panel saying "paste a new key" sends the user after
+// something the provider never said, so a 403 gets neutral wording and 401 keeps the key sentence.
+const GATEWAY_403 = 'Custom 403: {"error":{"message":"This model requires a paid plan.","type":"authorization_error"}}';
+
+test('a 403 reads as an authorization refusal, never as an invalid key', { skip }, async () => {
+  const page = await panel(readyState);
+  const line = page.locator('#error');
+  await dictationError(page, GATEWAY_403, 120);
+  const text = await line.innerText();
+  assert.match(text, /Custom refused this request \(403\)/);
+  assert.doesNotMatch(text, /api key|invalid|expired|revoked|paste a current one/i, `a 403 must not claim the key is bad, got: ${text}`);
+  // the provider's own words are still there, untouched, per the error-line contract.
+  assert.equal(await line.getAttribute('title'), GATEWAY_403);
+  // 401 is the one status that is about the key itself, and it keeps its sentence.
+  await dictationError(page, GATEWAY_401, 121);
+  assert.match(await line.innerText(), /Custom rejected the api key/);
+  await page.close();
+});
+
+// The connection sentence is only for a real network exception. "file upload failed validation"
+// contains "load failed", and the old unanchored pattern rewrote that ordinary message — one the
+// provider never sent and this panel never checked — into "could not reach the model provider".
+test('an unrecognised error containing "failed" passes through verbatim, not as a connection failure', { skip }, async () => {
+  const page = await panel(readyState);
+  const line = page.locator('#error');
+  const uploadFailed = 'file upload failed validation';
+  await dictationError(page, uploadFailed, 130);
+  assert.equal(await line.innerText(), uploadFailed);
+  assert.equal(await line.getAttribute('title'), null, 'verbatim text needs no title to carry it');
+  const stepFailed = 'the last step failed: no matching element';
+  await dictationError(page, stepFailed, 131);
+  assert.equal(await line.innerText(), stepFailed);
+  // A real fetch exception still gets its sentence: the anchoring must not silence the case this
+  // rewrite exists for.
+  await dictationError(page, 'TypeError: fetch failed', 132);
+  assert.match(await line.innerText(), /connection failed/);
+  assert.equal(await line.getAttribute('title'), 'TypeError: fetch failed');
+  await page.close();
+});
+
 test('an unconfigured first run shows the connect-a-model notice as a real card, not buried by autoscroll', { skip }, async () => {
   const page = await panel(readyState, { configured: false });
   const setup = page.locator('#setup');

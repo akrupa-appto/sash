@@ -635,15 +635,28 @@ chrome.tabs.onCreated.addListener(scheduleRefresh); chrome.tabs.onRemoved.addLis
 // replaces a message it does not understand.
 // Both shapes this codebase actually throws are matched: providers.ts's `Label 401: body` for a
 // run, and transcribe.ts's `Label transcription failed (401): body` for dictation.
+// A status is only a cause when it is the status the provider sent back. 401 is the one that means
+// the key itself was refused; 403 is a valid key that the account, plan, model or a provider policy
+// did not authorise, so it says that and never "invalid key" — the old wording told people to
+// paste a new key for something a new key does not fix, and the provider's own words are on the
+// title either way.
 const PROVIDER_ERROR = /^([A-Za-z][^:]{0,39}?)\s(?:\((\d{3})\)|(\d{3})):\s*([\s\S]+)$/;
 const PROVIDER_SUFFIX = /\s*(?:transcription|request|chat|completion|generation)?\s*failed$/i;
-const NETWORK_ERROR = /failed to fetch|fetch failed|network ?error|network request failed|load failed|socket hang up|econnrefused|enotfound|err_(?:name_not_resolved|connection|timed_out)/i;
+// A connection failure is only rewritten for the exact exception text a dead connection produces:
+// Node's `fetch failed` (undici), Chromium's `Failed to fetch`, Safari's `Load failed`, Firefox's
+// NetworkError, and Node's socket/syscall codes. Every alternative is anchored to the whole
+// message — optionally behind an error class name — because the unanchored list matched ordinary
+// provider prose: "file upload failed validation" contains "load failed", and an unrecognised
+// error was being reported as a connection failure the provider never mentioned. Anything that is
+// not one of these shapes stays verbatim.
+const NETWORK_ERROR = /^(?:[A-Za-z_$]*Error:\s*)?(?:failed to fetch|fetch failed|load failed|network ?error when attempting to fetch resource\.?|network request failed|the operation was aborted due to timeout|the network connection was lost\.?|a server with the specified hostname could not be found\.?|socket hang up|(?:connect|read|write|getaddrinfo|querya|querysrv) (?:econnrefused|econnreset|econnaborted|etimedout|ehostunreach|enetunreach|enotfound|eai_again)\b[^\n]*|(?:net::)?(?:econnrefused|econnreset|etimedout|enotfound|eai_again|err_name_not_resolved|err_connection_refused|err_connection_timed_out|err_connection_reset|err_internet_disconnected|err_network_changed))\s*$/i;
 function humanError(message) {
   const raw = String(message ?? '').trim();
   const match = raw.match(PROVIDER_ERROR);
   const provider = match ? match[1].replace(PROVIDER_SUFFIX, '').trim() : '';
   const status = match ? Number(match[2] || match[3]) : undefined;
-  if (status === 401 || status === 403) return `${provider} rejected the api key: it is invalid, expired or revoked. open settings and paste a current one.`;
+  if (status === 401) return `${provider} rejected the api key: it is invalid, expired or revoked. open settings and paste a current one.`;
+  if (status === 403) return `${provider} refused this request (403): the key or account is not permitted to do that — open settings to change the key or model, or hover this line for the provider's own message.`;
   if (status === 429) return `${provider} is rate-limiting this key, or its quota is used up. wait a moment and try again.`;
   if (status >= 500) return `${provider} failed at its own end (${status}). that one is theirs, not yours — try again in a moment.`;
   if (NETWORK_ERROR.test(raw)) return 'checkto could not reach the model provider: the connection failed. check this machine is online, then try again.';
