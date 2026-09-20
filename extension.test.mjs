@@ -102,7 +102,9 @@ test('extension build is self-contained and only permits direct provider connect
   // A custom OpenAI-compatible server is opt-in per origin at save time, never granted up front.
   assert.deepEqual(manifest.optional_host_permissions, ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*']);
   assert.equal(manifest.options_ui.open_in_tab, true);
-  assert.equal(manifest.content_scripts, undefined);
+  // One content script, and only the feedback layer: it draws the favicon badge and the agent
+  // cursor and answers the worker's ping. Nothing else may be injected into every page.
+  assert.deepEqual(manifest.content_scripts, [{ matches: ['http://*/*', 'https://*/*'], js: ['content.js'], run_at: 'document_idle' }]);
   assert.equal(manifest.externally_connectable, undefined);
   const bundle = await readFile('dist/checkto-extension/background.js', 'utf8');
   assert.doesNotMatch(bundle, /from ["'](?:node:|playwright)|import\(["']node:|process\.env|new Function\(/);
