@@ -1,5 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 const events = () => {
   const listeners = new Set();
@@ -14,6 +15,11 @@ let activeSignal;
 let taskStarted = 0;
 let finishTask;
 let attachGate;
+const accessPrompts = [];
+const grantedOrigins = [];
+let allowAccess = true;
+const sidePanelOpens = [];
+const menuCreated = [];
 let pendingRequest; // set to make the fixture run end waiting on the user
 let nextOutcome; // set to make the fake run end straight away with that outcome
 let lastInput;
@@ -25,16 +31,36 @@ globalThis.chrome = {
   } },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
     onMessage: events(), onInstalled: events(), openOptionsPage: async () => {},
-    sendMessage: async message => { messages.push(structuredClone(message)); },
+    sendMessage: async message => {
+      messages.push(structuredClone(message));
+      // Standing in for the panel: its Allow click is what asks Chrome, so a yes is also a grant.
+      if (message.type === 'permission') {
+        accessPrompts.push(message.prompt);
+        if (allowAccess) grantedOrigins.push(...message.prompt.origins);
+        return { allow: allowAccess };
+      }
+    },
   },
   tabs: {
     get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }),
-    query: async ({ windowId }) => [{ id: windowId === 7 ? 12 : 99, windowId, active: true }],
+    // Window 7's active tab is 12. The keyboard shortcut asks for the current window instead of
+    // naming one, and gets the same tab back, so it has a windowId to open the panel on.
+    query: async ({ windowId, currentWindow } = {}) => (currentWindow
+      ? [{ id: 12, windowId: 7, url: 'https://example.test', active: true }]
+      : [{ id: windowId === 7 ? 12 : 99, windowId, active: true }]),
     sendMessage: async (tabId, message) => { sentToTabs.push({ tabId, message }); return message.type === 'CONTENT_PING' ? { ok: liveContentScript } : { ok: true }; },
     onCreated: events(), onUpdated: events(), onActivated: events(), onRemoved: events(),
   },
   windows: { onFocusChanged: events() },
-  debugger: { onDetach: events() }, sidePanel: { setPanelBehavior: async () => {} },
+  permissions: {
+    contains: async ({ origins }) => origins.every(o => grantedOrigins.includes(o)),
+    // Chrome refuses this outside a user gesture, and a service worker never has one.
+    request: async () => { throw new Error('the service worker must not call permissions.request'); },
+  },
+  debugger: { onDetach: events() },
+  sidePanel: { setPanelBehavior: async () => {}, open: async opts => { sidePanelOpens.push(opts); } },
+  commands: { onCommand: events() },
+  contextMenus: { create: (opts, cb) => { menuCreated.push(opts); cb?.(); }, removeAll: cb => cb(), onClicked: events() },
 };
 mock.module('./extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
@@ -299,4 +325,78 @@ test('a content script asks the worker for its own tab state instead of being as
   let answered = false;
   chrome.runtime.onMessage.fire({ type: 'CONTENT_STATE_REQUEST' }, { id: chrome.runtime.id, url: 'https://example.test/page' }, () => { answered = true; });
   assert.equal(answered, false);
+});
+
+// --- the keyboard shortcut and the right-click entry -------------------------------------------
+test('the context menu registers "Ask Checkto" on page, selection and link', () => {
+  assert.equal(menuCreated.length, 1);
+  assert.equal(menuCreated[0].id, 'ask-checkto');
+  assert.deepEqual(menuCreated[0].contexts, ['page', 'selection', 'link']);
+});
+
+test('the open-panel keyboard command opens the side panel on the active tab window', async () => {
+  const before = sidePanelOpens.length;
+  chrome.commands.onCommand.fire('open-panel');
+  await until(() => sidePanelOpens.length === before + 1);
+  assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
+});
+
+test('an unrelated command is ignored', async () => {
+  const before = sidePanelOpens.length;
+  chrome.commands.onCommand.fire('some-other-command');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(sidePanelOpens.length, before);
+});
+
+test('right-clicking a selection sends it into a new chat run', async () => {
+  await send({ type: 'clear' });
+  const started = taskStarted;
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', selectionText: 'hello world' }, { id: 21, windowId: 7, url: 'https://example.test' });
+  await until(() => taskStarted === started + 1);
+  await until(() => sidePanelOpens.at(-1)?.windowId === 7);
+  assert.equal(data.runState.messages.at(-1).text, 'help me with this selection: "hello world"');
+  finishTask();
+  await until(() => data.runState?.running === false);
+});
+
+test('right-clicking a link sends the link URL into a new chat run', async () => {
+  await send({ type: 'clear' });
+  const started = taskStarted;
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', linkUrl: 'https://example.test/page' }, { id: 22, windowId: 7, url: 'https://example.test' });
+  await until(() => taskStarted === started + 1);
+  assert.equal(data.runState.messages.at(-1).text, 'look at this link: https://example.test/page');
+  finishTask();
+  await until(() => data.runState?.running === false);
+});
+
+test('a different menu item or an unsupported tab is ignored', () => {
+  const started = taskStarted;
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'something-else', selectionText: 'nope' }, { id: 23, windowId: 7, url: 'https://example.test' });
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', selectionText: 'nope' }, { id: 24, windowId: 7, url: 'chrome://extensions' });
+  assert.equal(taskStarted, started);
+});
+
+// Without these two manifest entries Chrome never fires either listener, so the code above is dead.
+test('the manifest declares the shortcut and the contextMenus permission the entry points need', async () => {
+  const manifest = JSON.parse(await readFile('extension/manifest.json', 'utf8'));
+  assert.equal(manifest.permissions.includes('contextMenus'), true);
+  assert.equal(manifest.commands['open-panel'].suggested_key.default, 'Ctrl+Shift+Period');
+});
+
+// --- host access is asked for before a site is touched -----------------------------------------
+// Last in the file: it empties the granted origins, so anything after it would have to re-grant.
+test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const before = taskStarted;
+  await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+  await until(() => data.runState?.running === false);
+  assert.equal(accessPrompts.at(-1).title, 'allow checkto to access https://example.test?');
+  assert.equal(accessPrompts.at(-1).scope, 'origin');
+  assert.equal(taskStarted, before, 'no task may run before access is granted');
+  assert.equal(data.runState.status, 'error');
+  assert.match(data.runState.messages.at(-1).text, /needs your permission to use https:\/\/example\.test/);
+  allowAccess = true;
 });

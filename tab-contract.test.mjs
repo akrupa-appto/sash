@@ -45,6 +45,8 @@ globalThis.chrome = {
   tabGroups: { update: async (id, props) => { calls.push(['groupUpdate', id, props]); return { id, ...props }; } },
   action: { setBadgeText: async a => { calls.push(['badgeText', a]); }, setBadgeBackgroundColor: async a => { calls.push(['badgeColor', a]); } },
   windows: { update: async () => {}, onFocusChanged: events() },
+  // Host access is not what this file is about: the origin is already granted.
+  permissions: { contains: async () => true, request: async () => true },
   debugger: { onDetach: events() },
   sidePanel: { setPanelBehavior: async () => {} },
 };

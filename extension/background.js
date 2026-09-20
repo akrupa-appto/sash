@@ -1,6 +1,7 @@
 import { runTask } from '../agent.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
+import { ensureOriginAccess } from './permissions.js';
 import { readSettings, validateSettings } from './settings.js';
 import { BadgeState, RequestType } from './types.js';
 import { declineAll, denialKey, pickBlocking, RequestOutcome } from './requests.js';
@@ -152,6 +153,11 @@ async function syncTabMute(pages, activeId) {
     lease.setMuted(page.tabId, true);
   }
 }
+// The service worker has no UI, so the panel shows the question and sends back the answer.
+async function askForAccess(prompt) {
+  const reply = await chrome.runtime.sendMessage({ type: 'permission', prompt }).catch(() => undefined);
+  return reply?.allow === true;
+}
 // A turn that ends "blocked" and one that ends "needs_input" are the same thing to the tab
 // contract: the user has to act on that very tab next, so it is handed over rather than closed.
 const waitingOnUser = status => status === 'blocked' || status === 'needs_input';
@@ -222,6 +228,8 @@ async function execute(run, message) {
     controller.signal.throwIfAborted();
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
+    // Nothing happens on a site before the user has allowed it, so the gate comes before the claim.
+    await ensureOriginAccess(tab.url, askForAccess);
     // The user handed this tab over, so it is never grouped and never closed when the run ends.
     lease.claim(id, { sessionId: run.sessionId, turnId: run.turnId, openedByUs: false });
     let page = pages.find(p => p.tabId === id);
@@ -246,7 +254,7 @@ async function execute(run, message) {
 
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
-    const work = page.attach().then(async () => {
+    const work = ensureOriginAccess(tab.url, askForAccess).then(() => page.attach()).then(async () => {
       controller.signal.throwIfAborted();
       state.tabId = tab.id; state.tabTitle = tab.title || tab.url;
       void setFeedback(tab.id, { badge: BadgeState.WORKING });
@@ -458,7 +466,7 @@ async function handle(message) {
   throw new Error('unknown request');
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || message?.type === 'state') return;
+  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || message?.type === 'state' || message?.type === 'permission') return;
   handle(message).then(reply, err => reply({ error: safeError(err) }));
   return true;
 });
@@ -472,3 +480,36 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.runtime.onInstalled.addListener(({ reason }) => { if (reason === 'install') chrome.runtime.openOptionsPage(); });
+
+// Keyboard shortcut: open the side panel on the active tab's window (mirrors chatgpt's open-codex-side-panel).
+export async function openSidePanel(windowId) {
+  if (windowId == null) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    windowId = tab?.windowId;
+  }
+  if (windowId != null) await chrome.sidePanel.open({ windowId });
+}
+chrome.commands?.onCommand.addListener((command, tab) => {
+  if (command !== 'open-panel') return;
+  // The command listener gets the window's active tab directly; prefer that over the extra
+  // chrome.tabs.query round trip in openSidePanel, which can resolve to a window that's no
+  // longer focused by the time it settles. Falls back to that query when no tab is given.
+  void openSidePanel(tab?.windowId);
+});
+
+// Right-click entry: send the selection or link into a chat run on the clicked tab.
+export const ASK_CHECKTO_MENU_ID = 'ask-checkto';
+export function contextMenuGoal(info) {
+  if (info.linkUrl) return `look at this link: ${info.linkUrl}`;
+  if (info.selectionText) return `help me with this selection: "${info.selectionText}"`;
+  return `help me with this page: ${info.pageUrl || ''}`;
+}
+if (chrome.contextMenus) {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: ASK_CHECKTO_MENU_ID, title: 'Ask Checkto', contexts: ['page', 'selection', 'link'] }, () => void chrome.runtime.lastError);
+  });
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== ASK_CHECKTO_MENU_ID || !tab || !supportedUrl(tab.url)) return;
+    void openSidePanel(tab.windowId).then(() => handle({ type: 'run', tabId: tab.id, goal: contextMenuGoal(info), mode: 'fast' })).catch(() => {});
+  });
+}

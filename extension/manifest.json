@@ -10,7 +10,9 @@
     "debugger",
     "tabs",
     "tabGroups",
-    "activeTab"
+    "activeTab",
+    "contextMenus",
+    "scripting"
   ],
   "host_permissions": [
     "https://openrouter.ai/*",
@@ -35,6 +37,15 @@
   "side_panel": {
     "default_path": "panel.html"
   },
+  "commands": {
+    "open-panel": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      },
+      "description": "Open the checkto panel"
+    }
+  },
   "options_ui": {
     "page": "settings.html",
     "open_in_tab": true
@@ -44,7 +55,6 @@
   },
   "optional_host_permissions": [
     "https://*/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://*/*"
   ]
 }
