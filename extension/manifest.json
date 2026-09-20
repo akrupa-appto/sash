@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "checkto — browser tasks",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "description": "Run Checkto agents on your own tabs. Bring your API keys, stored only on this device.",
   "minimum_chrome_version": "118",
   "permissions": [
