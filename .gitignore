@@ -5,3 +5,9 @@ runs/
 data/
 
 dist/
+
+# agent worktrees created by background workflow runs
+.claude/worktrees/
+# impeccable ships a platform-specific engine binary; `npx impeccable install` refetches it
+.claude/skills/impeccable/scripts/bin/
+.github/skills/impeccable/scripts/bin/
