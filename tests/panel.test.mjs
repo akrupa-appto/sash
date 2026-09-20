@@ -43,14 +43,14 @@ const finished = {
   ],
 };
 
-async function panel(state, { width } = {}) {
+async function panel(state, { width, configured = true } = {}) {
   const page = await browser.newPage(width ? { viewport: { width, height: 720 } } : undefined);
-  await page.addInitScript(() => {
+  await page.addInitScript(cfg => {
     const ev = () => ({ addListener() {}, removeListener() {} });
     window.chrome = {
       runtime: {
         sendMessage: async message => (message.type === 'getState'
-          ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: true, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0 }
+          ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: cfg.configured, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0 }
           : message.type === 'clear'
             ? { ok: true, state: { running: false, messages: [], steps: [], status: 'ready' }, seq: 999 }
             : { ok: true }),
@@ -59,7 +59,7 @@ async function panel(state, { width } = {}) {
       tabs: { query: async () => [{ id: 1, url: 'https://example.test/', title: 'Example', active: true, windowId: 1, index: 0 }], onCreated: ev(), onRemoved: ev(), onUpdated: ev(), onActivated: ev() },
       storage: { onChanged: ev() },
     };
-  });
+  }, { configured });
   await page.goto(`${base}/panel.html`);
   await page.waitForFunction(() => window.onState);
   // A live run's age is measured against the page's own clock at the moment it renders, so a test
@@ -470,5 +470,42 @@ test('the @ button stays centered next to a wrapped placeholder, not pinned unde
   const goalCenter = goalBox.y + goalBox.height / 2;
   const mentionCenter = mentionBox.y + mentionBox.height / 2;
   assert.ok(Math.abs(goalCenter - mentionCenter) <= 4, '@ should sit centered beside the wrapped placeholder, not next to only its last line');
+  await page.close();
+});
+
+// ---- the first-run hero. This is the first thing every user sees; design 4 gives it a real
+// hierarchy (eyebrow, headline, lead copy, tab preview, then a labeled row of examples) instead of
+// the flat h1-then-card-then-paragraph stack a plain retokening left behind.
+test('the first-run hero reads eyebrow, headline, lead, tab preview, then labeled examples, all in design 4\'s neutral tokens', { skip }, async () => {
+  const page = await panel(readyState);
+  const order = await page.evaluate(() => [...document.querySelector('#intro').children].map(el => el.className));
+  assert.deepEqual(order, ['intro-eyebrow', '', 'intro-lead', 'tab-card', 'examples']);
+  // text-transform:uppercase renders innerText uppercased; the underlying text content stays lowercase.
+  assert.equal(await page.locator('.intro-eyebrow').evaluate(el => el.textContent), 'browser agent');
+  assert.equal(await page.locator('.examples-label').innerText(), 'try');
+  // The tab-card's hand icon is neutral, chroma-0 tokens now, not the retired plum/peach brand hex
+  // (#FFB48A fill / #171020 stroke) the redesign left hardcoded in the markup.
+  const [fill, stroke] = await page.locator('.tab-card .hand path').evaluate(el => [el.getAttribute('fill'), el.getAttribute('stroke')]);
+  assert.doesNotMatch(fill, /#/, 'the hand icon fill should reference a token, not a hardcoded hex');
+  assert.doesNotMatch(stroke, /#/, 'the hand icon stroke should reference a token, not a hardcoded hex');
+  // Palette 4 is signal-only: nothing in the empty state may render a hue.
+  const [eyebrowColor, h1Color] = await Promise.all([
+    page.locator('.intro-eyebrow').evaluate(el => getComputedStyle(el).color),
+    page.locator('.intro h1').evaluate(el => getComputedStyle(el).color),
+  ]);
+  for (const color of [eyebrowColor, h1Color]) assert.match(color, /oklch\([\d.]+ 0 0\)/, `${color} should be chroma-0`);
+  await page.close();
+});
+
+test('an unconfigured first run shows the connect-a-model notice as a real card, not buried by autoscroll', { skip }, async () => {
+  const page = await panel(readyState, { configured: false });
+  const setup = page.locator('#setup');
+  assert.equal(await setup.isHidden(), false);
+  assert.equal(await page.locator('#setup .notice-lead').innerText(), 'connect a model to start');
+  assert.match(await page.locator('#setup .muted').innerText(), /API key/);
+  // The empty state has nothing to pin to the bottom of; #setup (the first thing in #content) must
+  // actually be in view on load, not scrolled off above a hero taller than the viewport.
+  const box = await setup.boundingBox();
+  assert.ok(box.y >= 0, `#setup should be visible at the top of the panel on load, got y=${box.y}`);
   await page.close();
 });
