@@ -21,6 +21,15 @@ const DOT = { [BadgeState.DELIVERABLE]: '#22c55e', [BadgeState.HANDOFF]: '#facc1
 const CURSOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">'
   + '<path d="M4 2 18 10.5 11.8 11.8 9 19Z" fill="#111827" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const CURSOR_IMAGE = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(CURSOR_SVG);
+// The pointer's tip is the SVG path's first vertex (4,2); the glyph is shifted so that tip, not
+// its top-left corner, sits on the point the click is about to land on.
+const CURSOR_TIP = { x: 4, y: 2 };
+// Motion: transform only, tokens matched by hand to DESIGN.md (`--dur-relaxed: .3s`,
+// `--ease-out: cubic-bezier(0,0,.2,1)`) because this script runs on other people's pages, where
+// the extension's CSS variables do not exist. browser.js's CURSOR_LEAD_MS waits a hair longer than
+// this so the click never lands before the cursor does.
+const CURSOR_MOTION = 'transform 280ms cubic-bezier(0,0,.2,1)';
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let wanted = BadgeState.NONE;
 let host;
@@ -127,6 +136,11 @@ function watchHost() {
   observer.observe(document.documentElement, { childList: true });
 }
 
+/**
+ * Put the cursor at `point` (viewport pixels). A cursor already on screen slides there, so the
+ * user's eye can follow the hand to what is about to be clicked; one that was not on screen
+ * appears in place, never sliding in from the corner. Reduced motion snaps every time.
+ */
 export function showCursor(point) {
   if (!host) {
     host = document.createElement('div');
@@ -137,14 +151,16 @@ export function showCursor(point) {
     // do not reject an innerHTML assignment.
     const shadow = host.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = 'img{display:block;width:24px;height:24px}@media print{:host{display:none!important}}';
+    style.textContent = `img{display:block;width:24px;height:24px;transform:translate(${-CURSOR_TIP.x}px,${-CURSOR_TIP.y}px);filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}@media print{:host{display:none!important}}`;
     const img = document.createElement('img');
     img.alt = '';
     img.src = CURSOR_IMAGE;
     shadow.append(style, img);
   }
-  if (!host.isConnected) document.documentElement.appendChild(host);
+  const arriving = !host.isConnected;
+  if (arriving) document.documentElement.appendChild(host);
   watchHost();
+  host.style.transition = arriving || reducedMotion() ? 'none' : CURSOR_MOTION;
   host.style.transform = `translate(${Number(point?.x) || 0}px, ${Number(point?.y) || 0}px)`;
 }
 
@@ -181,5 +197,5 @@ chrome.runtime.onMessage.addListener((message, _sender, reply) => {
 void pull();
 // A bfcache restore runs no scripts and keeps the old DOM, so the overlay state is re-read here.
 window.addEventListener('pageshow', () => { void pull(); });
-// Never let a stale badge outlive the page.
-window.addEventListener('pagehide', () => { restoreBadge(); });
+// Never let a stale badge or a cursor aimed at the old document outlive the page.
+window.addEventListener('pagehide', () => { restoreBadge(); hideCursor(); });

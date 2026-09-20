@@ -30,6 +30,7 @@ let offscreenStartResult = { ok: true };
 let offscreenStopResult = { text: 'hello from the mic' };
 let storageFails = false; // proves a failed settings read can never strand a hot mic
 const tabsCreated = [];
+let cursorSink; // background.js installs this into browser.js; tests drive it the way point() does
 
 globalThis.chrome = {
   storage: { local: {
@@ -105,6 +106,7 @@ mock.module('../src/transcribe.ts', { namedExports: {
 } });
 mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
+  setCursorSink: fn => { cursorSink = fn; },
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; pages.push(this); }
     async attach() { if (this.tabId === 99) throw new Error('popup attach refused'); if (attachGate) await attachGate; this.attached = true; this.signal.throwIfAborted(); }
@@ -390,6 +392,81 @@ test('a content script asks the worker for its own tab state instead of being as
   let answered = false;
   chrome.runtime.onMessage.fire({ type: 'CONTENT_STATE_REQUEST' }, { id: chrome.runtime.id, url: 'https://example.test/page' }, () => { answered = true; });
   assert.equal(answered, false);
+});
+
+// --- the agent cursor: from an action's coordinates to the page, and back off it ---------------
+const contentStates = tabId => sentToTabs.filter(s => s.tabId === tabId && s.message.type === 'CONTENT_STATE').map(s => s.message.state);
+
+test('an action moving the cursor reaches the page as a position, gated by whether the tab is observed', async () => {
+  assert.equal(typeof cursorSink, 'function', 'background.js installs the sender into browser.js');
+  sentToTabs.length = 0;
+  // A tab nobody is looking at: the worker keeps the position and tells the page not to paint it.
+  const held = await cursorSink(31, { x: 120, y: 340 });
+  assert.deepEqual(held, { badge: 'none', cursor: { x: 120, y: 340 }, observed: false });
+  assert.deepEqual(contentStates(31), [{ badge: 'none', cursor: { x: 120, y: 340 }, observed: false }]);
+  // The user switches to it: the same position is now painted, and the next move reports observed.
+  chrome.tabs.onActivated.fire({ tabId: 31 });
+  await until(() => contentStates(31).some(s => s.observed));
+  assert.deepEqual(contentStates(31).at(-1), { badge: 'none', cursor: { x: 120, y: 340 }, observed: true });
+  const next = await cursorSink(31, { x: 400, y: 80 });
+  assert.equal(next.observed, true);
+  assert.deepEqual(contentStates(31).at(-1).cursor, { x: 400, y: 80 });
+});
+
+test('a navigation drops the cursor: the new document is not told where the old one was clicked', async () => {
+  sentToTabs.length = 0;
+  await cursorSink(32, { x: 50, y: 50 });
+  chrome.tabs.onUpdated.fire(32, { status: 'loading' }, { id: 32 });
+  // The leaving page is not written to; the arriving copy of content.js pulls state and gets no cursor.
+  assert.equal(contentStates(32).length, 1);
+  const ask = () => new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'CONTENT_STATE_REQUEST' }, { id: chrome.runtime.id, url: 'https://example.test/next', tab: { id: 32 } }, resolve));
+  assert.deepEqual((await ask()).state.cursor, undefined);
+  chrome.tabs.onUpdated.fire(32, { status: 'complete' }, { id: 32 });
+  await until(() => contentStates(32).length === 2);
+  assert.equal(contentStates(32).at(-1).cursor, undefined);
+});
+
+test('a same-document URL change (pushState, hash route) drops the cursor and tells the surviving content script', async () => {
+  sentToTabs.length = 0;
+  await cursorSink(33, { x: 50, y: 50 });
+  assert.deepEqual(contentStates(33).at(-1).cursor, { x: 50, y: 50 });
+  // No status change: the document did not reload, so the content script that drew the pointer is still there.
+  chrome.tabs.onUpdated.fire(33, { url: 'https://example.test/#/step-2' }, { id: 33, url: 'https://example.test/#/step-2' });
+  await until(() => contentStates(33).length === 2);
+  assert.equal(contentStates(33).at(-1).cursor, undefined, 'the live page is told to take the pointer down');
+  assert.equal(contentStates(33).at(-1).badge, 'none', 'only the cursor goes; the badge is untouched');
+  await until(() => data.feedbackByTab?.some(([id, held]) => id === 33 && held.cursor === undefined));
+  // The same change with no cursor held is a no-op: nothing to persist, nothing to push.
+  chrome.tabs.onUpdated.fire(33, { url: 'https://example.test/#/step-3' }, { id: 33 });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(contentStates(33).length, 2);
+});
+
+test('the cursor is cleared from every tab when the run ends, is stopped, or the chat is cleared', async () => {
+  await send({ type: 'clear' });
+  // Ended: the end-of-turn sweep leaves the badge but never the cursor.
+  let before = taskStarted;
+  await send({ type: 'run', tabId: 12, goal: 'buy it', mode: 'fast' });
+  await until(() => taskStarted === before + 1);
+  await cursorSink(12, { x: 10, y: 20 });
+  assert.deepEqual(contentStates(12).at(-1).cursor, { x: 10, y: 20 });
+  finishTask();
+  await until(() => data.runState?.running === false);
+  assert.deepEqual(contentStates(12).at(-1), { badge: 'deliverable', cursor: undefined, observed: false });
+  // Stopped: same sweep, on the user's stop.
+  await send({ type: 'clear' });
+  before = taskStarted;
+  await send({ type: 'run', tabId: 13, goal: 'buy it', mode: 'fast' });
+  await until(() => taskStarted === before + 1);
+  await cursorSink(13, { x: 10, y: 20 });
+  await send({ type: 'stop' });
+  await until(() => data.runState?.running === false);
+  assert.equal(contentStates(13).at(-1).cursor, undefined);
+  // New chat: a position left on a tab from an earlier turn goes with it.
+  await cursorSink(14, { x: 1, y: 2 });
+  await send({ type: 'clear' });
+  assert.equal(contentStates(14).at(-1).cursor, undefined);
+  assert.equal((await send({ type: 'getBadge', tabId: 14 })).badge, 'none');
 });
 
 // --- the keyboard shortcut and the right-click entry -------------------------------------------
