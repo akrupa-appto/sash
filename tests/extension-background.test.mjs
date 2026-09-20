@@ -60,6 +60,7 @@ globalThis.chrome = {
   },
   tabs: {
     get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }),
+    update: async (id, props) => ({ id, ...props }),
     create: async opts => { tabsCreated.push(opts); return { id: 999, ...opts }; },
     // Window 7's active tab is 12. The keyboard shortcut asks for the current window instead of
     // naming one, and gets the same tab back, so it has a windowId to open the panel on.
@@ -215,6 +216,35 @@ test('a failed popup attachment produces one terminal error message', async () =
   assert.equal(data.runState.status, 'error');
 });
 
+// The same failure, arriving one await later: the run reports "done" while a popup attach is still in
+// flight, and that attach then fails. The run it belongs to is an error, so the tabs it opened must not
+// be left as green results -- the contract marks them deliverable (kept open, green dot) off the
+// un-normalized outcome, and only converted the popup error after those marks had been made.
+test('an attach that fails after the run reported done is a failed run, not a green result', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  await send({ type: 'run', tabId: 12, goal: 'open a popup', mode: 'fast' });
+  await until(() => taskStarted === before + 1);
+  // One popup the run opens attaches for real: that tab is what the bug would leave behind.
+  chrome.tabs.onCreated.fire({ id: 96, openerTabId: 12, url: 'https://example.test/first' });
+  await until(() => pages.some(p => p.tabId === 96 && p.attached));
+  let failAttach;
+  attachGate = new Promise((_resolve, reject) => { failAttach = reject; });
+  try {
+    // A second popup is held mid-attach while the run finishes.
+    chrome.tabs.onCreated.fire({ id: 97, openerTabId: 12, url: 'https://example.test/second' });
+    finishTask();
+    failAttach(new Error('popup attach refused'));
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'error');
+    assert.equal(data.runState.messages.at(-1).text, 'popup attach refused');
+    assert.notEqual((await send({ type: 'getBadge', tabId: 96 })).badge, 'deliverable', 'a tab the failed run opened is not a result');
+    assert.notEqual((await send({ type: 'getBadge', tabId: 12 })).badge, 'deliverable');
+  } finally {
+    attachGate = undefined;
+  }
+});
+
 
 test('stopping a turn that is waiting declines the request instead of dropping it', async () => {
   await send({ type: 'clear' });
@@ -279,7 +309,8 @@ test('approval mode "none" answers an approval in place, without ever showing a 
     await until(() => data.runState?.running === false);
     assert.equal(data.runState.status, 'done');
     assert.deepEqual(data.runState.requests, [], 'the approval never became a pending card');
-    assert.equal(lastInput.goal, 'go on');
+    // No synthetic "go on" goal: the resume keeps the task's own goal and the run's own mode.
+    assert.equal(lastInput.goal, 'send it');
     assert.equal(data.runState.denials?.['approval:https://example.test:send the message'], undefined, 'allowing is not a denial');
   } finally {
     nextOutcome = undefined; pendingRequest = undefined;
@@ -313,9 +344,40 @@ test('a paused request carries the coverage/failure guards back in when the answ
   nextOutcome = { status: 'done', message: 'finished', answer: 'opened the root readme' };
   await send({ type: 'answer', id: 'ask-1', text: 'the root one' });
   await until(() => data.runState?.status === 'done');
-  assert.deepEqual(lastInput.resume, resumeState, "the answer carries the paused run's guards back into the agent");
-  assert.equal(lastInput.goal, 'the root one');
+  assert.equal(lastInput.resume.goal, resumeState.goal);
+  assert.deepEqual(lastInput.resume.history, resumeState.history);
+  assert.equal(lastInput.resume.step, resumeState.step);
+  assert.equal(lastInput.resume.resolution?.kind, 'answer');
+  assert.equal(lastInput.resume.resolution?.text, 'the root one');
+  assert.equal(lastInput.goal, 'open the readme');
   assert.equal(data.runState.resumeState, undefined);
+  assert.deepEqual(data.runState.messages.filter(m => m.role === 'user').map(m => m.text), ['open the readme', 'the root one']);
+});
+
+test('a careful run that pauses on approval resumes in careful mode without a fake "go on"', async () => {
+  await send({ type: 'clear' });
+  const previousMode = data.settings.mode;
+  data.settings = { ...data.settings, mode: 'fast' };
+  try {
+    const resumeState = { goal: 'delete the account', history: ['step 1: opened settings'], step: 1 };
+    const request = { id: 'appr-1', type: 'approval', action: 'click the "Delete account" button' };
+    nextOutcome = { status: 'needs_input', message: 'approve deleting the account?', requests: [request], request, resumeState };
+    await send({ type: 'run', tabId: 12, goal: 'delete the account', mode: 'careful' });
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.equal(data.runState.mode, 'careful');
+
+    nextOutcome = { status: 'done', message: 'deleted' };
+    await send({ type: 'answer', id: 'appr-1', outcome: 'submitted', scope: 'once' });
+    await until(() => data.runState?.status === 'done');
+    assert.equal(lastInput.supervisor, true, 'settings are fast; the paused run was careful and must stay careful');
+    assert.equal(lastInput.resume.resolution?.kind, 'approved');
+    assert.equal(lastInput.resume.resolution?.action, 'click the "Delete account" button');
+    assert.equal(lastInput.resume.resolution?.scope, 'once');
+    assert.equal(lastInput.goal, 'delete the account');
+    assert.equal(data.runState.messages.some(m => m.role === 'user' && m.text === 'go on'), false);
+    assert.deepEqual(data.runState.messages.filter(m => m.role === 'user').map(m => m.text), ['delete the account']);
+  } finally { data.settings = { ...data.settings, mode: previousMode }; }
 });
 
 test('a finished run keeps its actions on the reply it produced', async () => {
@@ -753,6 +815,31 @@ test('voice/prewarm: streams partials without running, then runs once speech end
     assert.equal(data.runState.dictation, undefined, 'the run starting tears the mic session down, same as an explicit stop');
   });
 });
+
+// A dictation run is a new turn, not a resume, so it starts in the mode the user has in settings now.
+// Preferring `state.mode` meant the leftover mode of the last run won: a user who switched back to fast
+// still got a careful run (a planner call, its cost, and an approval card for what fast mode would
+// just do), and vice versa.
+test('voice/prewarm: a dictation run runs in the settings mode, not the mode the last run left behind', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  // A careful run first: it leaves state.mode 'careful', which outlives it.
+  nextOutcome = { status: 'done', message: 'finished' };
+  await send({ type: 'run', tabId: 12, goal: 'a careful task', mode: 'careful' });
+  await until(() => data.runState?.status === 'done');
+  assert.equal(data.runState.mode, 'careful');
+
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm', mode: 'fast' }, async () => {
+    offscreenDocs = 0; offscreenStartResult = { ok: true }; offscreenStopResult = { text: 'summarize this page' };
+    nextOutcome = { status: 'done', message: 'summarized' };
+    await send({ type: 'dictation:start' });
+    await send({ type: 'dictation:stop' });
+    await until(() => taskStarted === before + 2);
+    assert.equal(data.runState.mode, 'fast');
+    assert.equal(lastInput.supervisor, false, 'settings say fast, so the new run is fast even though the last run was careful');
+    await until(() => data.runState?.running === false);
+  });
+});
 test('voice/eager: a partial with enough words starts the run mid-utterance, and only once', async () => {
   await withVoiceSettings({ voiceEnabled: true, voiceMode: 'eager' }, async () => {
     offscreenDocs = 0; offscreenStartResult = { ok: true }; offscreenStopResult = { text: 'open the upload tab and click upload' };
@@ -849,6 +936,62 @@ test('the global shortcut opens the mic once voice is on and a mode is actually 
     chrome.commands.onCommand.fire('toggle-dictation'); // a second press, past the double-tap window, stops it
     await until(() => offscreenDocs === 0);
   });
+});
+
+// --- the stored "every site" access mode, enforced here -----------------------------------------
+// settings.js's `siteAccessMode: 'all'` is what the user said they wanted; chrome.permissions.contains
+// is what Chrome actually holds. Both tests below run the worker with allowAccess = false on purpose:
+// the panel's stub can then never hand out access behind the test's back, so a run that finishes is a
+// run that was never asked -- not a card the fixture quietly answered yes to.
+test('site access mode "all" skips the per-site card while Chrome really holds the grant', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const beforeSettings = { ...data.settings };
+  const before = taskStarted;
+  try {
+    data.settings.siteAccessMode = 'all';
+    // What a grant made from the settings page leaves behind: the every-site permissions, held.
+    grantedOrigins.push('https://*/*', 'http://*/*');
+    nextOutcome = { status: 'done', message: 'finished' };
+    await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+    await until(() => data.runState?.running === false);
+    assert.deepEqual(accessPrompts, [], 'every-site access is already granted, so no per-site card is shown');
+    assert.equal(taskStarted, before + 1, 'the run starts without waiting on an access card');
+    assert.equal(data.runState.status, 'done');
+  } finally {
+    nextOutcome = undefined;
+    data.settings = beforeSettings;
+    grantedOrigins.length = 0;
+    accessPrompts.length = 0;
+  }
+});
+
+// The other half, and the one the mode must never get wrong: the setting is stored, Chrome holds
+// nothing, so the per-site ask is exactly what happens today. A worker that trusted the stored mode
+// alone would run here on a site Chrome never granted it.
+test('site access mode "all" without the grant still asks one site at a time', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const beforeSettings = { ...data.settings };
+  const before = taskStarted;
+  try {
+    data.settings.siteAccessMode = 'all';
+    await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+    await until(() => data.runState?.running === false);
+    assert.equal(accessPrompts.length, 1, 'the stored mode alone must never skip the card');
+    assert.equal(accessPrompts.at(-1).scope, 'origin');
+    assert.equal(accessPrompts.at(-1).title, 'allow checkto to access https://example.test?');
+    assert.equal(taskStarted, before, 'no task may run before access is granted');
+    assert.match(data.runState.messages.at(-1).text, /needs your permission to use https:\/\/example\.test/);
+  } finally {
+    data.settings = beforeSettings;
+    grantedOrigins.length = 0;
+    accessPrompts.length = 0;
+  }
 });
 
 // --- host access is asked for before a site is touched -----------------------------------------
