@@ -4,6 +4,12 @@
 // the stored keys (approvalMode, siteAccessMode, transcriptionModel), extension/options.js owns the
 // controls and the mapping into them.
 //
+// The speech-to-text list is fetched live from OpenRouter's transcription catalog, so it is held to
+// a fixture here (a real capture, trimmed to the fields the picker reads): the live path, the
+// intermediate state while the fetch is in flight, and the offline path are each deterministic, and
+// no test depends on OpenRouter being up. `offline` is the default every other test runs against —
+// that is the fallback list, which is what the rest of this file was written against.
+//
 // Deliberately not asserted here: that a saved value comes back after a reload. normalizeSettings()
 // drops keys it does not know yet, so the round trip only exists once the engine layer lands those
 // three keys in extension/settings.js. This file is written to pass both before and after that lands,
@@ -26,10 +32,36 @@ const worker = context
   : undefined;
 const extensionId = worker ? new URL(worker.url()).host : '';
 
-async function settingsPage() {
+// GET https://openrouter.ai/api/v1/models?output_modalities=transcription, captured 2026-09-20 and
+// cut to the fields ModelInfo is built from. microsoft/mai-transcribe-2 is the row that proves the
+// swap happened: it is not in the fallback list. The three deprecated ids are in here on purpose —
+// the catalog still publishes them, and the picker must not show them.
+const LIVE_CATALOG = [
+  { id: 'meta/muse-voice-transcribe-1.0', name: 'Meta: Muse Voice Transcribe 1.0', context_length: 0, pricing: { prompt: '0.00005', completion: '0' } },
+  { id: 'microsoft/mai-transcribe-2', name: 'Microsoft AI: MAI-Transcribe 2', context_length: 0, pricing: { prompt: '0.1', completion: '0' } },
+  { id: 'openai/gpt-transcribe', name: 'OpenAI: GPT Transcribe', context_length: 0, pricing: { prompt: '0.000075', completion: '0' } },
+  { id: 'deepgram/nova-3', name: 'Deepgram: Nova-3', context_length: 0, pricing: { prompt: '0.0000716666666667', completion: '0' } },
+  { id: 'google/chirp-3', name: 'Google: Chirp 3', context_length: 0, pricing: { prompt: '0.000266666666667', completion: '0' } },
+  { id: 'openai/whisper-1', name: 'OpenAI: Whisper 1', context_length: 0, pricing: { prompt: '0.0001', completion: '0' } },
+  { id: 'openai/gpt-4o-transcribe', name: 'OpenAI: GPT-4o Transcribe', context_length: 128000, pricing: { prompt: '0.0000025', completion: '0.00001' } },
+  { id: 'openai/gpt-4o-mini-transcribe', name: 'OpenAI: GPT-4o Mini Transcribe', context_length: 128000, pricing: { prompt: '0.00000125', completion: '0.000005' } },
+];
+// Offline: the request fails before it reaches a server, the same shape as no network.
+const offline = route => route.abort('failed');
+// A catalog that answers, optionally late enough that the state before it lands can be read.
+const served = (models, delay = 0) => async route => {
+  if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: models }) });
+};
+// A server that answers with an error: not offline, but still nothing to list.
+const refused = status => route => route.fulfill({ status, contentType: 'text/plain', body: 'nope' });
+
+async function settingsPage({ transcription = offline } = {}) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  // Only the transcription catalog is stubbed: the planner's own model list is left alone.
+  await page.route(url => url.href.startsWith('https://openrouter.ai/api/v1/models') && url.href.includes('output_modalities=transcription'), transcription);
   const url = `chrome-extension://${extensionId}/settings.html`;
   await page.goto(url).catch(error => { if (page.url() !== url) throw error; });
   // The speech-to-text list is built from the keys typed in the form, so the placeholder option is
@@ -130,6 +162,61 @@ test('speech-to-text is a separate picker: only configured providers are offered
   await page.locator('#openrouterKey').fill('');
   assert.deepEqual(await optionValues(page), ['', 'openai:gpt-transcribe', 'gemini:gemini-3.5-transcribe']);
   await page.close();
+});
+
+test('the OpenRouter speech list is its live catalog: recommended first, catalog names, official-API rows kept, selection held across the swap', { skip }, async () => {
+  const { page, errors } = await settingsPage({ transcription: served(LIVE_CATALOG, 300) });
+  await page.locator('#openaiKey').fill('openai-test-key');
+  await page.locator('#geminiKey').fill('gemini-test-key');
+  await page.locator('#openrouterKey').fill('openrouter-test-key');
+  // While the fetch is in flight the picker is the fallback list, not an empty one.
+  const before = await optionValues(page);
+  assert.ok(before.includes('google/chirp-3'), 'the fallback rows are on screen before the catalog lands');
+  await page.locator('#transcriptionModel').selectOption('google/chirp-3');
+  await page.waitForFunction(() => [...document.querySelectorAll('#transcriptionModel option')].some(option => option.value === 'microsoft/mai-transcribe-2'));
+
+  // The recommended model is pinned first whatever order the catalog published; the rest keep the
+  // catalog's own order; the deprecated ids are gone even though the catalog lists them, and the
+  // rows for the keys typed above are still there.
+  assert.deepEqual(await optionValues(page), [
+    '', 'openai/gpt-transcribe', 'meta/muse-voice-transcribe-1.0', 'microsoft/mai-transcribe-2', 'deepgram/nova-3', 'google/chirp-3',
+    'openai:gpt-transcribe', 'gemini:gemini-3.5-transcribe',
+  ]);
+  assert.equal(await page.locator('#transcriptionModel').inputValue(), 'google/chirp-3', 'the swap must not change what is selected');
+  const labels = await page.$$eval('#transcriptionModel option', options => options.map(option => option.textContent));
+  assert.ok(labels.includes('OpenAI: GPT Transcribe'), `the label is the catalog name: ${labels.join(' | ')}`);
+  // Live rows are not tagged with notes this file wrote, and the deprecated ids and their names are
+  // absent even though the catalog answered with all three.
+  assert.equal(labels.some(label => /recommended|whisper 1|gpt-4o/i.test(label)), false, labels.join(' | '));
+
+  // A live row explains itself from the catalog: its name and the price the catalog published.
+  await page.locator('#transcriptionModel').selectOption('microsoft/mai-transcribe-2');
+  const detail = await page.locator('#transcription-detail').innerText();
+  assert.match(detail, /MAI-Transcribe 2/);
+  assert.match(detail, /\$0\.1 per second of audio/);
+  // The recommended row keeps the sentence this page wrote about it.
+  await page.locator('#transcriptionModel').selectOption('openai/gpt-transcribe');
+  assert.match(await page.locator('#transcription-detail').innerText(), /best all-round choice/);
+  assert.equal((await payload(page)).voiceProvider, 'openrouter', 'a live row still derives its provider');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('a catalog that cannot be read leaves the fallback rows in place, offline or refused', { skip }, async () => {
+  for (const [name, transcription] of [['offline', offline], ['refused', refused(503)]]) {
+    let attempted = 0;
+    const { page, errors } = await settingsPage({ transcription: route => { attempted++; return transcription(route); } });
+    await page.locator('#openrouterKey').fill('openrouter-test-key');
+    // The request was made and failed; the list is what it was before it.
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.ok(attempted > 0, `${name}: the catalog request must have been attempted`);
+    assert.deepEqual(await optionValues(page), [
+      '', 'openai/gpt-transcribe', 'meta/muse-voice-transcribe-1.0', 'deepgram/nova-3', 'nvidia/parakeet-tdt-0.6b-v3', 'google/chirp-3',
+    ]);
+    assert.equal(await page.locator('#transcriptionModel').inputValue(), '', `${name}: a stale list is fine, a broken picker is not`);
+    assert.deepEqual(errors, []);
+    await page.close();
+  }
 });
 
 test('the new controls do not break the narrow layout', { skip }, async () => {

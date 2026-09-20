@@ -15,7 +15,9 @@ export type ReasoningMeta = {
   default_enabled?: boolean;
   mandatory?: boolean; // cannot be turned off
 };
-export type ModelInfo = { id: string; name: string; reasoning?: ReasoningMeta; context?: number; price?: { input: number; output: number } }; // USD per 1M tokens
+// price is OpenRouter's own figure per 1M units: tokens for a chat model, seconds of audio for a
+// transcription model (which is also how its model pages print it, e.g. "$0.000075 per second").
+export type ModelInfo = { id: string; name: string; reasoning?: ReasoningMeta; context?: number; price?: { input: number; output: number } };
 
 export const PROVIDERS: Record<ProviderId, { label: string; keyEnv: "OPENROUTER_API_KEY" | "OPENAI_API_KEY" | "GEMINI_API_KEY" | "CUSTOM_API_KEY"; keysUrl: string; prefix: string }> = {
   openrouter: { label: "OpenRouter", keyEnv: "OPENROUTER_API_KEY", keysUrl: "https://openrouter.ai/settings/keys", prefix: "" },
@@ -282,14 +284,18 @@ export function inferReasoning(provider: ProviderId, id: string): ReasoningMeta 
   return undefined;
 }
 
+// OpenRouter publishes the same per-model record for chat and for speech, so both lists read it the
+// same way.
+const openrouterModelInfo = (json: any): ModelInfo[] => (json.data ?? []).map((m: any) => ({
+  id: m.id, name: m.name ?? m.id, reasoning: m.reasoning ?? undefined, context: m.context_length ?? undefined,
+  price: m.pricing ? { input: Number(m.pricing.prompt) * 1e6, output: Number(m.pricing.completion) * 1e6 } : undefined,
+}));
+
 export async function listModels(provider: ProviderId, signal?: AbortSignal): Promise<ModelInfo[]> {
   const key = providerKey(provider);
   if (provider === "openrouter") {
     const json = await fetchJson("openrouter", "https://openrouter.ai/api/v1/models", { signal, headers: key ? { Authorization: `Bearer ${key}` } : {} });
-    return (json.data ?? []).map((m: any) => ({
-      id: m.id, name: m.name ?? m.id, reasoning: m.reasoning ?? undefined, context: m.context_length ?? undefined,
-      price: m.pricing ? { input: Number(m.pricing.prompt) * 1e6, output: Number(m.pricing.completion) * 1e6 } : undefined,
-    }));
+    return openrouterModelInfo(json);
   }
   if (!key) throw new Error(provider === "custom" ? "CUSTOM_API_BASE and CUSTOM_API_KEY needed to list custom models" : `${PROVIDERS[provider].keyEnv} needed to list ${PROVIDERS[provider].label} models`);
   if (provider === "custom") {
@@ -312,4 +318,14 @@ export async function listModels(provider: ProviderId, signal?: AbortSignal): Pr
       const id = String(m.name).replace(/^models\//, "");
       return { id: `gemini:${id}`, name: m.displayName ?? prettify(id), reasoning: inferReasoning("gemini", id), context: m.inputTokenLimit ?? undefined };
     });
+}
+
+// The speech catalog is not the chat catalog with rows removed: a chat model cannot transcribe audio,
+// so this is a separate list, and OpenRouter's own catalog is its source of truth (AGENTS.md: no
+// hardcoded model lists in the server or the UI). The filter below is the API's own query for it.
+// Same key, same mapping and therefore the same errors as listModels, so a caller handles one shape.
+export async function listTranscriptionModels(signal?: AbortSignal): Promise<ModelInfo[]> {
+  const key = providerKey("openrouter");
+  const json = await fetchJson("openrouter", "https://openrouter.ai/api/v1/models?output_modalities=transcription", { signal, headers: key ? { Authorization: `Bearer ${key}` } : {} });
+  return openrouterModelInfo(json);
 }

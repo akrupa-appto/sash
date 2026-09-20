@@ -1,6 +1,6 @@
 import { defaults, normalizeSettings, readSettings, validateSettings, PROVIDER_KEYS, customOrigin } from './settings.js';
 import { createModelPicker } from '../public/model-picker.js';
-import { listModels, PROVIDERS, providerLabel } from '../src/providers.ts';
+import { listModels, listTranscriptionModels, PROVIDERS, providerLabel } from '../src/providers.ts';
 import { configure, clearConfig } from '../src/env.ts';
 import { transcribeCapability } from '../src/transcribe.ts';
 import { VOICE_MODE_ORDER, VOICE_MODES, supportedVoiceModes } from './voice.js';
@@ -24,6 +24,9 @@ function render(settings) {
   restoreChoice('approvalMode', settings.approvalMode, 'every');
   restoreChoice('siteAccessMode', settings.siteAccessMode, 'ask');
   renderTranscriptionOptions({ stored: settings.transcriptionModel, savedProvider: settings.voiceProvider, keepUnlisted: true });
+  // The rows above are on screen already; this only swaps the OpenRouter group if the live
+  // transcription catalog answers. It never blocks the paint and never empties the select.
+  refreshTranscriptionModels();
   renderVoiceModes();
   ensurePicker()?.warm(current().model).then(renderModel).catch(() => {});
   renderModel();
@@ -55,17 +58,22 @@ function renderModel() {
   label.textContent = picker ? picker.label(current()) : (current().model ? `${current().model} · reasoning ${current().reasoning}` : 'choose a model');
 }
 // Speech-to-text is its own job with its own models: a chat model cannot transcribe audio, so this
-// is a separate list, not a filtered view of the planner picker above. Every spec here was checked
-// against the live OpenRouter catalog and the providers' own docs on 2026-09-20
-// (`curl "https://openrouter.ai/api/v1/models?output_modalities=transcription"` returned 21
-// entries; see DECISIONS.md). Deliberately absent: openai/whisper-1, gpt-4o-transcribe, and
-// gpt-4o-mini-transcribe (all three deprecated by OpenAI, removal 2027-02-26), and gemini-2.5-flash.
-// The five OpenRouter rows are bare model ids, not `openrouter:…`: parseModel() in src/providers.ts
-// only recognises the openai/gemini/custom prefixes and resolves everything else to OpenRouter with
-// the whole string as the model id, so a prefixed spec would be sent as a model literally named
+// is a separate list, not a filtered view of the planner picker above.
+//
+// These rows are the fallback, not the catalog. With an OpenRouter key typed, the page fetches
+// OpenRouter's live transcription catalog (listTranscriptionModels — the API's own
+// output_modalities=transcription filter) and replaces the OpenRouter group with it; what is written
+// here is what that group shows before the fetch lands, and what it keeps if the fetch fails
+// (offline, non-200). So this list is never the whole picture and must not claim to be: a row only
+// belongs here if it is still in the live catalog, and the live rows carry the catalog's own names
+// and prices rather than the notes below.
+//
+// The OpenRouter rows are bare model ids, not `openrouter:…`: parseModel() in src/providers.ts only
+// recognises the openai/gemini/custom prefixes and resolves everything else to OpenRouter with the
+// whole string as the model id, so a prefixed spec would be sent as a model literally named
 // "openrouter:openai/gpt-transcribe". A bare spec means OpenRouter, by design.
-// `tag` is the one-line note shown inside the option itself, `detail` the sentence shown under the
-// select once it is chosen.
+// `tag` is the one-line note shown inside a fallback option, `detail` the sentence shown under the
+// select once it is chosen. The recommended row keeps its detail once the live catalog lands.
 const TRANSCRIPTION_CHOICES = [
   { spec: 'openai/gpt-transcribe', provider: 'openrouter', label: 'GPT Transcribe (OpenAI)', tag: 'recommended', detail: "OpenAI's current speech-to-text model, reached through OpenRouter. the best all-round choice here." },
   { spec: 'meta/muse-voice-transcribe-1.0', provider: 'openrouter', label: 'Muse Voice Transcribe (Meta)', tag: 'newest', detail: "the newest speech model in OpenRouter's catalog." },
@@ -79,6 +87,20 @@ const TRANSCRIPTION_CHOICES = [
 // A provider saved before this picker existed (voiceProvider set, no model yet) becomes that
 // provider's recommended model rather than being dropped on the next save.
 const RECOMMENDED_TRANSCRIPTION = { openrouter: 'openai/gpt-transcribe', openai: 'openai:gpt-transcribe', gemini: 'gemini:gemini-3.5-transcribe', custom: 'custom:whisper-1' };
+// The recommended model is pinned to the top of the OpenRouter group, live or fallback: it is the one
+// this page points people at, and the one "same provider as my planner model" resolves to in
+// practice. Order is therefore ours, not the catalog's.
+// OpenAI has deprecated these three (removal 2027-02-26) and they must not come back — the owner
+// rejected them by name (DECISIONS.md). OpenRouter still lists all three and publishes no
+// deprecation signal for them (`expiration_date` is null on every entry in that catalog), so naming
+// them is the only way a live list can stay honest about what is safe to offer.
+const DEPRECATED_SPEECH_MODELS = new Set(['openai/whisper-1', 'openai/gpt-4o-transcribe', 'openai/gpt-4o-mini-transcribe']);
+// The live catalog, the key it was fetched with, and the request in flight. Nothing here is a
+// promise that a fetch happened: null means "no live list", which is the first paint, a failed
+// fetch, and a page with no OpenRouter key — all three render the fallback rows.
+let liveTranscription = null;
+let liveTranscriptionKey = '';
+let liveTranscriptionRequest = null;
 // providerOfSpec mirrors parseModel's rule for the three prefixed providers and treats everything
 // else as OpenRouter, which is what a bare "openai/gpt-transcribe"-style spec means, and what ""
 // means too ("same as the planner model"). This is why no row above carries an `openrouter:` prefix.
@@ -94,6 +116,63 @@ function syncVoiceProvider() {
 function choiceOption(text, value) {
   const option = document.createElement('option'); option.textContent = text; option.value = value; return option;
 }
+// 0.000075 as OpenRouter writes it, not 7.5e-5 and not a float's whole tail.
+const trimmed = value => String(value).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+// What the catalog itself publishes about a live row, in the units it publishes them in: OpenRouter
+// prices audio by the second, so price (kept as USD per 1M units like every ModelInfo) comes back
+// down to one. Nothing is shown for a field the payload left out — an unlisted model gets its name
+// and no story.
+function catalogFacts(model) {
+  const facts = [];
+  const perSecond = model.price ? model.price.input / 1e6 : 0;
+  if (perSecond) facts.push(`$${trimmed(perSecond)} per second of audio`);
+  if (model.context) facts.push(`${model.context} token context`);
+  return facts.join(' · ');
+}
+// One row as the select wants it: `label` is the option text, `detail` the sentence under the select.
+// The fallback rows carry their own tag inside the label; a live row is labelled with the catalog's
+// name and no tag we wrote, because that name is the honest one.
+const transcriptionRows = providerId => providerId !== 'openrouter'
+  ? TRANSCRIPTION_CHOICES.filter(row => row.provider === providerId).map(row => ({ spec: row.spec, label: row.tag ? `${row.label} — ${row.tag}` : row.label, detail: row.detail }))
+  : openrouterRows();
+// The OpenRouter group's rows: the live catalog once a fetch has landed, the fallback rows until then
+// (and forever, if it never lands). Everything the live catalog superseded is gone from the list —
+// the fallback's own notes and the deprecated ids both.
+function openrouterRows() {
+  const fallback = TRANSCRIPTION_CHOICES.filter(row => row.provider === 'openrouter');
+  if (!liveTranscription?.length) return fallback.map(row => ({ spec: row.spec, label: row.tag ? `${row.label} — ${row.tag}` : row.label, detail: row.detail }));
+  const recommended = RECOMMENDED_TRANSCRIPTION.openrouter;
+  const recommendedDetail = fallback.find(row => row.spec === recommended)?.detail;
+  const live = liveTranscription.filter(model => !DEPRECATED_SPEECH_MODELS.has(model.id) && model.id !== recommended);
+  const pinned = liveTranscription.find(model => model.id === recommended);
+  return [pinned, ...live].filter(Boolean).map(model => ({
+    spec: model.id,
+    label: model.name || model.id,
+    // The recommended row keeps the sentence this page wrote about it; every other live row is
+    // described by its own catalog entry.
+    detail: model.id === recommended ? recommendedDetail : [model.name || model.id, catalogFacts(model)].filter(Boolean).join(' — '),
+  }));
+}
+// Fetched with whichever OpenRouter key is typed above, and only when one is: a page with no key has
+// nothing to list. Typing a key fires this per keystroke, so a newer request aborts the one before
+// it, and a reply that arrives after that is dropped rather than painted. A failure leaves the
+// fallback rows exactly as they were — a stale list is fine, a broken picker is not.
+function refreshTranscriptionModels() {
+  const key = form.elements.openrouterKey.value.trim();
+  if (!key) { liveTranscriptionRequest?.abort(); liveTranscriptionRequest = null; liveTranscriptionKey = ''; liveTranscription = null; return; }
+  if (key === liveTranscriptionKey) return;
+  liveTranscriptionKey = key;
+  liveTranscriptionRequest?.abort();
+  const request = new AbortController();
+  liveTranscriptionRequest = request;
+  listTranscriptionModels(request.signal).then(models => {
+    if (request.signal.aborted) return;
+    liveTranscription = models;
+    // Re-rendered under the same rule as the first paint, so the swap cannot change what is selected
+    // — including a saved model this list does not offer (see keepUnlisted below).
+    renderTranscriptionOptions({ keepUnlisted: true });
+  }).catch(() => {});
+}
 // Only providers a key is typed for above are offered, same rule as the model picker's own
 // `connected()`; "same as my planner model" (empty value) is always first.
 function renderTranscriptionOptions({ stored = form.elements.transcriptionModel.value, savedProvider = '', keepUnlisted = false } = {}) {
@@ -103,12 +182,12 @@ function renderTranscriptionOptions({ stored = form.elements.transcriptionModel.
   const nodes = [choiceOption('same provider as my planner model, its default speech model', '')];
   const offered = [];
   for (const id of ['openrouter', 'openai', 'gemini', 'custom']) {
-    const rows = TRANSCRIPTION_CHOICES.filter(choice => choice.provider === id);
+    const rows = transcriptionRows(id);
     if (!connectedIds.has(id) || !rows.length) continue;
     offered.push(...rows.map(row => row.spec));
     const group = document.createElement('optgroup');
     group.label = id === 'custom' ? 'your custom server' : PROVIDERS[id].label;
-    group.append(...rows.map(row => choiceOption(row.tag ? `${row.label} — ${row.tag}` : row.label, row.spec)));
+    group.append(...rows.map(row => choiceOption(row.label, row.spec)));
     nodes.push(group);
   }
   // A saved model this build does not offer (an id from an earlier build, or one still saved after
@@ -127,10 +206,11 @@ function renderTranscriptionOptions({ stored = form.elements.transcriptionModel.
   syncVoiceProvider();
   renderTranscriptionDetail();
 }
-// The sentence under the select: what the chosen model actually is, in plain words.
+// The sentence under the select: what the chosen model actually is, in plain words — a live row
+// describes itself from the catalog, the rows this file wrote use their own sentence.
 function renderTranscriptionDetail() {
   const select = form.elements.transcriptionModel;
-  const choice = TRANSCRIPTION_CHOICES.find(row => row.spec === select.value);
+  const choice = select.value ? transcriptionRows(providerOfSpec(select.value)).find(row => row.spec === select.value) : undefined;
   const capability = currentVoiceCapability();
   document.querySelector('#transcription-detail').textContent = select.value
     ? (choice ? choice.detail : `your saved choice: ${select.value}.`)
@@ -202,8 +282,8 @@ readSettings().then(render).catch(err => show(err.message, true));
 form.elements.provider.addEventListener('change', () => { document.querySelector('#typesafe-field').hidden = form.elements.provider.value !== 'typesafe'; });
 // A key typed (or removed) above, or a different speech model chosen, changes which providers and
 // modes are honestly offerable right now — recomputed live, the same way the model picker's own
-// list is.
-['openrouterKey', 'openaiKey', 'geminiKey', 'customKey', 'customBaseUrl'].forEach(id => form.elements[id].addEventListener('input', () => { renderTranscriptionOptions(); renderVoiceModes(); }));
+// list is. A changed OpenRouter key also refetches the speech catalog it lists.
+['openrouterKey', 'openaiKey', 'geminiKey', 'customKey', 'customBaseUrl'].forEach(id => form.elements[id].addEventListener('input', () => { refreshTranscriptionModels(); renderTranscriptionOptions(); renderVoiceModes(); }));
 form.elements.transcriptionModel.addEventListener('change', () => { syncVoiceProvider(); renderTranscriptionDetail(); renderVoiceModes(); });
 form.addEventListener('submit', async event => {
   event.preventDefault();

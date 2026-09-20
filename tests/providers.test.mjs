@@ -1,6 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { chat, listModels, inferReasoning, geminiThinking, providerKey, providerLabel, _memo } from '../src/providers.ts';
+import { chat, listModels, listTranscriptionModels, inferReasoning, geminiThinking, providerKey, providerLabel, _memo } from '../src/providers.ts';
 
 const withKeys = async (keys, fn) => {
   const saved = {};
@@ -128,6 +128,32 @@ test('model lists carry reasoning metadata: OpenRouter as published, OpenAI and 
     assert.equal(g[0].reasoning.mandatory, false);
     assert.deepEqual(g[1].reasoning.supported_efforts, ['high', 'medium', 'low']);
     await withKeys({ OPENAI_API_KEY: undefined }, () => assert.rejects(listModels('openai'), /OPENAI_API_KEY/));
+  } finally { fetchMock.mock.restore(); }
+});
+
+test('the transcription catalog is its own request: the output-modality filter, the OpenRouter key, and the same ModelInfo mapping', async () => {
+  const calls = [];
+  const fetchMock = mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push({ url: String(url), headers: init.headers, signal: init.signal });
+    if (calls.length === 2) return new Response('rate limited', { status: 429 });
+    return ok({ data: [
+      { id: 'openai/gpt-transcribe', name: 'OpenAI: GPT Transcribe', context_length: 0, pricing: { prompt: '0.000075', completion: '0' } },
+      { id: 'deepgram/nova-3' },
+    ] });
+  });
+  try {
+    const models = await withKeys({ OPENROUTER_API_KEY: 'or-key' }, () => listTranscriptionModels());
+    // A chat model cannot transcribe audio, so this is not listModels' URL: the filter is the API's
+    // own query for the speech catalog, and the key is the one the rest of the file uses.
+    assert.equal(calls[0].url, 'https://openrouter.ai/api/v1/models?output_modalities=transcription');
+    assert.equal(calls[0].headers.Authorization, 'Bearer or-key');
+    assert.deepEqual(models, [
+      { id: 'openai/gpt-transcribe', name: 'OpenAI: GPT Transcribe', reasoning: undefined, context: 0, price: { input: 75, output: 0 } },
+      { id: 'deepgram/nova-3', name: 'deepgram/nova-3', reasoning: undefined, context: undefined, price: undefined },
+    ]);
+    // An error is the same ProviderError listModels raises, not a swallowed empty list: the caller
+    // decides what to show when the catalog cannot be read.
+    await assert.rejects(withKeys({ OPENROUTER_API_KEY: 'or-key' }, () => listTranscriptionModels()), /OpenRouter 429: rate limited/);
   } finally { fetchMock.mock.restore(); }
 });
 
