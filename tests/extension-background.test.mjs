@@ -849,6 +849,62 @@ test('the global shortcut opens the mic once voice is on and a mode is actually 
   });
 });
 
+// --- the stored "every site" access mode, enforced here -----------------------------------------
+// settings.js's `siteAccessMode: 'all'` is what the user said they wanted; chrome.permissions.contains
+// is what Chrome actually holds. Both tests below run the worker with allowAccess = false on purpose:
+// the panel's stub can then never hand out access behind the test's back, so a run that finishes is a
+// run that was never asked -- not a card the fixture quietly answered yes to.
+test('site access mode "all" skips the per-site card while Chrome really holds the grant', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const beforeSettings = { ...data.settings };
+  const before = taskStarted;
+  try {
+    data.settings.siteAccessMode = 'all';
+    // What a grant made from the settings page leaves behind: the every-site permissions, held.
+    grantedOrigins.push('https://*/*', 'http://*/*');
+    nextOutcome = { status: 'done', message: 'finished' };
+    await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+    await until(() => data.runState?.running === false);
+    assert.deepEqual(accessPrompts, [], 'every-site access is already granted, so no per-site card is shown');
+    assert.equal(taskStarted, before + 1, 'the run starts without waiting on an access card');
+    assert.equal(data.runState.status, 'done');
+  } finally {
+    nextOutcome = undefined;
+    data.settings = beforeSettings;
+    grantedOrigins.length = 0;
+    accessPrompts.length = 0;
+  }
+});
+
+// The other half, and the one the mode must never get wrong: the setting is stored, Chrome holds
+// nothing, so the per-site ask is exactly what happens today. A worker that trusted the stored mode
+// alone would run here on a site Chrome never granted it.
+test('site access mode "all" without the grant still asks one site at a time', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const beforeSettings = { ...data.settings };
+  const before = taskStarted;
+  try {
+    data.settings.siteAccessMode = 'all';
+    await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+    await until(() => data.runState?.running === false);
+    assert.equal(accessPrompts.length, 1, 'the stored mode alone must never skip the card');
+    assert.equal(accessPrompts.at(-1).scope, 'origin');
+    assert.equal(accessPrompts.at(-1).title, 'allow checkto to access https://example.test?');
+    assert.equal(taskStarted, before, 'no task may run before access is granted');
+    assert.match(data.runState.messages.at(-1).text, /needs your permission to use https:\/\/example\.test/);
+  } finally {
+    data.settings = beforeSettings;
+    grantedOrigins.length = 0;
+    accessPrompts.length = 0;
+  }
+});
+
 // --- host access is asked for before a site is touched -----------------------------------------
 // Last in the file: it empties the granted origins, so anything after it would have to re-grant.
 test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {

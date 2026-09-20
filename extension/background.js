@@ -3,7 +3,7 @@ import { defaultTranscriptionSpec, transcribeCapability } from '../src/transcrib
 import { parseModel, PROVIDERS } from '../src/providers.ts';
 import { ChromePage, setCursorSink, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
-import { ensureOriginAccess } from './permissions.js';
+import { ALL_SITES, ensureOriginAccess } from './permissions.js';
 import { readSettings, validateSettings } from './settings.js';
 import { BadgeState, RequestType } from './types.js';
 import { ApprovalScope, declineAll, denialKey, grantKey, pickBlocking, RequestOutcome } from './requests.js';
@@ -375,6 +375,19 @@ async function askForAccess(prompt) {
   const reply = await chrome.runtime.sendMessage({ type: 'permission', prompt }).catch(() => undefined);
   return reply?.allow === true;
 }
+// Is the every-site grant Chrome is holding really there? The stored settings say what the user
+// chose (see settings.js siteAccessMode), not what Chrome has: revoking it in chrome://extensions
+// leaves that stored 'all' behind. So the mode is only worth acting on next to this read, and a read
+// that fails answers "no" -- an unreadable grant is never treated as a granted one.
+const everySiteGranted = () => chrome.permissions.contains({ origins: ALL_SITES }).catch(() => false);
+// The site-access gate the run passes before it touches a page. Mode 'all' with the grant really in
+// hand is the one case with nothing to ask: the user already answered the every-site question from
+// settings, so a second, narrower card would be a question Chrome has already settled. Everything
+// else -- mode 'ask', or 'all' with the grant gone -- keeps the per-site path exactly as it was.
+async function ensureSiteAccess(url, settings) {
+  if (settings?.siteAccessMode === 'all' && await everySiteGranted()) return true;
+  return ensureOriginAccess(url, askForAccess);
+}
 // A turn that ends "blocked" and one that ends "needs_input" are the same thing to the tab
 // contract: the user has to act on that very tab next, so it is handed over rather than closed.
 const waitingOnUser = status => status === 'blocked' || status === 'needs_input';
@@ -448,7 +461,7 @@ async function execute(run, message) {
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
     // Nothing happens on a site before the user has allowed it, so the gate comes before the claim.
-    await ensureOriginAccess(tab.url, askForAccess);
+    await ensureSiteAccess(tab.url, settings);
     // The user handed this tab over, so it is never grouped and never closed when the run ends.
     lease.claim(id, { sessionId: run.sessionId, turnId: run.turnId, openedByUs: false });
     let page = pages.find(p => p.tabId === id);
@@ -473,7 +486,7 @@ async function execute(run, message) {
 
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
-    const work = ensureOriginAccess(tab.url, askForAccess).then(() => page.attach()).then(async () => {
+    const work = ensureSiteAccess(tab.url, settings).then(() => page.attach()).then(async () => {
       controller.signal.throwIfAborted();
       state.tabId = tab.id; state.tabTitle = tab.title || tab.url;
       void setFeedback(tab.id, { badge: BadgeState.WORKING });
