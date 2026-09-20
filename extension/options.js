@@ -5,6 +5,7 @@ import { configure, clearConfig } from '../src/env.ts';
 import { transcribeCapability } from '../src/transcribe.ts';
 import { VOICE_MODE_ORDER, VOICE_MODES, supportedVoiceModes } from './voice.js';
 import { mountAccessSettings } from './access-settings.js';
+import { ALL_SITES } from './permissions.js';
 mountAccessSettings();
 const form = document.querySelector('#settings');
 const status = document.querySelector('#status');
@@ -23,7 +24,14 @@ function render(settings) {
   document.querySelector('#typesafe-field').hidden = settings.provider !== 'typesafe';
   restoreChoice('approvalMode', settings.approvalMode, 'every');
   restoreChoice('siteAccessMode', settings.siteAccessMode, 'ask');
-  renderTranscriptionOptions({ stored: settings.transcriptionModel, savedProvider: settings.voiceProvider, keepUnlisted: true });
+  // The line under the site-access radios is Chrome's grant, never the stored choice: only the
+  // browser can say whether "allow every site without asking" can do what it says.
+  renderSiteAccessState();
+  // A provider saved without a model resolves to that provider's recommended one, and the same gate
+  // the key-input listener applies then decides whether a model this build does not offer may stay on
+  // screen at all — it may only while the provider it names is still connected.
+  const savedSpeech = settings.transcriptionModel || RECOMMENDED_TRANSCRIPTION[settings.voiceProvider] || '';
+  renderTranscriptionOptions({ stored: savedSpeech, savedProvider: settings.voiceProvider, keepUnlisted: keepsUnlistedModel(savedSpeech) });
   // The rows above are on screen already; this only swaps the OpenRouter group if the live
   // transcription catalog answers. It never blocks the paint and never empties the select.
   refreshTranscriptionModels();
@@ -52,6 +60,31 @@ function grantCustomOrigin() {
   const origin = customOrigin(form.elements.customBaseUrl.value.trim());
   if (!origin || !form.elements.customKey.value.trim()) return Promise.resolve(true);
   return chrome.permissions.request({ origins: [`${origin}/*`] });
+}
+// "Allow every site without asking" is a promise about Chrome's own optional host permission, and
+// chrome.permissions.request runs from a user gesture only — a service worker never has one, so the
+// worker cannot ask for this page. The save click is the one gesture the settings page has. Called
+// with no await in front of it, so the request goes out while the gesture still counts; true means
+// Chrome granted it, and a declined prompt or a rejection means it did not.
+async function requestEverySite() {
+  try { return (await chrome.permissions.request({ origins: ALL_SITES })) === true; } catch { return false; }
+}
+// Chrome's real grant, read from the browser: the only source that can say whether the every-site
+// card is doing what it says. Never inferred from the stored setting.
+async function grantedEverySite() {
+  try { return (await chrome.permissions.contains({ origins: ALL_SITES })) === true; } catch { return false; }
+}
+// The line under the radios, in plain words and always about the grant that exists right now.
+async function renderSiteAccessState() {
+  const node = document.querySelector('#site-access-state');
+  if (!node) return;
+  const granted = await grantedEverySite();
+  const wantsEverySite = form.elements.siteAccessMode.value === 'all';
+  node.textContent = granted
+    ? 'Chrome allows checkto on every site right now.'
+    : wantsEverySite
+      ? 'Chrome has not allowed every site yet: saving asks you to confirm, and declining keeps the per-site ask.'
+      : 'Chrome has not allowed every site: checkto asks the first time on each site.';
 }
 function renderModel() {
   const label = document.querySelector('#model-label');
@@ -106,6 +139,14 @@ let liveTranscriptionRequest = null;
 // means too ("same as the planner model"). This is why no row above carries an `openrouter:` prefix.
 function providerOfSpec(spec) {
   return Object.keys(PROVIDERS).find(id => PROVIDERS[id].prefix && spec.startsWith(PROVIDERS[id].prefix)) || (spec ? 'openrouter' : '');
+}
+// Whether a speech model this build does not offer may stay on screen at all: only while the provider
+// it names is still connected. The first paint and every key-typed re-render both ask this one
+// function, so a key that is gone cannot leave a saved model selected under "your saved choice" in
+// one path while the other drops it.
+function keepsUnlistedModel(spec) {
+  const provider = providerOfSpec(spec);
+  return Boolean(provider) && connected().some(candidate => candidate.id === provider);
 }
 // voiceProvider is the setting the voice engine still reads (extension/background.js,
 // offscreen.js). It is derived from the chosen model rather than shown as a second control, so the
@@ -305,23 +346,37 @@ form.elements.provider.addEventListener('change', () => { document.querySelector
   refreshTranscriptionModels();
   // This re-render has to keep the same rule the first paint does (renderTranscriptionOptions's own
   // keepUnlisted): a saved speech model this build does not offer stays selected while its own
-  // provider is still connected, and falls back once that provider's key is removed. Deriving it from
-  // the form's current selection is what keeps the two in step — an unlisted model, removed key or
-  // not, must never be dropped silently.
-  const chosenProvider = providerOfSpec(form.elements.transcriptionModel.value.trim());
-  renderTranscriptionOptions({ keepUnlisted: Boolean(chosenProvider) && connected().some(provider => provider.id === chosenProvider) });
+  // provider is still connected, and falls back once that provider's key is removed. One function,
+  // keepsUnlistedModel, is that rule for both callers — deriving it from the form's current selection
+  // here is what keeps them in step.
+  renderTranscriptionOptions({ keepUnlisted: keepsUnlistedModel(form.elements.transcriptionModel.value.trim()) });
   renderVoiceModes();
 }));
 form.elements.transcriptionModel.addEventListener('change', () => { syncVoiceProvider(); renderTranscriptionDetail(); renderVoiceModes(); });
+// The every-site line describes the choice that is on screen, so it re-reads Chrome's grant when the
+// choice changes; the save path re-renders it after the settings are stored.
+form.elements.siteAccessMode.forEach(radio => radio.addEventListener('change', () => { void renderSiteAccessState(); }));
 form.addEventListener('submit', async event => {
   event.preventDefault();
   try {
     const settings = normalizeSettings(Object.fromEntries(new FormData(form)));
     validateSettings(settings);
-    if (!(await grantCustomOrigin())) throw new Error('Chrome did not allow access to the custom provider site; the custom provider will not work until you allow it.');
+    // Chrome's every-site grant is asked for here: straight from the click and before the first
+    // await, which is what makes it a user gesture as far as Chrome is concerned. That grant already
+    // covers the custom provider's origin, so when it is chosen it stands in for grantCustomOrigin's
+    // own prompt — one prompt behind one save, never two.
+    const wantsEverySite = settings.siteAccessMode === 'all';
+    const everySite = wantsEverySite ? await requestEverySite() : undefined;
+    if (!wantsEverySite && !(await grantCustomOrigin())) throw new Error('Chrome did not allow access to the custom provider site; the custom provider will not work until you allow it.');
+    // Storing "all" when Chrome did not grant it would tell the worker to skip the per-site ask for
+    // access Chrome is about to refuse. What is stored is what Chrome answered, not what the radio said.
+    if (wantsEverySite) settings.siteAccessMode = everySite ? 'all' : 'ask';
     await chrome.storage.local.set({ settings });
     render(settings);
-    show('saved on this device. open checkto from the toolbar to start.');
+    if (wantsEverySite && !everySite) {
+      const nextSave = customOrigin(settings.customBaseUrl) && settings.customKey ? ' save again to allow your custom provider\u2019s site.' : '';
+      show(`saved. Chrome did not allow every site, so checkto asks the first time on each site.${nextSave}`);
+    } else show('saved on this device. open checkto from the toolbar to start.');
   } catch (err) { show(err.message, true); }
 });
 document.querySelectorAll('[data-reveal]').forEach(button => button.addEventListener('click', () => {

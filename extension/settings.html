@@ -44,8 +44,9 @@
 <p class="muted">whether Chrome lets checkto reach a site at all. this is Chrome's access to a site, not individual actions — the choice above covers those.</p>
 <div class="choice-list">
 <label class="choice"><input type="radio" name="siteAccessMode" value="ask"><span><strong>ask me the first time on each site</strong><small>Chrome asks before checkto can read or act on a site it has not been allowed yet. the default.</small></span></label>
-<label class="choice"><input type="radio" name="siteAccessMode" value="all"><span><strong>allow every site without asking</strong><small>checkto may reach any site you have open, with no prompt. the list below still shows exactly what Chrome has granted.</small></span></label>
+<label class="choice"><input type="radio" name="siteAccessMode" value="all"><span><strong>allow every site without asking</strong><small>checkto may reach any site you have open, with no prompt. saving asks Chrome for that access once; if you decline, the per-site ask stays.</small></span></label>
 </div>
+<p class="muted" id="site-access-state" role="status"></p>
 </fieldset>
 <h3>saved approvals</h3>
 <p class="muted">actions allowed for this conversation or always. revoking asks you again next time; it does not cancel an action already approved.</p>

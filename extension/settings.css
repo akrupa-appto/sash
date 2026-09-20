@@ -40,3 +40,8 @@
    --text-3 captions use: this is the explanation of what the user just picked, not a footnote. */
 .transcription-detail{color:var(--text-2)}
 .transcription-detail:empty{display:none}
+
+/* ---- site-access grant line -------------------------------------------- */
+/* Chrome's own grant for the "allow every site without asking" choice, read back from the browser.
+   Written a microtask after the radios paint, so it is hidden until there is something true to say. */
+#site-access-state:empty{display:none}

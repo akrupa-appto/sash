@@ -18,6 +18,9 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { chromium } from 'playwright';
+// The patterns the every-site save must ask Chrome for, from the one module that owns them (and the
+// ones extension/manifest.json declares under optional_host_permissions).
+import { ALL_SITES } from '../extension/permissions.js';
 const extension = path.resolve('dist/checkto-extension');
 // A checkout without `npx playwright install chromium` skips these instead of failing the suite,
 // the same way access-settings-native.test.mjs does.
@@ -96,6 +99,27 @@ async function catalogCarriesTypedKey(page, catalog) {
   const newest = catalog.at(-1);
   assert.ok(newest, 'the transcription catalog request must have been made');
   assert.equal(newest.authorization, `Bearer ${await page.locator('#openrouterKey').inputValue()}`);
+}
+// Every optional-host-permission request the page makes, and the answer it gets. chrome's own bubble
+// cannot be answered here — headless Chromium never shows one and the promise never settles — so the
+// API is wrapped on the page instead: options.js and permissions.js both call it as
+// `chrome.permissions.request(...)`, a property read at call time, so the wrapper sees the real call.
+async function answerPermissionRequests(page, granted) {
+  await page.evaluate(granted => {
+    window.__permissionRequests = [];
+    chrome.permissions.request = ({ origins }) => { window.__permissionRequests.push(origins); return Promise.resolve(granted); };
+  }, granted);
+}
+const permissionRequests = page => page.evaluate(() => window.__permissionRequests);
+const storedSettings = () => worker.evaluate(async () => (await chrome.storage.local.get('settings')).settings);
+const forgetSavedSettings = () => worker.evaluate(async () => { await chrome.storage.local.remove('settings'); });
+const savedStatus = page => page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('saved'));
+// The line under the site-access radios is rendered from Chrome's own grant, so it lands a microtask
+// after the page's first paint: wait for the sentence to be there, then read it. A missing element (or
+// one nothing ever writes to) fails quickly instead of hanging the run.
+async function stateSays(page, pattern) {
+  await page.waitForFunction(source => new RegExp(source).test(document.querySelector('#site-access-state')?.textContent || ''), pattern.source, { timeout: 5000 });
+  assert.match(await page.locator('#site-access-state').innerText(), pattern);
 }
 
 test('the in-page nav reaches every section of the one-pager', { skip }, async () => {
@@ -296,5 +320,92 @@ test('a saved speech model this build does not offer survives typing a key, and 
   assert.ok(remaining.includes('openai:gpt-transcribe'), 'the providers still connected are still offered');
   assert.deepEqual(errors, []);
   await worker.evaluate(() => chrome.storage.local.remove('settings'));
+  await page.close();
+});
+
+test('saving "every site" asks Chrome for the optional host permission and stores the mode Chrome answered', { skip }, async () => {
+  const { page, errors } = await settingsPage();
+  await answerPermissionRequests(page, true);
+  await page.locator('#openrouterKey').fill('openrouter-test-key');
+  // The default choice is not a permission request: leaving it alone leaves Chrome alone.
+  await page.locator('#settings button[type=submit]').click();
+  await savedStatus(page);
+  assert.deepEqual(await permissionRequests(page), [], '"ask me the first time on each site" asks for nothing here');
+  assert.equal((await storedSettings()).siteAccessMode, 'ask');
+
+  await page.locator('input[name=siteAccessMode][value=all]').check();
+  await page.locator('#settings button[type=submit]').click();
+  await savedStatus(page);
+  // One request, for the patterns the manifest declares optional, and made from the save gesture:
+  // Chrome only grants an optional host permission from a user gesture, and this click is the only one
+  // this page has. Nothing else about saving is allowed to stand in for it.
+  assert.deepEqual(await permissionRequests(page), [ALL_SITES]);
+  const stored = await storedSettings();
+  assert.equal(stored.siteAccessMode, 'all', 'the stored mode is what Chrome granted');
+  assert.equal(await page.locator('input[name=siteAccessMode]:checked').inputValue(), 'all');
+  assert.deepEqual(errors, []);
+  await forgetSavedSettings();
+  await page.close();
+});
+
+test('the site-access line says what Chrome has actually granted, never what the saved choice says', { skip }, async () => {
+  const { page, errors } = await settingsPage();
+  // The line under the radios is Chrome's grant, read live, and it says so before any save.
+  await stateSays(page, /has not allowed every site: checkto asks the first time on each site/);
+  await page.locator('input[name=siteAccessMode][value=all]').check();
+  await stateSays(page, /saving asks you to confirm/);
+  // The card itself says where that access comes from, instead of pointing at the list below it.
+  assert.match(await page.locator('label.choice:has(input[value=all])').innerText(), /saving asks Chrome for that access once/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('an every-site save Chrome did not grant stores the per-site ask and says so', { skip }, async () => {
+  const { page, errors } = await settingsPage();
+  await answerPermissionRequests(page, false);
+  await page.locator('#openrouterKey').fill('openrouter-test-key');
+  // A custom provider is configured as well: the all-sites grant covers its origin, so it must not
+  // add a second Chrome prompt behind this one click.
+  await page.locator('#connections details > summary').click();
+  await page.locator('#customBaseUrl').fill('https://api.groq.com/openai/v1');
+  await page.locator('#customKey').fill('custom-test-key');
+  await page.locator('input[name=siteAccessMode][value=all]').check();
+  await page.locator('#settings button[type=submit]').click();
+  await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Chrome did not allow every site'), null, { timeout: 5000 });
+
+  assert.deepEqual(await permissionRequests(page), [ALL_SITES], 'one prompt behind one save, never two');
+  assert.equal((await storedSettings()).siteAccessMode, 'ask', 'the mode stored is the one that is true, not the one the radio promised');
+  assert.equal(await page.locator('input[name=siteAccessMode]:checked').inputValue(), 'ask', 'the radio cannot keep saying every site');
+  assert.match(await page.locator('#status').innerText(), /save again to allow your custom provider.s site/);
+  assert.deepEqual(errors, []);
+  await forgetSavedSettings();
+  await page.close();
+});
+
+test('a saved speech model whose provider key is gone is not kept on the first paint', { skip }, async () => {
+  // A bare id from an earlier build: not in this build's list, and its provider (OpenRouter, the
+  // parseModel default for a bare spec) has no key in this profile.
+  const savedModel = 'cohere/transcribe-legacy';
+  const { page, errors } = await settingsPage({ saved: { transcriptionModel: savedModel } });
+  assert.equal((await optionValues(page)).includes(savedModel), false, 'no key can reach this model, so it is not offered');
+  assert.equal(await page.locator('#transcriptionModel').inputValue(), '', 'and it is not selected either');
+  assert.equal(await page.locator('#transcriptionModel optgroup[label="your saved choice"]').count(), 0);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('removing saved keys drops a speech model no key can serve, without a reload', { skip }, async () => {
+  const savedModel = 'cohere/transcribe-legacy';
+  const { page, errors } = await settingsPage({ saved: { openrouterKey: 'openrouter-test-key', transcriptionModel: savedModel } });
+  // Its provider is connected on this paint, so the saved choice is kept and shown.
+  assert.equal(await page.locator('#transcriptionModel').inputValue(), savedModel);
+  await page.locator('#clear-keys').click();
+  await page.waitForFunction(() => document.querySelector('#status').textContent === 'saved keys removed.');
+  // The re-render after the keys go applies the same gate the key-input listener does, so the row and
+  // the selection go with the key that made the model reachable.
+  assert.equal((await optionValues(page)).includes(savedModel), false, 'an unreachable saved model does not stay in the list');
+  assert.equal(await page.locator('#transcriptionModel').inputValue(), '');
+  assert.deepEqual(errors, []);
+  await forgetSavedSettings();
   await page.close();
 });
