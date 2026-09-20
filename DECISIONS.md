@@ -1,5 +1,10 @@
 # checkto reliability work
 
+## Core reliability verification (2026-09-20)
+
+- Unattached headless Chromium suspended the idle extension service worker at 30.6s after startup. A DevTools/Playwright worker attachment kept it alive beyond 120s, so attached-worker labs are not valid suspension evidence. Do not add alarms or keepalive machinery from that result: no active run was observed dying, and the installed-extension fixture's real tasks completed normally.
+- Chrome host match patterns do not accept ports. Per-origin prompts still name the exact origin, but the permission requested for a non-default-port site is necessarily scheme + hostname across ports (for example `http://127.0.0.1/*`).
+
 ## Priorities resumed (2026-09-20)
 
 - Adam approved working through the priorities in sequence: approval/site-access settings, tick-track design, voice verification/settings, core reliability verification, then the cursor overlay. Changes start in `/tmp/checkto-priorities` on `adam/access-settings`, based on `origin/main` at `57cf90e`. No merge or live-service restart is authorized.
@@ -203,6 +208,17 @@ Not fixed. Adam explicitly said not to fix it now — capture it for later. Whoe
 - Fixed as part of enabling the harness: `scripts/verify-extension-browser.mjs`'s `chrome` mock was stale — `extension/browser.js` `attach()` now calls `chrome.tabs.get`/`chrome.windows.update`, which the mock did not stub. Added `tabs.get` and a `windows.update` stub. Harness passes: snapshot/redaction/type/select/click/navigation/back/abort.
 - Pre-existing debt found, NOT fixed here (out of env-setup scope, app code): (1) `src/server.ts` computes its static root as `src/public` but `public/` is at the repo root, so any static route (`/`, `/app`, `/playground`, `/gallery`, `/img/*`) throws ENOENT and, being unhandled in the request handler, crashes the server process. Only `/api/*` (except `/app`) is safe without secrets. (2) `scripts/verify-extension-installed.mjs` (`npm run test:extension`) still drives the old panel via `#status-text`, removed in the panel redesign, so it fails against current `extension/panel.html`; it needs a rewrite to the new `#steps-label`/`#live-duration` status model.
 - Verified live: `npm test` 213/213 pass, 0 skipped (Playwright browser tests run, not skipped); `npm run test:browser` passes against the standing Chrome; fresh login shell resolves `node` to v24 and strips `.ts` types.
+## Release job needs Chromium (2026-09-20, branch adam/release-chromium)
+- `release-extension.yml` runs `npm test` as its gate, and since PR #43 that suite includes `tests/extension-voice-browser.test.mjs`, which loads the built extension in a real Playwright Chromium. The job never installed a browser (unlike `ci.yml`, which has run `npx playwright install --with-deps chromium` since the panel test landed), so the release job failed on the merge of #43 — no version bump, no tag, no zip, and the version on `main` stayed at 0.4.12 even though #42 and #43 both merged.
+- Fixed by adding the same install step to the release job. A future session could instead give every browser suite a shared skip guard, but the release job's gate should run the same tests CI runs; skipping coverage there to save 60 seconds is the wrong trade.
+- Symptom to recognise a relapse: merges land but `extension/manifest.json` on `main` stops moving and the "release extension" run on that merge is red.
+## The cursor's pre-click recheck binds an element, not an index (2026-09-20, branch adam/cursor-completion, based on PR #41)
+
+- `extension/browser.js`'s pre-click recheck used to re-query `[data-jev-idx="<id>"]` after the cursor lead. A reviewer proved in real Chromium that the attribute is not an identity: `cloneNode(true)` copies it, and a control repurposed in place keeps it, so both got pressed. The recheck now has two ops in one serialized function, `cursorControl`: `bind` reads the coordinates and parks the element plus its tag/type/role/label in `globalThis.__checktoCursorSlots` (the 'checkto' isolated world) under a per-action token; `recheck` asserts that same element is still connected and still says the same thing before anything is dispatched. Type and select act on the bound element too instead of re-querying.
+- This works because Chrome keys isolated worlds by name: `Page.createIsolatedWorld(worldName: 'checkto')` returns the *same* execution context for the frame's document on every call, so a global parked in one `evaluate()` is still there in the next. Verified, and a navigation replaces both the document and the world, so the slot is gone and the rejection is exactly the old one. Do not rename that world, do not move the coordinates read into a different world, and do not go back to an attribute lookup for the recheck.
+- Everything is held page-side; nothing new enters the snapshot or the planner payload (`src/snapshot.js` keeps exposing only `rect`).
+- `moveCursor()` no longer returns early when the tab is unobserved or the sink rejects: any awaited delivery — recorded and pushed to the content script either way — is a window the page can change in, so the recheck runs after all of them. `observed` now only decides whether the extra wait for the 280ms tween is spent.
+
 ## Action approvals the user controls (2026-09-20, branch adam/approval-engine)
 
 - Adam asked to be able to decide whether he is asked at all, to be asked before every action rather than only the risky ones, and to have an allow-and-save path on the approval card. `settings.approvalMode` is now that one control: `every` (default — ask before each action), `risky` (the previous behaviour), `none` (never ask, store nothing).
