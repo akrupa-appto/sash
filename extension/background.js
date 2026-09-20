@@ -135,10 +135,14 @@ let seq = 0;
 function voiceSpecFor(provider) {
   return provider ? `${PROVIDERS[provider]?.prefix || ''}x` : undefined; // parseModel only needs the prefix
 }
+// The last real capability this settings shape computed, so getState/the panel can keep showing an
+// accurate "what can voice do" while a run is active instead of a blanket "not available right now"
+// that would make the settings page look like the provider itself lost the ability to transcribe.
+let lastVoiceCapability;
 function voiceCapability(settings) {
-  if (active) return { canTranscribe: false, streaming: false, reason: 'a task is already running' };
+  if (active) return lastVoiceCapability || { canTranscribe: false, streaming: false, reason: 'a task is already running' };
   configure(settings);
-  try { return transcribeCapability(voiceSpecFor(settings.voiceProvider)); }
+  try { return (lastVoiceCapability = transcribeCapability(voiceSpecFor(settings.voiceProvider))); }
   finally { clearConfig(); }
 }
 // Set once a session has already triggered a run (eager mid-utterance, or prewarm/eager at speech
@@ -185,7 +189,12 @@ const dictationToggle = createDictationToggle({
   onStart: () => { void (async () => {
     try {
       const settings = await readSettings();
-      const eagerness = resolveVoiceMode(settings.voiceMode, voiceCapability(settings)) || 'dictate';
+      // fire() already optimistically marked the toggle active before this async check could run;
+      // put it back to "nothing is listening" rather than opening a mic for a configuration that
+      // was never asked for (voice off) or that this provider genuinely cannot transcribe with.
+      if (!settings.voiceEnabled) { dictationToggle.cancelStart(); return; }
+      const eagerness = resolveVoiceMode(settings.voiceMode, voiceCapability(settings));
+      if (!eagerness) { dictationToggle.cancelStart(); return; }
       await handle({ type: 'dictation:start', chunkMs: chunkMsFor(eagerness) });
     } catch { /* surfaced to the user as state.dictation.status === 'error' already */ }
   })(); },

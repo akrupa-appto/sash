@@ -140,5 +140,10 @@ export function createDictationToggle({ thresholdMs = DEFAULT_DOUBLE_TAP_MS, now
     stop(); // a slower press (or a tap while latched) ends the session
   }
   function endOnRunStart() { if (active) stop(); }
-  return { fire, endOnRunStart, get active() { return active; }, get latched() { return latched; } };
+  // For a press whose onStart refused to actually open the mic (voice off, or no mode the
+  // configured provider supports): fire() already optimistically set active=true before onStart's
+  // async check could run, so this puts the toggle back to "nothing is listening" without calling
+  // onStop — there was never a session for onStop to end.
+  function cancelStart() { active = false; latched = false; }
+  return { fire, endOnRunStart, cancelStart, get active() { return active; }, get latched() { return latched; } };
 }

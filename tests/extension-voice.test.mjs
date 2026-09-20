@@ -138,6 +138,20 @@ test('two quick presses latch hands-free instead of stopping', () => {
   assert.equal(toggle.active, false);
   assert.deepEqual(events, ['start', 'latch-on', 'latch-off', 'stop']);
 });
+test('cancelStart puts a refused press back to idle without emitting onStop', () => {
+  let t = 0; const now = () => t;
+  const events = [];
+  const toggle = createDictationToggle({ now, onStart: () => events.push('start'), onStop: () => events.push('stop') });
+  t = 0; toggle.fire(); // fire() optimistically marks active=true before an async onStart can refuse
+  assert.equal(toggle.active, true);
+  toggle.cancelStart(); // the async check inside onStart decided not to actually open the mic
+  assert.equal(toggle.active, false);
+  assert.equal(toggle.latched, false);
+  assert.deepEqual(events, ['start'], 'no onStop: there was never a session for it to end');
+  t = 100; toggle.fire(); // a fresh press afterwards behaves normally again
+  assert.equal(toggle.active, true);
+  assert.deepEqual(events, ['start', 'start']);
+});
 test('endOnRunStart stops an active session and clears its latch', () => {
   let t = 0; const now = () => t;
   const events = [];

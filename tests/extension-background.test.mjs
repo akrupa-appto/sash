@@ -620,6 +620,35 @@ test('a dictation:partial with no session behind it (voice disabled, or never st
   assert.equal(taskStarted, before, 'voice is off by default in this fixture, so this must never start a run');
 });
 
+// --- voice: the global "toggle-dictation" shortcut ----------------------------------------------
+test('the global shortcut never opens the mic for a configuration voice cannot actually use', async () => {
+  offscreenDocs = 0; offscreenStartResult = { ok: true };
+  // voiceEnabled is off in this fixture by default: a press must not open a mic nobody turned on.
+  chrome.commands.onCommand.fire('toggle-dictation');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(offscreenDocs, 0, 'voice is off, so the shortcut is a no-op');
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm', openrouterKey: '' }, async () => {
+    // Voice is on, but the configured provider has no key at all: still no mode to use, still no mic.
+    chrome.commands.onCommand.fire('toggle-dictation');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(offscreenDocs, 0, 'no provider can transcribe, so there is no mode to fall back to');
+  });
+});
+test('the global shortcut opens the mic once voice is on and a mode is actually usable', async () => {
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm' }, async () => {
+    offscreenDocs = 0; offscreenStartResult = { ok: true };
+    // Empty, not a leftover transcript from an earlier test: this test is only about the toggle
+    // mechanics (start, then stop), not "prewarm" auto-running on stop — that has its own coverage
+    // above, and a non-empty transcript here would start a real (hanging, in this fixture) run.
+    offscreenStopResult = { text: '' };
+    chrome.commands.onCommand.fire('toggle-dictation');
+    await until(() => offscreenDocs === 1);
+    assert.equal(data.runState.dictation.status, 'listening');
+    chrome.commands.onCommand.fire('toggle-dictation'); // a second press, past the double-tap window, stops it
+    await until(() => offscreenDocs === 0);
+  });
+});
+
 // --- host access is asked for before a site is touched -----------------------------------------
 // Last in the file: it empties the granted origins, so anything after it would have to re-grant.
 test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {

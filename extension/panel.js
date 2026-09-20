@@ -95,8 +95,14 @@ $('#mic').addEventListener('pointerdown', event => { event.preventDefault(); ptt
 // commands block — chrome.commands shortcuts are intercepted by Chrome before a keydown reaches the
 // page at all, which would make real hold-then-release here impossible for that key.
 function typingTarget(target) { return /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName) || target?.isContentEditable; }
-window.addEventListener('keydown', event => { if (event.key.toLowerCase() === 'm' && !typingTarget(event.target)) ptt.keydown(event); });
-window.addEventListener('keyup', event => { if (event.key.toLowerCase() === 'm') ptt.keyup(); });
+// Plain "m" only: Ctrl/Alt/Meta+M are real browser/OS shortcuts (bookmark, minimize, etc.) that must
+// reach them untouched, not be swallowed as a mic press.
+const isMicKey = event => event.key.toLowerCase() === 'm' && !event.ctrlKey && !event.altKey && !event.metaKey;
+window.addEventListener('keydown', event => { if (isMicKey(event) && !typingTarget(event.target)) ptt.keydown(event); });
+window.addEventListener('keyup', event => { if (isMicKey(event)) ptt.keyup(); });
+// The panel losing focus (alt-tab, clicking into the page, DevTools) with the key still physically
+// down would otherwise leave the mic recording with nothing left able to see the matching keyup.
+window.addEventListener('blur', () => ptt.keyup());
 async function refreshTabs() {
   tabs = await chrome.tabs.query({});
   const current = await chrome.tabs.query({ active: true, currentWindow: true });
