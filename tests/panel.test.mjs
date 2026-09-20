@@ -730,7 +730,7 @@ test('a pending approval reads as a stopped run: it carries the paused flag and 
   // textContent, not innerText: the flag renders uppercased, the copy stays lowercase.
   assert.equal(await page.locator('.request-flag').evaluate(el => el.textContent), 'the task is paused until you answer');
   // The scopes are still the engine's four actions, in its order, with its own labels.
-  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'always allow', 'deny']);
+  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'allow & save', 'deny']);
   const { edge, flagColor, questionColor, warning } = await page.evaluate(() => {
     const probe = document.createElement('div');
     probe.style.color = getComputedStyle(document.documentElement).getPropertyValue('--status-warning').trim();
