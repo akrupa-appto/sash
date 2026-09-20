@@ -7,6 +7,12 @@
 // script matches http://*/* and https://*/*, so nearly every granted site is covered. Only
 // Chrome's own site-access controls (chrome://extensions) change that; classify by coverage,
 // not string equality, and never offer a revoke button that can only fail.
+//
+// A content script's exclude_matches does not change that: excludes narrow where the script is
+// injected, not what Chrome considers required. Probed against the real built extension in
+// disposable Chromium with an extra exclude_matches on the content script -- removing
+// https://example.test/* and https://*/* still threw "You cannot remove required permissions."
+// Do not "fix" removability by reading excludes here without re-running that probe.
 export function requiredPatterns(manifest) {
   return [
     ...(manifest.host_permissions || []),

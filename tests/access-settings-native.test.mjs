@@ -26,7 +26,10 @@ test('Chrome treats content-script coverage as required and rejects removing sit
   });
   assert.ok(probe.origins.includes('http://*/*') && probe.origins.includes('https://*/*'), JSON.stringify(probe.origins));
   for (const [origin, result] of Object.entries(probe.attempts)) {
-    assert.match(result.error || '', /cannot remove required permissions/i, `${origin}: ${JSON.stringify(result)}`);
+    // Chrome refuses in one of two shapes depending on version: a rejected promise carrying the
+    // message, or a resolved false. Both mean "this origin is required and cannot be revoked here".
+    const refused = result.removed === false || /cannot remove required permissions/i.test(result.error || '');
+    assert.ok(refused, `${origin} must not be removable: ${JSON.stringify(result)}`);
   }
 });
 
