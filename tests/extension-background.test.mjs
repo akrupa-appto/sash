@@ -92,9 +92,11 @@ globalThis.chrome = {
 // tests/transcribe.test.mjs.
 mock.module('../src/transcribe.ts', { namedExports: {
   defaultTranscriptionSpec: provider => ({
-    openrouter: 'openai/whisper-1',
-    openai: 'openai:whisper-1',
-    gemini: 'gemini:gemini-2.5-flash',
+    // Mirrors src/transcribe.ts's own defaults so this stand-in cannot drift into offering a model
+    // the build no longer uses; those real values are asserted in tests/transcribe.test.mjs.
+    openrouter: 'openai/gpt-transcribe',
+    openai: 'openai:gpt-transcribe',
+    gemini: 'gemini:gemini-3.5-transcribe',
     custom: 'custom:whisper-1',
   })[provider],
   transcribeCapability: spec => {
@@ -518,7 +520,7 @@ test('only the chosen voice provider key crosses to the offscreen document, neve
   try {
     await send({ type: 'dictation:start' });
     const start = messages.filter(m => m.type === 'offscreen:start').at(-1);
-    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'voiceProvider'],
+    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'transcriptionModel', 'voiceProvider'],
       'the payload carries the chosen provider key, the model that resolves the provider, and nothing else');
     assert.equal(start.settings.openaiKey, 'voice-key');
     assert.equal(start.settings.openrouterKey, undefined, 'the planner key does not travel');

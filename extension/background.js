@@ -132,8 +132,12 @@ let seq = 0;
 // import at this same extension/config.js). clearConfig() wipes every key in that object, so this
 // must never run while a run is mid-flight and depending on it staying configured — hence the
 // `active` check up front instead of bracketing every caller with its own guard.
-function voiceSpecFor(provider) {
-  return provider ? defaultTranscriptionSpec(provider) : undefined;
+// The spec dictation will actually send: the user's own transcription model when they picked one,
+// otherwise the default model of the chosen provider (and, with neither, nothing at all — which
+// means "the provider behind the planner model, its default", resolved inside transcribe()).
+function voiceSpecFor(settings) {
+  if (settings?.transcriptionModel) return settings.transcriptionModel;
+  return settings?.voiceProvider ? defaultTranscriptionSpec(settings.voiceProvider) : undefined;
 }
 // Offscreen documents only expose chrome.runtime, so the settings transcription needs have to
 // travel with the command. Send only those: the key of the provider that will actually make the
@@ -142,9 +146,11 @@ function voiceSpecFor(provider) {
 // other configured key — including the planner's — sitting in a second context for no reason.
 function voiceSettingsFor(settings) {
   const chosen = PROVIDERS[settings.voiceProvider] ? settings.voiceProvider : '';
-  const provider = chosen || parseModel(settings.model || '').provider;
+  // A named transcription model decides the provider too: sending the OpenAI key to transcribe with
+  // Gemini would fail after the mic was already hot.
+  const provider = settings.transcriptionModel ? parseModel(settings.transcriptionModel).provider : chosen || parseModel(settings.model || '').provider;
   const keyField = { openrouter: 'openrouterKey', typesafe: 'typesafeKey', openai: 'openaiKey', gemini: 'geminiKey', custom: 'customKey' }[provider];
-  const narrowed = { voiceProvider: chosen, model: settings.model };
+  const narrowed = { voiceProvider: chosen, transcriptionModel: settings.transcriptionModel, model: settings.model };
   if (provider === 'typesafe') { narrowed.provider = 'typesafe'; narrowed.typesafeKey = settings.typesafeKey; }
   else if (keyField) narrowed[keyField] = settings[keyField];
   if (provider === 'custom') narrowed.customBaseUrl = settings.customBaseUrl;
@@ -157,7 +163,7 @@ let lastVoiceCapability;
 function voiceCapability(settings) {
   if (active) return lastVoiceCapability || { canTranscribe: false, streaming: false, reason: 'a task is already running' };
   configure(settings);
-  try { return (lastVoiceCapability = transcribeCapability(voiceSpecFor(settings.voiceProvider))); }
+  try { return (lastVoiceCapability = transcribeCapability(voiceSpecFor(settings))); }
   finally { clearConfig(); }
 }
 // Set once a session has already triggered a run (eager mid-utterance, or prewarm/eager at speech
