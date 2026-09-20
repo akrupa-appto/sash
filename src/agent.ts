@@ -439,7 +439,19 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // Permission for the action itself, in three scopes. This is also where a high-risk action pauses:
         // the planner asks "approve" instead of tagging "continue" with a risk level, so the same three-scope
         // UI and explicit button click gates it — a stray "maybe" in a text reply can never be read as a yes.
-        if (p.status === "approve") return ask(approvalRequest({ action: p.action ?? p.next, origin: p.origin, why: p.why }));
+        // A saved grant is keyed by origin, so which site a stored permission covers is never whatever
+        // string the planner wrote: it is the origin of the page the action is about to run on. Text on
+        // the page reaches the planner, so a planner-named origin could otherwise park a saved grant on
+        // a site the user never approved. "*" stays as sent — that is the deliberate every-site scope,
+        // and its card already confirms it twice.
+        // An opaque page (about:blank, data:, a chrome error page) has no usable origin: originOf gives
+        // the literal "null" for all of them, which would key one grant for every such page. Keep the
+        // page's own origin when it has one, and fall back to its full url so the key stays distinct.
+        if (p.status === "approve") {
+          const pageOrigin = originOf(snap.url);
+          const grantOrigin = p.origin === "*" ? "*" : pageOrigin && pageOrigin !== "null" ? pageOrigin : snap.url;
+          return ask(approvalRequest({ action: p.action ?? p.next, origin: grantOrigin, why: p.why }));
+        }
         // A login wall: hand the page back as a typed form. Field labels and input types travel;
         // what the user types never comes back through here, and nothing is read off the page.
         if (p.status === "credential") {

@@ -421,6 +421,34 @@ test('an approval offers three scopes, and only whole-internet access is confirm
   assert.match(everywhere.request.scopes.at(-1).confirm.warning, /any site/);
 });
 
+// A grant is keyed by origin and page text reaches the planner, so the site a saved permission
+// covers is the page the action is about to run on — never a site name the planner produced.
+test('a saved approval is scoped to the page it runs on, not to the site the planner named', async () => {
+  plans = [{ status: 'approve', action: 'send the message', origin: 'https://elsewhere.example' }];
+  decisions = [];
+  const foreign = await run(true);
+  assert.equal(foreign.request.origin, 'https://example.test', 'the open page decides which site a grant covers');
+
+  plans = [{ status: 'approve', action: 'act on any site i open', origin: '*' }];
+  const everywhere = await run(true);
+  assert.equal(everywhere.request.origin, '*', 'the deliberate every-site scope is kept as it was asked for');
+});
+
+// An opaque page (about:blank, data:, a chrome error page) has no origin, and the URL parser answers
+// the literal "null" for every one of them. Keying a saved grant on that would make a single "always"
+// click cover every opaque page the agent ever opens, so the page's own url is the key instead.
+test('an opaque page keeps its own grant key instead of the shared "null" origin', async () => {
+  const orig = snapFn;
+  snapFn = () => ({ ...snap(), url: 'about:blank' });
+  try {
+    plans = [{ status: 'approve', action: 'send the message', origin: 'about:blank' }];
+    decisions = [];
+    const result = await run(true);
+    assert.equal(result.status, 'needs_input');
+    assert.equal(result.request.origin, 'about:blank', 'an origin-less page is keyed by its url, never by "null"');
+  } finally { snapFn = orig; }
+});
+
 test('after repeated denials the turn ends saying so instead of asking a fourth time', async () => {
   const request = { status: 'approve', action: 'send the message', origin: 'https://example.test' };
   plans = [request]; decisions = [];

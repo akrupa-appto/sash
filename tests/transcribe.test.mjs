@@ -51,39 +51,103 @@ test('an explicit spec picks the provider and model, same prefix convention as c
   } finally { globalThis.fetch = realFetch; }
 });
 
-test('Gemini sends the audio inline as base64 in a generateContent call', async () => {
+// Google's recommended path for speech is the Interactions API: upload the bytes with the Files API,
+// then name the uploaded file's uri. The generatedContent transcription page is the legacy one.
+const uploadOk = (uri = 'https://generativelanguage.googleapis.com/v1beta/files/abc', name = 'files/abc') =>
+  new Response(JSON.stringify({ file: { name, uri } }), { status: 200 });
+
+test('Gemini uploads the audio through the Files API, then transcribes it with the Interactions API', async () => {
   const realFetch = globalThis.fetch;
-  let call;
-  globalThis.fetch = async (url, init) => { call = { url, init: { ...init, body: JSON.parse(init.body) } }; return ok({ candidates: [{ content: { parts: [{ text: 'buy oat milk' }] } }] }); };
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url) === 'https://upload.example.test/session') return uploadOk();
+    return ok({ output_text: 'buy oat milk' });
+  };
   try {
     const result = await withKeys({ GEMINI_API_KEY: 'g-key' }, () => transcribe({ ...clip, spec: 'gemini:gemini-2.5-flash' }));
     assert.equal(result.text, 'buy oat milk');
-    assert.equal(call.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
-    assert.equal(call.init.headers['x-goog-api-key'], 'g-key');
-    const part = call.init.body.contents[0].parts.find(p => p.inlineData);
-    assert.equal(part.inlineData.mimeType, 'audio/webm');
-    assert.equal(Buffer.from(part.inlineData.data, 'base64').join(','), '1,2,3,4');
+
+    // 1. the upload is declared first: resumable, with the audio's real length and type
+    const start = calls[0];
+    assert.equal(start.url, 'https://generativelanguage.googleapis.com/upload/v1beta/files', 'the documented upload URI: /upload goes before the version, not after the api host');
+    assert.equal(start.init.headers['x-goog-api-key'], 'g-key');
+    assert.equal(start.init.headers['X-Goog-Upload-Protocol'], 'resumable');
+    assert.equal(start.init.headers['X-Goog-Upload-Command'], 'start');
+    assert.equal(start.init.headers['X-Goog-Upload-Header-Content-Length'], '4');
+    assert.equal(start.init.headers['X-Goog-Upload-Header-Content-Type'], 'audio/webm');
+
+    // 2. the bytes go to the session URL the first call handed back, and finalize the upload
+    assert.equal(calls[1].url, 'https://upload.example.test/session');
+    assert.equal(calls[1].init.headers['X-Goog-Upload-Command'], 'upload, finalize');
+    assert.deepEqual([...calls[1].init.body], [1, 2, 3, 4]);
+
+    // 3. the interaction names the uploaded file, and a plain multimodal model still needs the
+    // instruction in words — it is not a speech model and knows nothing about being one
+    const interaction = calls.find(c => c.url.endsWith('/interactions'));
+    const body = JSON.parse(interaction.init.body);
+    assert.equal(body.model, 'gemini-2.5-flash');
+    assert.deepEqual(body.input.map(p => p.type), ['text', 'audio']);
+    assert.equal(body.input[1].uri, 'https://generativelanguage.googleapis.com/v1beta/files/abc');
+    assert.equal(body.input[1].mime_type, 'audio/webm');
+    assert.equal(body.generation_config, undefined);
+
+    // 4. the uploaded recording does not stay in Google's file store for its full 48 hours
+    const cleanup = calls.find(c => c.init.method === 'DELETE');
+    assert.equal(cleanup.url, 'https://generativelanguage.googleapis.com/v1beta/files/abc');
   } finally { globalThis.fetch = realFetch; }
 });
 
-// gemini-3.5-transcribe is a dedicated speech-to-text model, so the request drops the "transcribe
-// this" instruction (the model is already told what it is) and reads the transcript out of either
-// shape Google documents for it.
-test('the Gemini speech-to-text model gets the audio plus its transcription config, and its answer is read both ways', async () => {
+// gemini-3.5-transcribe is a dedicated speech model: the interaction carries the audio and its
+// transcription config and nothing else, and the transcript is read from every shape Google
+// documents for the answer.
+test('the Gemini speech model asks for a transcription config, and its answer is read from every documented shape', async () => {
   const realFetch = globalThis.fetch;
-  let call;
-  globalThis.fetch = async (url, init) => {
-    call = { url, init: { ...init, body: JSON.parse(init.body) } };
-    // The word-annotation shape: no text part at all, one entry per recognized word.
-    return ok({ candidates: [{ content: { parts: [{ audioTranscription: { words: [{ word: 'buy' }, { word: 'oat' }, { word: 'milk' }] } }] } }] });
+  let body, reply;
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url) === 'https://upload.example.test/session') return uploadOk();
+    if (init.method === 'DELETE') return new Response('{}', { status: 200 });
+    body = JSON.parse(init.body);
+    return ok(reply);
   };
   try {
-    const result = await withKeys({ GEMINI_API_KEY: 'g-key' }, () => transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }));
-    assert.equal(result.text, 'buy oat milk');
-    assert.equal(call.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent');
-    assert.deepEqual(call.init.body.generationConfig, { audioTranscriptionConfig: {} });
-    assert.equal(call.init.body.contents[0].parts.length, 1, 'the audio is the whole request; no instruction is needed');
-    assert.equal(call.init.body.contents[0].parts[0].inlineData.mimeType, 'audio/webm');
+    const run = () => withKeys({ GEMINI_API_KEY: 'g-key' }, () => transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }));
+
+    reply = { output_text: 'buy oat milk' };
+    assert.equal((await run()).text, 'buy oat milk', 'output_text is the documented answer');
+    assert.deepEqual(body.generation_config, { transcription_config: {} });
+    assert.deepEqual(body.input.map(p => p.type), ['audio'], 'the audio is the whole request; a speech model needs no instruction');
+    assert.equal(body.input[0].mime_type, 'audio/webm');
+
+    // The REST envelope the Files API guide shows on its own page.
+    reply = { outputs: [{ type: 'text', text: 'buy oat milk' }] };
+    assert.equal((await run()).text, 'buy oat milk');
+    // And the word-annotation shape: no plain text part at all, one entry per recognized word.
+    reply = { steps: [{ type: 'model_output', content: [{ type: 'text', text: '', annotations: [{ type: 'word_info', text: 'buy' }, { type: 'word_info', text: 'oat' }, { type: 'word_info', text: 'milk' }] }] }] };
+    assert.equal((await run()).text, 'buy oat milk');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// The upload session exists from the moment the start call answers. If the bytes never land, the
+// session has to be cancelled: otherwise the user's microphone audio stays in Google's file store
+// with nothing left to delete it.
+test('an upload that fails after the session opened is cancelled, not orphaned', async () => {
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (init.headers?.['X-Goog-Upload-Command'] === 'cancel') return new Response('{}', { status: 200 });
+    return new Response('nope', { status: 500 });
+  };
+  try {
+    await withKeys({ GEMINI_API_KEY: 'g-key' }, () =>
+      assert.rejects(transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }), /Gemini transcription failed \(500\)/));
+    const cancel = calls.find(c => c.init.headers?.['X-Goog-Upload-Command'] === 'cancel');
+    assert.ok(cancel, 'the open session is cancelled');
+    assert.equal(cancel.url, 'https://upload.example.test/session');
   } finally { globalThis.fetch = realFetch; }
 });
 
@@ -133,7 +197,14 @@ test('no key configured for the chosen provider fails before any request, same s
 test('dictation with no explicit spec routes to the provider backing the configured planner model (PLANNER_MODEL), not the first key in priority order', async () => {
   const realFetch = globalThis.fetch;
   const calls = [];
-  globalThis.fetch = async (url, init) => { calls.push(url); return ok({ text: 'ok' }); };
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push(String(url));
+    // Gemini's path is an upload followed by an interaction; answer both so the routing assertion
+    // below is about which provider was chosen, not about the shape of its handshake.
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url) === 'https://upload.example.test/session') return uploadOk();
+    return ok({ text: 'ok' });
+  };
   try {
     // Both an OpenAI key AND an OpenRouter key are present — Jev commonly runs through OpenRouter
     // even when the planner model itself is on OpenAI or Gemini. configuredProviders()'s fixed
@@ -144,7 +215,7 @@ test('dictation with no explicit spec routes to the provider backing the configu
 
     calls.length = 0;
     await withKeys({ OPENROUTER_API_KEY: 'or-key', GEMINI_API_KEY: 'g-key', PLANNER_MODEL: 'gemini:gemini-2.5-flash' }, () => transcribe(clip));
-    assert.equal(calls[0], 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent', 'audio went to the configured planner provider (Gemini), with its current speech-to-text default');
+    assert.equal(calls[0], 'https://generativelanguage.googleapis.com/upload/v1beta/files', 'audio went to the configured planner provider (Gemini), with its current speech-to-text default');
   } finally { globalThis.fetch = realFetch; delete process.env.PLANNER_MODEL; }
 });
 
