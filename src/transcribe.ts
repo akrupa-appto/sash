@@ -170,6 +170,27 @@ function geminiTranscript(json: any): string {
 
 // Files API resumable upload, the documented way to hand audio to the Interactions API. The first
 // call only declares the upload and hands back the session URL in a header; the bytes go to that URL.
+// Cleanup has to be promised, not fired and forgotten: the caller (extension/offscreen.js, driven by
+// background.js) closes the offscreen document as soon as transcribe() resolves, and closing it
+// aborts every request that document still has in flight — so a DELETE or cancel that was only
+// kicked off is the same as one never sent, and the user's microphone clip stays in Google's file
+// store for its full 48 hours. Every cleanup below is therefore awaited to completion before
+// transcribe() can resolve. Losing the cleanup is not losing the transcript, though: it is reported
+// and not thrown, so it can neither turn a successful dictation into a user-facing error nor replace
+// the upload failure already on its way out of a failing one.
+async function cleanupStep(what: string, request: () => Promise<Response>): Promise<void> {
+  try {
+    const res = await request();
+    if (!res.ok) console.warn(`Gemini cleanup failed (${res.status}) for ${what}; the dictation clip may stay in Google's file store for up to 48 hours`);
+  } catch (err: any) {
+    console.warn(`Gemini cleanup failed for ${what} (${err?.message || err}); the dictation clip may stay in Google's file store for up to 48 hours`);
+  }
+}
+
+// The uploaded file itself, deleted by the name the Files API gave it.
+const deleteUploadedFile = (key: string, name: string) =>
+  cleanupStep(name, () => fetch(`${GEMINI_API}/${name}`, { method: "DELETE", headers: { "x-goog-api-key": key }, signal: requestTimeout() }));
+
 async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): Promise<{ uri: string; name: string }> {
   const mime = mimeType.split(";")[0];
   const start = await fetch(`${GEMINI_UPLOAD}/files`, {
@@ -190,7 +211,7 @@ async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): P
   if (!session) throw new Error("Gemini accepted the audio but returned no upload URL for it");
   // The session exists from the moment the start call returns, so a failure here has to cancel it:
   // otherwise the clip sits in Google's file store for its full 48 hours with nothing to delete it.
-  const cancel = () => void fetch(session, { method: "POST", headers: { "X-Goog-Upload-Command": "cancel" } }).catch(() => {});
+  const cancel = () => cleanupStep("the open upload session", () => fetch(session, { method: "POST", headers: { "X-Goog-Upload-Command": "cancel" }, signal: requestTimeout() }));
   let upload: Response;
   try {
     upload = await fetch(session, {
@@ -204,11 +225,11 @@ async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): P
       signal: requestTimeout(),
     });
   } catch (err) {
-    cancel();
+    await cancel();
     throw err;
   }
   if (!upload.ok) {
-    cancel();
+    await cancel();
     throw new Error(`Gemini transcription failed (${upload.status}): ${(await upload.text()).slice(0, 300)}`);
   }
   // The bytes have landed, so the file now exists whether or not its reply is readable: a truncation
@@ -218,11 +239,11 @@ async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): P
   try {
     json = await upload.json();
   } catch (err) {
-    cancel();
+    await cancel();
     throw err;
   }
   if (!json?.file?.uri) {
-    if (json?.file?.name) await fetch(`${GEMINI_API}/${json.file.name}`, { method: "DELETE", headers: { "x-goog-api-key": key } }).catch(() => {});
+    if (json?.file?.name) await deleteUploadedFile(key, json.file.name);
     throw new Error("Gemini accepted the audio but returned no file uri for it");
   }
   return { uri: json.file.uri, name: json.file.name ?? "" };
@@ -244,8 +265,10 @@ async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, m
     return geminiTranscript(await res.json());
   } finally {
     // The clip is the user's own microphone audio. Uploaded files otherwise stay in Google's file
-    // store for 48 hours, so drop it as soon as the transcript is in hand; failing to is not an error.
-    if (name) void fetch(`${GEMINI_API}/${name}`, { method: "DELETE", headers: { "x-goog-api-key": key } }).catch(() => {});
+    // store for 48 hours, so drop it as soon as the transcript is in hand — and before returning,
+    // because the caller closes the offscreen document the moment transcribe() resolves and that
+    // would abort this request. Failing to delete is not an error; it is reported (cleanupStep).
+    if (name) await deleteUploadedFile(key, name);
   }
 }
 
