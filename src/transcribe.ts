@@ -1,0 +1,161 @@
+// Audio transcription for voice dictation. Mirrors providers.ts: OpenRouter is the default and
+// takes a plain model id, "openai:"/"gemini:"/"custom:" prefixes pick the official/custom APIs, and
+// the provider is chosen by whichever key the user already configured for chat. BYOK end to end —
+// audio goes straight to that provider, never to a checkto server or to Google's free Web Speech API.
+import { PROVIDERS, customBase, configuredProviders, parseModel, providerKey } from "./providers.ts";
+import type { ProviderId } from "./providers.ts";
+
+export type AudioInput = Blob | ArrayBuffer | Uint8Array;
+export type TranscribeRequest = {
+  spec?: string; // model spec, see providers.ts parseModel; defaults to this provider's transcription model
+  audio: AudioInput;
+  mimeType: string; // e.g. "audio/webm;codecs=opus", as produced by MediaRecorder
+  filename?: string;
+};
+export type TranscribeResult = { text: string };
+
+// A provider that cannot transcribe at all (no key) or that this build has never seen transcribe
+// audio successfully (a custom server missing the endpoint). Distinct from a plain network/HTTP
+// error so callers can show "add a key" or "this server can't do voice" instead of a raw fetch failure.
+export class TranscribeUnsupportedError extends Error {
+  provider: ProviderId;
+  constructor(provider: ProviderId, message: string) {
+    super(message);
+    this.provider = provider;
+  }
+}
+
+// Whole-file model used when the caller does not name one. These are documented as accepting the
+// webm/opus output MediaRecorder produces natively, with no client-side PCM conversion needed.
+const DEFAULT_MODEL: Record<ProviderId, string> = {
+  openrouter: "openai/whisper-1",
+  openai: "whisper-1",
+  gemini: "gemini-2.5-flash",
+  custom: "whisper-1",
+};
+
+// What the UI can ask, cheaply and synchronously, to decide whether to offer voice dictation at
+// all and which eagerness modes to allow. Derived entirely from which provider is configured; no
+// network round trip. `streaming` is always false in this stage: true mid-sentence partials need
+// OpenAI Realtime or Gemini Live, which this build does not implement (see transcribe.ts header).
+// This build instead supports periodic whole-chunk re-transcription for incremental partials, which
+// every transcribe-capable provider below can already do.
+export type TranscribeCapability = {
+  provider?: ProviderId;
+  canTranscribe: boolean;
+  streaming: boolean;
+  reason?: string;
+};
+
+export function transcribeCapability(spec?: string): TranscribeCapability {
+  let provider: ProviderId | undefined;
+  if (spec) provider = parseModel(spec).provider;
+  else provider = configuredProviders()[0];
+  if (!provider) return { canTranscribe: false, streaming: false, reason: "no provider configured; add an API key in settings" };
+  const key = providerKey(provider);
+  if (!key) return { provider, canTranscribe: false, streaming: false, reason: `${PROVIDERS[provider].label} needs an API key to transcribe audio` };
+  if (provider === "custom") {
+    return { provider, canTranscribe: true, streaming: false, reason: "a custom server is not guaranteed to implement /v1/audio/transcriptions; this is a best guess until it is tried" };
+  }
+  return { provider, canTranscribe: true, streaming: false };
+}
+
+function extFromMime(mimeType: string): string {
+  const m = /audio\/([a-z0-9-]+)/i.exec(mimeType || "");
+  const type = (m?.[1] || "webm").toLowerCase().split(";")[0];
+  return ({ mpeg: "mp3", "x-m4a": "m4a" } as Record<string, string>)[type] || type;
+}
+
+async function toBytes(audio: AudioInput): Promise<Uint8Array> {
+  if (audio instanceof Uint8Array) return audio;
+  if (audio instanceof ArrayBuffer) return new Uint8Array(audio);
+  if (typeof Blob !== "undefined" && audio instanceof Blob) return new Uint8Array(await audio.arrayBuffer());
+  throw new Error("unsupported audio input: expected a Blob, ArrayBuffer, or Uint8Array");
+}
+
+async function toBase64(bytes: Uint8Array): Promise<string> {
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(binary);
+}
+
+// OpenRouter's whole-file endpoint (shipped 2026-05-01), multipart like OpenAI's. 60s upstream timeout.
+async function openrouterTranscribe(model: string, key: string, bytes: Uint8Array, mimeType: string, filename: string): Promise<string> {
+  const form = new FormData();
+  form.append("model", model);
+  form.append("file", new Blob([bytes], { type: mimeType }), filename);
+  const res = await fetch("https://openrouter.ai/api/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
+  if (!res.ok) throw new Error(`OpenRouter transcription failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  const json: any = await res.json();
+  return String(json.text ?? "");
+}
+
+// Shared by OpenAI and any OpenAI-compatible server: POST .../audio/transcriptions, multipart.
+// A 404/405 means the endpoint just doesn't exist on this server — that is the "not guaranteed"
+// case the custom provider warns about, so it gets its own clear error rather than a raw HTTP one.
+async function openaiStyleTranscribe(provider: ProviderId, model: string, key: string, bytes: Uint8Array, mimeType: string, filename: string, base: string): Promise<string> {
+  const form = new FormData();
+  form.append("model", model);
+  form.append("file", new Blob([bytes], { type: mimeType }), filename);
+  let res: Response;
+  try {
+    res = await fetch(`${base}/audio/transcriptions`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
+  } catch (err: any) {
+    if (provider === "custom") throw new TranscribeUnsupportedError(provider, `could not reach ${base}/audio/transcriptions: ${err?.message || err}`);
+    throw err;
+  }
+  if (!res.ok) {
+    const body = (await res.text().catch(() => "")).slice(0, 300);
+    if (provider === "custom" && (res.status === 404 || res.status === 405)) {
+      throw new TranscribeUnsupportedError("custom", `this custom server doesn't support audio transcription (no /v1/audio/transcriptions endpoint at ${base}). configure OpenRouter, OpenAI, or Gemini for voice dictation instead.`);
+    }
+    throw new Error(`${PROVIDERS[provider].label} transcription failed (${res.status}): ${body}`);
+  }
+  const json: any = await res.json();
+  return String(json.text ?? "");
+}
+
+// Gemini has no dedicated transcription endpoint; audio goes inline (base64) in a normal
+// generateContent call, same as the chat path in providers.ts. 20MB inline cap.
+async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, mimeType: string): Promise<string> {
+  if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("audio clip is too large for Gemini's inline 20MB limit; use OpenRouter or OpenAI instead");
+  const data = await toBase64(bytes);
+  const body = {
+    contents: [{
+      role: "user",
+      parts: [
+        { text: "Transcribe the spoken audio exactly as spoken. Reply with only the transcript text and no other commentary." },
+        { inlineData: { mimeType: mimeType.split(";")[0], data } },
+      ],
+    }],
+  };
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Gemini transcription failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  const json: any = await res.json();
+  const parts = json.candidates?.[0]?.content?.parts ?? [];
+  return parts.map((p: any) => p.text ?? "").join("").trim();
+}
+
+export async function transcribe(req: TranscribeRequest): Promise<TranscribeResult> {
+  const { provider, model } = req.spec ? parseModel(req.spec) : { provider: configuredProviders()[0], model: undefined };
+  if (!provider) throw new Error("no transcription provider configured; add an API key in settings");
+  const key = providerKey(provider);
+  if (!key) throw new Error(`${PROVIDERS[provider].label} needs an API key to transcribe audio`);
+  const bytes = await toBytes(req.audio);
+  const filename = req.filename || `dictation.${extFromMime(req.mimeType)}`;
+  if (provider === "gemini") return { text: await geminiTranscribe(model || DEFAULT_MODEL.gemini, key, bytes, req.mimeType) };
+  if (provider === "openrouter") return { text: await openrouterTranscribe(model || DEFAULT_MODEL.openrouter, key, bytes, req.mimeType, filename) };
+  if (provider === "openai") return { text: await openaiStyleTranscribe("openai", model || DEFAULT_MODEL.openai, key, bytes, req.mimeType, filename, "https://api.openai.com/v1") };
+  if (provider === "custom") {
+    const base = customBase();
+    if (!base) throw new Error("CUSTOM_API_BASE needed to transcribe with the custom provider");
+    return { text: await openaiStyleTranscribe("custom", model || DEFAULT_MODEL.custom, key, bytes, req.mimeType, filename, base) };
+  }
+  throw new Error(`unknown provider ${provider}`);
+}
