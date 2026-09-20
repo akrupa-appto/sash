@@ -1,5 +1,10 @@
 # checkto reliability work
 
+## Core reliability verification (2026-09-20)
+
+- Unattached headless Chromium suspended the idle extension service worker at 30.6s after startup. A DevTools/Playwright worker attachment kept it alive beyond 120s, so attached-worker labs are not valid suspension evidence. Do not add alarms or keepalive machinery from that result: no active run was observed dying, and the installed-extension fixture's real tasks completed normally.
+- Chrome host match patterns do not accept ports. Per-origin prompts still name the exact origin, but the permission requested for a non-default-port site is necessarily scheme + hostname across ports (for example `http://127.0.0.1/*`).
+
 ## Priorities resumed (2026-09-20)
 
 - Adam approved working through the priorities in sequence: approval/site-access settings, tick-track design, voice verification/settings, core reliability verification, then the cursor overlay. Changes start in `/tmp/checkto-priorities` on `adam/access-settings`, based on `origin/main` at `57cf90e`. No merge or live-service restart is authorized.
