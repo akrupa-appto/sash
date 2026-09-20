@@ -444,7 +444,7 @@ test('the handoff form is typed, starts empty, and keeps nothing once it is sent
 test('the widest approval scope is confirmed a second time with the warning spelled out', { skip }, async () => {
   const request = approvalRequest({ action: 'act on any site you open', origin: '*' });
   const page = await panel(waiting([request]));
-  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'always allow', 'deny']);
+  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'allow & save', 'deny']);
   await captureSent(page);
   await page.locator('button[data-scope=always]').click();
   assert.deepEqual(await page.evaluate(() => window.sent), [], 'the widest scope is not granted on the first click');

@@ -92,9 +92,11 @@ globalThis.chrome = {
 // tests/transcribe.test.mjs.
 mock.module('../src/transcribe.ts', { namedExports: {
   defaultTranscriptionSpec: provider => ({
-    openrouter: 'openai/whisper-1',
-    openai: 'openai:whisper-1',
-    gemini: 'gemini:gemini-2.5-flash',
+    // Mirrors src/transcribe.ts's own defaults so this stand-in cannot drift into offering a model
+    // the build no longer uses; those real values are asserted in tests/transcribe.test.mjs.
+    openrouter: 'openai/gpt-transcribe',
+    openai: 'openai:gpt-transcribe',
+    gemini: 'gemini:gemini-3.5-transcribe',
     custom: 'custom:whisper-1',
   })[provider],
   transcribeCapability: spec => {
@@ -259,6 +261,40 @@ test('a new run is refused while a request is pending, and the request survives 
     await until(() => data.runState?.status === 'done');
     assert.deepEqual(data.runState.requests, []);
   } finally { pendingRequest = undefined; }
+});
+
+test('approval mode "none" answers an approval in place, without ever showing a card', async () => {
+  await send({ type: 'clear' });
+  data.settings.approvalMode = 'none';
+  const before = taskStarted;
+  const request = { id: 'req-none', type: 'approval', action: 'send the message', origin: 'https://example.test' };
+  nextOutcome = { status: 'needs_input', message: 'needs approval', requests: [request], request };
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'careful' });
+    // The run resumes on its own: the fixture is called a second time with no answer from the panel.
+    await until(() => taskStarted === before + 2);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'done');
+    assert.deepEqual(data.runState.requests, [], 'the approval never became a pending card');
+    assert.equal(lastInput.goal, 'go on');
+    assert.equal(data.runState.denials?.['approval:https://example.test:send the message'], undefined, 'allowing is not a denial');
+  } finally {
+    nextOutcome = undefined; pendingRequest = undefined;
+    data.settings.approvalMode = 'every';
+  }
+});
+
+test('the same approval still waits for the user at the default setting', async () => {
+  await send({ type: 'clear' });
+  const request = { id: 'req-every', type: 'approval', action: 'send the message', origin: 'https://example.test' };
+  nextOutcome = { status: 'needs_input', message: 'needs approval', requests: [request], request };
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'careful' });
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-every']);
+  } finally { nextOutcome = undefined; }
 });
 
 test('a paused request carries the coverage/failure guards back in when the answer resumes the run', async () => {
@@ -484,7 +520,7 @@ test('only the chosen voice provider key crosses to the offscreen document, neve
   try {
     await send({ type: 'dictation:start' });
     const start = messages.filter(m => m.type === 'offscreen:start').at(-1);
-    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'voiceProvider'],
+    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'transcriptionModel', 'voiceProvider'],
       'the payload carries the chosen provider key, the model that resolves the provider, and nothing else');
     assert.equal(start.settings.openaiKey, 'voice-key');
     assert.equal(start.settings.openrouterKey, undefined, 'the planner key does not travel');

@@ -24,6 +24,9 @@ let sessionId = 0;
 let chunkQueue = Promise.resolve();
 
 function voiceSpec(settings) {
+  // The user's own speech-to-text model wins; otherwise the chosen provider's default; otherwise
+  // nothing, and transcribe() falls back to the planner's provider and its default model.
+  if (settings?.transcriptionModel) return settings.transcriptionModel;
   return settings?.voiceProvider ? defaultTranscriptionSpec(settings.voiceProvider) : undefined;
 }
 

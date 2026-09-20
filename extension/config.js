@@ -10,6 +10,8 @@ export function configure(settings) {
   if (settings.customKey) env.CUSTOM_API_KEY = settings.customKey;
   if (settings.customBaseUrl) env.CUSTOM_API_BASE = settings.customBaseUrl;
   env.PLANNER_MODEL = settings.model;
+  // The planner decides whether to pause for approval, so the mode has to reach it (see planner.ts).
+  env.APPROVAL_MODE = settings.approvalMode;
   if (settings.jevModel) env.JEV_MODEL = settings.jevModel;
   // The default text model is a fallback, not a choice: leave it unset so the planner's provider can serve it.
   if (settings.textModel && settings.textModel !== 'anthropic/claude-haiku-4.5') env.TEXT_MODEL = settings.textModel;
