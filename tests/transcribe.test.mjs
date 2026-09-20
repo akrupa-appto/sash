@@ -61,7 +61,7 @@ test('Gemini uploads the audio through the Files API, then transcribes it with t
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url: String(url), init });
-    if (String(url).endsWith('/upload/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
     if (String(url) === 'https://upload.example.test/session') return uploadOk();
     return ok({ output_text: 'buy oat milk' });
   };
@@ -71,7 +71,7 @@ test('Gemini uploads the audio through the Files API, then transcribes it with t
 
     // 1. the upload is declared first: resumable, with the audio's real length and type
     const start = calls[0];
-    assert.equal(start.url, 'https://generativelanguage.googleapis.com/v1beta/upload/files');
+    assert.equal(start.url, 'https://generativelanguage.googleapis.com/upload/v1beta/files', 'the documented upload URI: /upload goes before the version, not after the api host');
     assert.equal(start.init.headers['x-goog-api-key'], 'g-key');
     assert.equal(start.init.headers['X-Goog-Upload-Protocol'], 'resumable');
     assert.equal(start.init.headers['X-Goog-Upload-Command'], 'start');
@@ -106,7 +106,7 @@ test('the Gemini speech model asks for a transcription config, and its answer is
   const realFetch = globalThis.fetch;
   let body, reply;
   globalThis.fetch = async (url, init = {}) => {
-    if (String(url).endsWith('/upload/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
     if (String(url) === 'https://upload.example.test/session') return uploadOk();
     if (init.method === 'DELETE') return new Response('{}', { status: 200 });
     body = JSON.parse(init.body);
@@ -127,6 +127,27 @@ test('the Gemini speech model asks for a transcription config, and its answer is
     // And the word-annotation shape: no plain text part at all, one entry per recognized word.
     reply = { steps: [{ type: 'model_output', content: [{ type: 'text', text: '', annotations: [{ type: 'word_info', text: 'buy' }, { type: 'word_info', text: 'oat' }, { type: 'word_info', text: 'milk' }] }] }] };
     assert.equal((await run()).text, 'buy oat milk');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// The upload session exists from the moment the start call answers. If the bytes never land, the
+// session has to be cancelled: otherwise the user's microphone audio stays in Google's file store
+// with nothing left to delete it.
+test('an upload that fails after the session opened is cancelled, not orphaned', async () => {
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (init.headers?.['X-Goog-Upload-Command'] === 'cancel') return new Response('{}', { status: 200 });
+    return new Response('nope', { status: 500 });
+  };
+  try {
+    await withKeys({ GEMINI_API_KEY: 'g-key' }, () =>
+      assert.rejects(transcribe({ ...clip, spec: 'gemini:gemini-3.5-transcribe' }), /Gemini transcription failed \(500\)/));
+    const cancel = calls.find(c => c.init.headers?.['X-Goog-Upload-Command'] === 'cancel');
+    assert.ok(cancel, 'the open session is cancelled');
+    assert.equal(cancel.url, 'https://upload.example.test/session');
   } finally { globalThis.fetch = realFetch; }
 });
 
@@ -180,7 +201,7 @@ test('dictation with no explicit spec routes to the provider backing the configu
     calls.push(String(url));
     // Gemini's path is an upload followed by an interaction; answer both so the routing assertion
     // below is about which provider was chosen, not about the shape of its handshake.
-    if (String(url).endsWith('/upload/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
+    if (String(url).endsWith('/upload/v1beta/files')) return new Response('{}', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.example.test/session' } });
     if (String(url) === 'https://upload.example.test/session') return uploadOk();
     return ok({ text: 'ok' });
   };
@@ -194,7 +215,7 @@ test('dictation with no explicit spec routes to the provider backing the configu
 
     calls.length = 0;
     await withKeys({ OPENROUTER_API_KEY: 'or-key', GEMINI_API_KEY: 'g-key', PLANNER_MODEL: 'gemini:gemini-2.5-flash' }, () => transcribe(clip));
-    assert.equal(calls[0], 'https://generativelanguage.googleapis.com/v1beta/upload/files', 'audio went to the configured planner provider (Gemini), with its current speech-to-text default');
+    assert.equal(calls[0], 'https://generativelanguage.googleapis.com/upload/v1beta/files', 'audio went to the configured planner provider (Gemini), with its current speech-to-text default');
   } finally { globalThis.fetch = realFetch; delete process.env.PLANNER_MODEL; }
 });
 

@@ -148,6 +148,10 @@ async function openaiStyleTranscribe(provider: ProviderId, model: string, key: s
 // There is no Gemini key on this machine: this shape is documentation-verified and covered by a
 // mocked fetch, not live-verified.
 const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta";
+// The Files API upload lives on the /upload host path, with /upload BEFORE the version — the plain
+// api host 404s for it (checked live 2026-09-20). The session PUT then goes to whatever
+// x-goog-upload-url the start call returns.
+const GEMINI_UPLOAD = "https://generativelanguage.googleapis.com/upload/v1beta";
 
 // The transcript arrives in `output_text`. The older shapes are still read so a change in the
 // response envelope cannot silently turn into an empty dictation: an `outputs` array with text
@@ -168,7 +172,7 @@ function geminiTranscript(json: any): string {
 // call only declares the upload and hands back the session URL in a header; the bytes go to that URL.
 async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): Promise<{ uri: string; name: string }> {
   const mime = mimeType.split(";")[0];
-  const start = await fetch(`${GEMINI_API}/upload/files`, {
+  const start = await fetch(`${GEMINI_UPLOAD}/files`, {
     method: "POST",
     headers: {
       "x-goog-api-key": key,
@@ -184,17 +188,29 @@ async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): P
   if (!start.ok) throw new Error(`Gemini transcription failed (${start.status}): ${(await start.text()).slice(0, 300)}`);
   const session = start.headers.get("x-goog-upload-url");
   if (!session) throw new Error("Gemini accepted the audio but returned no upload URL for it");
-  const upload = await fetch(session, {
-    method: "POST",
-    headers: {
-      "Content-Length": String(bytes.byteLength),
-      "X-Goog-Upload-Offset": "0",
-      "X-Goog-Upload-Command": "upload, finalize",
-    },
-    body: bytes,
-    signal: requestTimeout(),
-  });
-  if (!upload.ok) throw new Error(`Gemini transcription failed (${upload.status}): ${(await upload.text()).slice(0, 300)}`);
+  // The session exists from the moment the start call returns, so a failure here has to cancel it:
+  // otherwise the clip sits in Google's file store for its full 48 hours with nothing to delete it.
+  const cancel = () => void fetch(session, { method: "POST", headers: { "X-Goog-Upload-Command": "cancel" } }).catch(() => {});
+  let upload: Response;
+  try {
+    upload = await fetch(session, {
+      method: "POST",
+      headers: {
+        "Content-Length": String(bytes.byteLength),
+        "X-Goog-Upload-Offset": "0",
+        "X-Goog-Upload-Command": "upload, finalize",
+      },
+      body: bytes,
+      signal: requestTimeout(),
+    });
+  } catch (err) {
+    cancel();
+    throw err;
+  }
+  if (!upload.ok) {
+    cancel();
+    throw new Error(`Gemini transcription failed (${upload.status}): ${(await upload.text()).slice(0, 300)}`);
+  }
   const json: any = await upload.json();
   if (!json?.file?.uri) throw new Error("Gemini accepted the audio but returned no file uri for it");
   return { uri: json.file.uri, name: json.file.name ?? "" };
