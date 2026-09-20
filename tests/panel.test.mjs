@@ -751,3 +751,36 @@ test('a dictation start that fails does not leave the composer owned by dictatio
   await page.locator('#mic').dispatchEvent('pointerup');
   await page.close();
 });
+
+// Ownership belongs to whoever owns the listening session, not to whoever pressed last. A panel mic
+// press whose start fails must not take the composer away from a session the panel did not start (the
+// global shortcut, or its hands-free latch — claimed by the listening transition in render()), or that
+// session's remaining partials and its final transcript stop reaching the composer until the next one.
+test('a failed panel mic press does not steal the composer from a session the panel did not start', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  const goal = page.locator('#goal');
+  // A listening session with no panel press behind it: the shortcut session, which claims the composer
+  // for itself at this transition (asserted here, since that is the ownership the failed press must not
+  // give away).
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk' } },
+  }));
+  assert.equal(await goal.inputValue(), 'buy milk');
+  // The panel's own mic press now starts a second session, and that start fails.
+  await page.evaluate(() => {
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = async message => (message.type === 'dictation:start' ? { ok: false, error: 'the mic was denied' } : send(message));
+  });
+  await page.locator('#mic').dispatchEvent('pointerdown');
+  // The shortcut session is still listening, so its next partial still reaches the composer.
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk and eggs' } },
+  }));
+  assert.equal(await goal.inputValue(), 'buy milk and eggs');
+  await page.locator('#mic').dispatchEvent('pointerup');
+  await page.close();
+});

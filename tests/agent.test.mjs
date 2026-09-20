@@ -615,6 +615,30 @@ test('a failed type-and-enter is not accepted as done just because the field hol
   } finally { snapFn = origSnap; typeTextFn = origType; }
 });
 
+// The run reports what it read, so the blocked sentence must match what this failure actually proved.
+// The user is looking at the field holding "hello": saying nothing on the page showed that change would
+// be a claim the run cannot make, and the only part never observed is the Enter.
+test('a blocked type-and-enter says the Enter was never observed, not that nothing on the page showed the change', async () => {
+  const [origSnap, origType] = [snapFn, typeTextFn];
+  let present = '';
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Search', kind: 'type', inViewport: true, value: present },
+  ] });
+  typeTextFn = async () => { present = 'hello'; throw new Error('the control is covered or not visible'); };
+  try {
+    plans = [
+      { status: 'continue', next: 'search for hello' },
+      { status: 'done', answer: 'searched for hello' },
+      { status: 'done', answer: 'searched for hello' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_AND_ENTER' }, type_target: { choice: 'el_1' }, type_value: { choice: 'text_0' } }];
+    const result = await run(true, 6, { values: ['hello'] });
+    assert.equal(result.status, 'blocked');
+    assert.match(result.message, /the text landed in the field, but i never saw the Enter go through/);
+    assert.doesNotMatch(result.message, /nothing on the page since then showed that change/);
+  } finally { snapFn = origSnap; typeTextFn = origType; }
+});
+
 test('a click that failed still blocks done even if a later snapshot shows the page changed', async () => {
   const [origSnap, origClick] = [snapFn, clickFn];
   let clicks = 0;
@@ -630,6 +654,8 @@ test('a click that failed still blocks done even if a later snapshot shows the p
     const result = await run(true, 6);
     assert.equal(result.status, 'blocked');
     assert.match(result.message, /could not confirm/);
+    // A click's failure really is "the change never showed up", so this sentence stays as it was.
+    assert.match(result.message, /nothing on the page since then showed that change applied/);
   } finally { snapFn = origSnap; clickFn = origClick; }
 });
 

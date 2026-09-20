@@ -262,6 +262,16 @@ function evidenceClearsFailure(failure: PendingFailure, elements: { role: string
   return matches.length === 1 && snapshotClean(matches[0].value ?? "") === wanted;
 }
 
+// The blocked sentence has to match what the failure actually proved, because the run reports what it
+// read. A TYPE_AND_ENTER that threw after its typing left the text in the field: "nothing on the page
+// showed that change" is false while the user is looking at that text, and the only thing never
+// observed is the Enter. Every other op keeps the sentence it had.
+function unconfirmedMessage(failure: PendingFailure): string {
+  if (failure.op === "TYPE_AND_ENTER")
+    return `i could not confirm this worked: step ${failure.step} failed (${failure.note}); the text landed in the field, but i never saw the Enter go through, so the submit is unconfirmed.`;
+  return `i could not confirm this worked: step ${failure.step} failed (${failure.note}) and nothing on the page since then showed that change applied.`;
+}
+
 // A final "done" answer that names something the run never actually saw (a PR/run/file number, a quoted
 // title) is a prediction dressed as a fact, not proof. Pull out the answer's specific claims and check each
 // one shows up somewhere in what the run actually did or read; anything that doesn't is unsupported.
@@ -462,8 +472,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           // A step that threw never applied its change. Force one re-check of the page before the
           // planner's success is believed, and refuse it if the re-check still shows nothing.
           if (pendingFailure) {
-            if (failureRecheckAsked)
-              return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
+            if (failureRecheckAsked) return end("blocked", unconfirmedMessage(pendingFailure));
             failureRecheckAsked = true;
             history.push(`step ${step}: claimed the task was done, but step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing confirmed that change; re-reading the page before reporting success`);
             continue;
@@ -826,8 +835,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         // Same order as the planner's `done`: an unconfirmed failed step before the coverage floor.
         // Jev has no re-check pass (the planner's path is the one that re-reads); a still-pending
         // failure ends the run here.
-        if (pendingFailure)
-          return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
+        if (pendingFailure) return end("blocked", unconfirmedMessage(pendingFailure));
         const shallow = tooShallow();
         if (shallow) {
           coverageWarning = shallow;

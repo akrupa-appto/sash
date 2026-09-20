@@ -71,14 +71,21 @@ async function startDictation() {
   dictationSessionActive = true;
   // Ownership is claimed before the request, not after its reply: background.js writes and
   // broadcasts the listening state before it answers dictation:start, so the first partial can be in
-  // the panel's hands before that reply is. Released again on both failure paths below — a start that
-  // never opened a mic must not leave dictation owning the composer.
+  // the panel's hands before that reply is. A failed start gives back only the claim this press
+  // actually took (`tookOwnership`): a session this panel did not start — the global shortcut, or its
+  // hands-free latch, claimed by the listening transition in render() — is still listening on its own,
+  // and dropping its ownership would cut off the partials and final text still coming from it.
+  const tookOwnership = !voiceMayWriteComposer;
   voiceMayWriteComposer = true;
   renderMic();
+  const startFailed = () => {
+    dictationSessionActive = false;
+    if (tookOwnership) voiceMayWriteComposer = false;
+  };
   try {
     const reply = await request({ type: 'dictation:start', chunkMs: chunkMsFor(voice.mode) });
-    if (!reply.ok) { dictationSessionActive = false; voiceMayWriteComposer = false; showError(new Error(reply.error || 'could not start the mic')); }
-  } catch (err) { dictationSessionActive = false; voiceMayWriteComposer = false; showError(err); }
+    if (!reply.ok) { startFailed(); showError(new Error(reply.error || 'could not start the mic')); }
+  } catch (err) { startFailed(); showError(err); }
   renderMic();
 }
 async function stopDictation() {
