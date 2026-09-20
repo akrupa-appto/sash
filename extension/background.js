@@ -82,6 +82,28 @@ chrome.tabs.onRemoved.addListener(tabId => { if (feedbackByTab.delete(tabId)) vo
 // which is exactly what clearing this tab's feedback tells the content script to do.
 setFaviconRestorer(tabId => setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }));
 
+// --- voice dictation: offscreen document lifecycle --------------------------------------------
+// getUserMedia does not reliably prompt from the side panel (Chrome cannot anchor the permission
+// prompt there), so mic capture and transcription run in an offscreen document instead. It is
+// created on demand and closed as soon as a session ends — never left running with a hot mic.
+async function ensureOffscreen() {
+  if (!chrome.offscreen) throw new Error('this build of Chrome does not support offscreen documents, needed for voice dictation');
+  const existing = chrome.runtime.getContexts ? await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }) : [];
+  if (existing.length) return;
+  await chrome.offscreen.createDocument({
+    url: chrome.runtime.getURL('offscreen.html'),
+    reasons: ['USER_MEDIA'],
+    justification: 'capture microphone audio for voice dictation, transcribed with the provider the user already configured',
+  });
+}
+async function closeOffscreen() {
+  if (!chrome.offscreen) return;
+  await chrome.offscreen.closeDocument().catch(() => {});
+}
+// A first-run grant commonly needs one full-tab navigation before the offscreen document can reuse
+// the permission (see extension/mic-permission.html); anything that looks like that denial opens it.
+const NEEDS_PERMISSION_TAB = /permission|notallowed|dismissed/i;
+
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
 let saving = Promise.resolve();
@@ -463,10 +485,60 @@ async function handle(message) {
     void execute(run, { ...message, goal: message.goal.trim() });
     return { ok: true };
   }
+  // Voice dictation: start capture (creates the offscreen document if needed), forward the command,
+  // and translate a permission failure into opening the one-time full-tab grant page.
+  if (message.type === 'dictation:start') {
+    try {
+      await ensureOffscreen();
+    } catch (err) {
+      return { ok: false, error: safeError(err) };
+    }
+    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:start', chunkMs: message.chunkMs }).catch(err => ({ error: safeError(err) }));
+    if (reply?.error) {
+      await closeOffscreen();
+      const needsPermissionTab = NEEDS_PERMISSION_TAB.test(reply.error);
+      if (needsPermissionTab) await chrome.tabs.create({ url: chrome.runtime.getURL('mic-permission.html') }).catch(() => {});
+      state.dictation = { status: 'error', error: reply.error };
+      await persist();
+      return { ok: false, error: reply.error, needsPermissionTab };
+    }
+    state.dictation = { status: 'listening', partialText: '' };
+    await persist();
+    return { ok: true };
+  }
+  // Stop capture, transcribe whatever is left, then always tear the offscreen document down —
+  // whether or not the offscreen side reported an error — so nothing keeps a hot mic.
+  if (message.type === 'dictation:stop') {
+    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(err => ({ error: safeError(err) }));
+    await closeOffscreen();
+    if (reply?.error) {
+      state.dictation = { status: 'error', error: reply.error };
+      await persist();
+      return { ok: false, error: reply.error };
+    }
+    state.dictation = { status: 'idle', text: reply?.text || '' };
+    await persist();
+    return { ok: true, text: reply?.text || '' };
+  }
+  // Fire-and-forget events from the offscreen document while a session is live.
+  if (message.type === 'dictation:partial') {
+    state.dictation = { ...(state.dictation || {}), status: 'listening', partialText: message.text };
+    await persist();
+    return { ok: true };
+  }
+  if (message.type === 'dictation:error') {
+    state.dictation = { ...(state.dictation || {}), status: 'error', error: safeError(message.error) };
+    await persist();
+    return { ok: true };
+  }
+  // Acknowledgement from the one-time full-tab permission page; nothing to do but confirm receipt.
+  if (message.type === 'dictation:permission-granted') return { ok: true };
   throw new Error('unknown request');
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || message?.type === 'state' || message?.type === 'permission') return;
+  // 'offscreen:start'/'offscreen:stop' are requests background sends to the offscreen document
+  // only; excluded here the same way 'permission' is, so background never answers its own request.
+  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || message?.type === 'state' || message?.type === 'permission' || message?.type === 'offscreen:start' || message?.type === 'offscreen:stop') return;
   handle(message).then(reply, err => reply({ error: safeError(err) }));
   return true;
 });

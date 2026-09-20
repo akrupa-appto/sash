@@ -23,6 +23,11 @@ const menuCreated = [];
 let pendingRequest; // set to make the fixture run end waiting on the user
 let nextOutcome; // set to make the fake run end straight away with that outcome
 let lastInput;
+// Voice dictation: stands in for the offscreen document's own lifecycle and message replies.
+let offscreenDocs = 0;
+let offscreenStartResult = { ok: true };
+let offscreenStopResult = { text: 'hello from the mic' };
+const tabsCreated = [];
 
 globalThis.chrome = {
   storage: { local: {
@@ -31,6 +36,8 @@ globalThis.chrome = {
   } },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
     onMessage: events(), onInstalled: events(), openOptionsPage: async () => {},
+    // Real Chrome's recommended way to check for an existing offscreen document.
+    getContexts: async () => (offscreenDocs > 0 ? [{ contextType: 'OFFSCREEN_DOCUMENT' }] : []),
     sendMessage: async message => {
       messages.push(structuredClone(message));
       // Standing in for the panel: its Allow click is what asks Chrome, so a yes is also a grant.
@@ -39,10 +46,14 @@ globalThis.chrome = {
         if (allowAccess) grantedOrigins.push(...message.prompt.origins);
         return { allow: allowAccess };
       }
+      // Standing in for the offscreen document answering background's start/stop commands.
+      if (message.type === 'offscreen:start') return offscreenStartResult;
+      if (message.type === 'offscreen:stop') return offscreenStopResult;
     },
   },
   tabs: {
     get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }),
+    create: async opts => { tabsCreated.push(opts); return { id: 999, ...opts }; },
     // Window 7's active tab is 12. The keyboard shortcut asks for the current window instead of
     // naming one, and gets the same tab back, so it has a windowId to open the panel on.
     query: async ({ windowId, currentWindow } = {}) => (currentWindow
@@ -61,6 +72,10 @@ globalThis.chrome = {
   sidePanel: { setPanelBehavior: async () => {}, open: async opts => { sidePanelOpens.push(opts); } },
   commands: { onCommand: events() },
   contextMenus: { create: (opts, cb) => { menuCreated.push(opts); cb?.(); }, removeAll: cb => cb(), onClicked: events() },
+  offscreen: {
+    createDocument: async () => { offscreenDocs++; },
+    closeDocument: async () => { offscreenDocs = Math.max(0, offscreenDocs - 1); },
+  },
 };
 mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
@@ -381,6 +396,75 @@ test('the manifest declares the shortcut and the contextMenus permission the ent
   const manifest = JSON.parse(await readFile('extension/manifest.json', 'utf8'));
   assert.equal(manifest.permissions.includes('contextMenus'), true);
   assert.equal(manifest.commands['open-panel'].suggested_key.default, 'Ctrl+Shift+Period');
+});
+
+// --- voice dictation: offscreen document lifecycle ----------------------------------------------
+test('starting dictation creates the offscreen document once and marks the state listening', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  const reply = await send({ type: 'dictation:start', chunkMs: 4000 });
+  assert.equal(reply.ok, true);
+  assert.equal(offscreenDocs, 1, 'the offscreen document was created');
+  assert.equal(data.runState.dictation.status, 'listening');
+  // Calling start again while one is already open must not create a second document.
+  await send({ type: 'dictation:start' });
+  assert.equal(offscreenDocs, 1, 'a second start does not open a second offscreen document');
+  const startMessages = messages.filter(m => m.type === 'offscreen:start');
+  assert.equal(startMessages.at(-1).chunkMs, undefined, 'the second call forwarded its own (unset) chunkMs');
+});
+
+test('stopping dictation tears the offscreen document down and returns the transcript', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  offscreenStopResult = { text: 'buy oat milk' };
+  await send({ type: 'dictation:start' });
+  assert.equal(offscreenDocs, 1);
+  const reply = await send({ type: 'dictation:stop' });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.text, 'buy oat milk');
+  assert.equal(offscreenDocs, 0, 'the offscreen document is closed once the session ends');
+  assert.equal(data.runState.dictation.status, 'idle');
+  assert.equal(data.runState.dictation.text, 'buy oat milk');
+});
+
+test('a mic permission failure on start opens the one-time full-tab grant page and tears the document down', async () => {
+  offscreenDocs = 0;
+  tabsCreated.length = 0;
+  offscreenStartResult = { error: 'NotAllowedError: Permission dismissed' };
+  const reply = await send({ type: 'dictation:start' });
+  assert.equal(reply.ok, false);
+  assert.equal(reply.needsPermissionTab, true);
+  assert.equal(offscreenDocs, 0, 'no offscreen document is left open after a failed start');
+  assert.equal(tabsCreated.length, 1);
+  assert.equal(tabsCreated[0].url, 'chrome-extension://test-extension/mic-permission.html');
+  assert.equal(data.runState.dictation.status, 'error');
+  offscreenStartResult = { ok: true };
+});
+
+test('an ordinary recording error on start does not open the permission tab', async () => {
+  offscreenDocs = 0;
+  tabsCreated.length = 0;
+  offscreenStartResult = { error: 'recorder failed to initialize' };
+  const reply = await send({ type: 'dictation:start' });
+  assert.equal(reply.ok, false);
+  assert.equal(reply.needsPermissionTab, false);
+  assert.equal(tabsCreated.length, 0);
+  offscreenStartResult = { ok: true };
+});
+
+test('partial and error events from the offscreen document update dictation state without tearing it down', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  await send({ type: 'dictation:start' });
+  const offscreenSender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+  await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'buy oat' }, offscreenSender, resolve));
+  assert.equal(data.runState.dictation.status, 'listening');
+  assert.equal(data.runState.dictation.partialText, 'buy oat');
+  assert.equal(offscreenDocs, 1, 'a partial event is not a session end');
+  await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:error', error: 'OpenRouter transcription failed (500): boom' }, offscreenSender, resolve));
+  assert.equal(data.runState.dictation.status, 'error');
+  assert.match(data.runState.dictation.error, /transcription failed/);
+  await send({ type: 'dictation:stop' });
 });
 
 // --- host access is asked for before a site is touched -----------------------------------------
