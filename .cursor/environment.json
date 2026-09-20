@@ -1,0 +1,13 @@
+{
+  "name": "checkto",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "qa-chrome",
+      "command": "bash .cursor/qa-chrome.sh"
+    }
+  ],
+  "chromeExecutablePath": "/usr/bin/google-chrome-stable",
+  "ports": [8791, 9223]
+}
