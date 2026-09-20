@@ -2,18 +2,29 @@ import type { Page } from "playwright";
 import { decide, writeText, type ChoiceAnswer, type Question } from "./jev.ts";
 import { plan, plannerModel, type ReasoningLevel } from "./planner.ts";
 import * as b from "./browser.ts";
+import {
+  approvalRequest,
+  askRequest,
+  blockedText,
+  credentialRequest,
+  declineAll,
+  denialCutoffMessage,
+  denialsExhausted,
+  isBlockedReason,
+  MAX_CREDENTIAL_FIELDS,
+  pickBlocking,
+} from "./extension/requests.js";
 
-// Everything a paused run needs to carry on from the user's reply: the task it was given, what it has
-// read so far, and which step it stopped on. A resumed run is the same run, not a fresh task.
+// Everything a paused run needs to carry on once a request is answered: the task it was given, what
+// it has read so far, and which step it stopped on. A resumed run is the same run, not a fresh task.
+// This is deliberately narrower than the request itself (extension/requests.js owns what was asked and
+// how it was answered) — it only carries the guards that must survive a pause regardless of *why* the
+// turn paused: an unconfirmed failed step must still block "done" after resuming, and an exploratory
+// task must not get a fresh, easier coverage floor just because it stopped to ask, approve, or sign in.
 export type PausedRun = {
   goal: string; // the original task, not the reply that resumes it
   history: string[];
   step: number;
-  question: string; // what the user was asked
-  action?: string; // set when the pause was a high-risk confirmation: the action waiting for an answer
-  // Coverage and failure-confirmation state, carried over so a pause never resets these guards: an
-  // unconfirmed failed step must still block "done" after resuming, and an exploratory task must not
-  // get a fresh, easier floor just because it stopped to ask something.
   realActions?: number;
   pagesSeen?: string[];
   coverageRefusals?: number;
@@ -22,8 +33,8 @@ export type PausedRun = {
 
 export type RunInput = {
   url?: string; // omit to continue on the page the browser is already on
-  goal: string; // a new task, or — with `resume` — the user's reply to the question that paused the run
-  resume?: PausedRun; // continue a run that stopped to ask something
+  goal: string; // a new task, or — with `resume` — the reply that answered the request that paused it
+  resume?: PausedRun; // continue a run that paused on a request rather than starting a fresh one
   values?: string[]; // texts the user says may need typing
   maxSteps?: number;
   previousTasks?: string[]; // earlier messages in this chat, oldest first, so "go on" has context
@@ -31,11 +42,20 @@ export type RunInput = {
   reasoning?: ReasoningLevel;
   model?: string; // planner model for this task; fast mode still uses Jev
   liveView?: boolean; // Anchor streams the browser directly; skip screenshot work
+  denials?: Record<string, number>; // how often this conversation already refused each request, by denialKey
   browserTabs?: {
     list: () => Promise<{ id: number; title: string; url: string }[]>;
     select: (id: number) => Promise<Page>;
     currentId: (page: Page) => number;
   };
+};
+
+// The step log's four written forms of one action (mirrors extension/types.js's StepLogEntry).
+export type StepLogEntry = {
+  ticker: string; // present-tense line that scrolls by while the step runs
+  expanded: string; // full sentence shown once the step is open/done
+  fragment: string; // lowercase clause that reads mid-sentence
+  fragmentCapitalized: string; // the same clause starting a sentence
 };
 
 export type StepEvent = {
@@ -49,6 +69,7 @@ export type StepEvent = {
   plan?: string; // the supervisor's single-action instruction for this step
   why?: string;
   action: string;
+  log: StepLogEntry;
   jevMs: number;
   planMs: number;
   execMs: number;
@@ -56,15 +77,20 @@ export type StepEvent = {
   note?: string;
 };
 
+export type BlockingRequest = Record<string, unknown> & { id: string; type: string };
+
 export type EndEvent = {
   type: "end";
-  status: "done" | "blocked" | "max_steps" | "error" | "stopped" | "question";
+  status: "done" | "blocked" | "max_steps" | "error" | "stopped" | "needs_input";
   message: string;
   answer?: string; // supervisor's one-line reply for the user
-  question?: string; // status "question": what the run needs the user to answer before it can go on
-  pending?: PausedRun; // status "question": pass it back as RunInput.resume with the user's reply
   totalCostUsd: number;
   steps: number;
+  blockedReason?: string; // one of types.js BlockedReason, when the page blocked the run
+  requests?: BlockingRequest[]; // everything this turn is waiting on
+  request?: BlockingRequest; // the one the panel shows, by RequestType priority
+  declined?: Record<string, unknown>[]; // on stop: an explicit decline per pending request
+  resumeState?: PausedRun; // on "needs_input": pass it back as RunInput.resume once the request is answered
 };
 
 export type Event =
@@ -72,16 +98,6 @@ export type Event =
   | { type: "screenshot"; screenshot: string; url: string; title: string }
   | StepEvent
   | EndEvent;
-
-// A run's terminal status, boiled down to one word the panel can put on the agent's own message so a
-// blocked or errored run reads as failed instead of looking like ordinary chat text. "needs you" covers a
-// run paused for the user — the planner's question and the high-risk confirmation; everything else that
-// isn't "done" reads as "could not finish".
-function outcomeWord(status: string): "done" | "could not finish" | "needs you" {
-  if (status === "done") return "done";
-  if (status === "question" || status === "waiting" || status === "paused") return "needs you";
-  return "could not finish";
-}
 
 const OPS: Record<string, string> = {
   CLICK: "Click a link, button, checkbox, tab, or other control (`click_target` says which)",
@@ -134,6 +150,43 @@ function newText(prev: string, cur: string, max = 240): string {
   return fresh ? `, showing: "${fresh.slice(0, max)}${fresh.length > max ? "…" : ""}"` : "";
 }
 
+// Builds a StepLogEntry from a present-tense ticker line and its past-tense counterpart. `expanded` and
+// `fragmentCapitalized` end up the same text for most steps; they exist as separate fields because the
+// row that shows a finished step and the clause that opens a joined summary sentence are different jobs.
+function logEntry(ticker: string, past: string): StepLogEntry {
+  return { ticker, expanded: past, fragment: past.charAt(0).toLowerCase() + past.slice(1), fragmentCapitalized: past };
+}
+
+// Fallback ticker/past forms for an operation with no more specific target description yet.
+const GENERIC_LOG: Record<string, { ticker: string; past: string }> = {
+  CLICK: { ticker: "Clicking", past: "Clicked" },
+  TYPE_TEXT: { ticker: "Typing", past: "Typed" },
+  TYPE_AND_ENTER: { ticker: "Typing", past: "Typed" },
+  SELECT: { ticker: "Selecting", past: "Selected" },
+  SCROLL_DOWN: { ticker: "Scrolling down the page", past: "Scrolled down the page" },
+  SCROLL_UP: { ticker: "Scrolling up the page", past: "Scrolled up the page" },
+  GO_BACK: { ticker: "Going back a page", past: "Went back a page" },
+  WAIT: { ticker: "Waiting for the page", past: "Waited for the page" },
+  CANNOT: { ticker: "Checking the page", past: "Found no way to do that on the page" },
+  SWITCH_TAB: { ticker: "Switching tabs", past: "Switched tabs" },
+  DONE: { ticker: "Wrapping up", past: "Finished the task" },
+  BLOCKED: { ticker: "Stopping", past: "Could not continue" },
+};
+function genericLog(chosen: string): StepLogEntry {
+  const g = GENERIC_LOG[chosen];
+  return logEntry(g?.ticker ?? `Doing ${chosen}`, g?.past ?? `Did ${chosen}`);
+}
+
+// A button that signs in through someone else ("continue with Google"), rather than submitting this form.
+function isFederated(name: string): boolean {
+  return /(continue|sign ?in|log ?in) with/i.test(name);
+}
+
+// The site a handoff form belongs to. A page with an unparseable URL still names something.
+function originOf(url: string): string {
+  try { return new URL(url).origin; } catch { return url; }
+}
+
 // A failure that reads like the element went away between the snapshot and the action, rather than a
 // real refusal by the page (navigation, dialog, disabled control).
 function staleElementTimeout(message: string): boolean {
@@ -143,18 +196,6 @@ function staleElementTimeout(message: string): boolean {
 // A control's own identity, stable across re-tagged snapshots where the numeric id is not.
 function elementKey(e?: { role: string; name: string }): string | undefined {
   return e ? `${e.role}\u0000${e.name}` : undefined;
-}
-
-// Consent to an action that cannot be undone must be an explicit yes, not merely the absence of a "no".
-// An unclear, off-topic, or hedging reply ("maybe", "what does that do?") is not approval either.
-const AFFIRM = /^\s*[""']?(yes\b|yeah\b|yep\b|yup\b|sure\b|ok(ay)?\b|go ahead\b|go for it\b|do it\b|confirm(ed)?\b|approved?\b|proceed\b)/i;
-
-function normalizeAction(action: string | undefined): string {
-  return (action ?? "")
-    .replace(/["“”'‘’]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
 }
 
 function quotedStrings(goal: string): string[] {
@@ -181,22 +222,18 @@ function unsupportedClaims(answer: string, corpus: string): string[] {
 export async function runTask(page: Page, input: RunInput, emit: (e: Event) => void, signal: AbortSignal) {
   const maxSteps = Math.min(Math.max(input.maxSteps ?? 60, 1), 60);
   const useSupervisor = input.supervisor !== false;
-  // On a resume the task stays the one the run was started with; input.goal is the user's reply to it.
+  // On a resume the task stays the one the run was started with; input.goal is only the reply that
+  // answered the request which paused it.
   const goal = input.resume?.goal ?? input.goal;
   const history: string[] = [...(input.resume?.history ?? [])];
   const typedSoFar: string[] = [];
   const baseCandidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(goal), ...(input.resume ? quotedStrings(input.goal) : [])].map((s) => s.trim()).filter(Boolean)));
   let totalCost = 0;
   let step = input.resume?.step ?? 0;
-  // The user was just asked about this exact action, so their reply, not another pause, decides it — but
-  // only for that action, and only when the reply is a clear yes. A "no", "maybe", or anything else still
-  // reaches the planner in history, where it can pick something else; it just may never be read as a yes.
-  const approvedAction = input.resume?.action && AFFIRM.test(input.goal) ? input.resume.action : undefined;
-  let riskApproved = Boolean(approvedAction);
-  if (input.resume) history.push(`step ${step}: asked the user "${input.resume.question}" → they replied "${input.goal}"`);
+  if (input.resume) history.push(`step ${step}: paused → resumed`);
   const actionCounts = new Map<string, number>();
   let consecutiveWaits = 0;
-  // `goal` is the task even on a resume, where input.goal is only the user's reply to a question.
+  // `goal` is the task even on a resume, where input.goal is only the reply that answered the request.
   const exploratory = isExploratoryTask(goal);
   const pagesSeen = new Set<string>(input.resume?.pagesSeen ?? []);
   let realActions = input.resume?.realActions ?? 0;
@@ -212,20 +249,41 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   let pendingFailure: { step: number; action: string; note: string; elementKey?: string; op?: string } | undefined = input.resume?.pendingFailure;
   let failureRecheckAsked = false;
 
-  const end = (status: EndEvent["status"], message: string, answer?: string) =>
-    emit({ type: "end", status, message: `${outcomeWord(status)}: ${message}`, answer, totalCostUsd: totalCost, steps: step });
-  // Stop the run without executing anything and hand back everything it needs to carry on from the reply.
-  // `question` stays the bare question so the panel can prompt with it; only the message carries the tag.
-  const pause = (question: string, action?: string) =>
+  // Everything this turn is waiting on. One card is shown, but each entry is answered or declined.
+  const pending: BlockingRequest[] = [];
+  // Set just before a request pauses the turn: what a resumed call needs to pick this run back up
+  // without losing the coverage floor or an unconfirmed failed step. Left unset on every other ending.
+  let resumeState: PausedRun | undefined;
+
+  const end = (status: EndEvent["status"], message: string, answer?: string, extra: Partial<EndEvent> = {}) =>
     emit({
       type: "end",
-      status: "question",
-      message: `${outcomeWord("question")}: ${question}`,
-      question,
-      pending: { goal, history: [...history], step, question, action, realActions, pagesSeen: [...pagesSeen], coverageRefusals, pendingFailure },
+      status,
+      message,
+      answer,
       totalCostUsd: totalCost,
       steps: step,
+      ...(pending.length ? { requests: [...pending], request: pickBlocking(pending) } : {}),
+      ...(resumeState ? { resumeState } : {}),
+      ...extra,
     });
+
+  // Stopping is not dropping: every pending request gets an explicit decline so no card is left
+  // alive in the panel waiting for an answer that is never coming.
+  const stopped = () => {
+    const declined = declineAll(pending, "stopped");
+    pending.length = 0;
+    return end("stopped", "stopped", undefined, declined.length ? { declined } : {});
+  };
+
+  // Raise one blocking request and hand the turn back. Asking the same thing after the user has
+  // already refused it DENIAL_LIMIT times is worse than giving up once, so that ends the turn.
+  const ask = (request: BlockingRequest) => {
+    if (denialsExhausted(request, input.denials)) return end("blocked", denialCutoffMessage(request, input.denials));
+    pending.push(request);
+    resumeState = { goal, history: [...history], step, realActions, pagesSeen: [...pagesSeen], coverageRefusals, pendingFailure };
+    return end("needs_input", String(request.question ?? request.action ?? "i need an answer to carry on."));
+  };
 
   // On an open-ended "test the app" task, refuse a "done" that has barely touched the app. Returns the
   // reason to send back to the models, or undefined when the run may finish. The floor never outlives the
@@ -251,7 +309,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
     emit({ type: "screenshot", screenshot: input.liveView ? "" : await b.screenshot(page), url: page.url(), title: await page.title() });
 
     while (step < maxSteps) {
-      if (signal.aborted) return end("stopped", "stopped");
+      if (signal.aborted) return stopped();
       step++;
 
       // Follow popups / new tabs if the site opened one.
@@ -355,11 +413,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             coverageWarning = shallow;
             if (++coverageRefusals >= EXPLORE_REFUSALS_BEFORE_STOP) return end("blocked", shallowStopMessage());
             history.push(`step ${step}: supervisor said done ("${p.answer ?? p.why ?? ""}") after only ${realActions} action(s) on ${pagesSeen.size} page(s); not accepted, the app still has to be tested`);
-            emit({ type: "step", step, url: snap.url, title: snap.title, screenshot: "", elementCount: snap.elements.length, answers: {}, action: "held back: the app has barely been tested yet", plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd, note: shallow });
+            emit({ type: "step", step, url: snap.url, title: snap.title, screenshot: "", elementCount: snap.elements.length, answers: {}, action: "held back: the app has barely been tested yet", log: logEntry("Checking coverage", "Held back: the app has barely been tested yet"), plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd, note: shallow });
             continue;
           }
           if (p.answer) {
-            // `goal` is the task even on a resume, where input.goal is the user's reply; both count as read.
+            // `goal` is the task even on a resume, where input.goal is only the reply; both count as read.
             const corpus = [goal, input.goal, ...(input.previousTasks ?? []), ...history, snap.text, snap.title].join("\n");
             const bad = unsupportedClaims(p.answer, corpus);
             if (bad.length)
@@ -370,30 +428,54 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           }
           return end("done", p.why ?? "Task complete", p.answer);
         }
-        if (p.status === "blocked") return end("blocked", p.why ?? "Cannot continue", p.answer);
-        // The supervisor needs something only the user knows: stop here, nothing is executed.
-        if (p.status === "question") return pause(p.question ?? p.why ?? "i need one more detail before i can go on.");
+        if (p.status === "blocked") {
+          // A page that blocks the run says which of the four agreed reasons it was, so the panel
+          // shows what happened instead of a generic stop.
+          const reason = isBlockedReason(p.blocked_reason) ? p.blocked_reason : undefined;
+          return end("blocked", blockedText(reason) ?? p.why ?? "Cannot continue", p.answer, reason ? { blockedReason: reason } : {});
+        }
+        // Ask the user something mid-run: a picker when the planner listed options, free text otherwise.
+        if (p.status === "ask") return ask(askRequest({ question: p.question, options: p.options, why: p.why }));
+        // Permission for the action itself, in three scopes. This is also where a high-risk action pauses:
+        // the planner asks "approve" instead of tagging "continue" with a risk level, so the same three-scope
+        // UI and explicit button click gates it — a stray "maybe" in a text reply can never be read as a yes.
+        if (p.status === "approve") return ask(approvalRequest({ action: p.action ?? p.next, origin: p.origin, why: p.why }));
+        // A login wall: hand the page back as a typed form. Field labels and input types travel;
+        // what the user types never comes back through here, and nothing is read off the page.
+        if (p.status === "credential") {
+          const fields = snap.elements.filter((e) => e.kind === "type").slice(0, MAX_CREDENTIAL_FIELDS);
+          // "Continue with Google" reads like a submit button to the regex below but hands the user
+          // to another site. It is only ever offered as an alternative, never clicked with a password.
+          const signInOptions = snap.elements.filter((e) => e.kind === "click" && isFederated(e.name)).map((e) => e.name);
+          const submit = snap.elements.find((e) => e.kind === "click" && !isFederated(e.name) && /sign ?in|log ?in|continue|submit|next/i.test(e.name));
+          return ask(
+            credentialRequest({
+              origin: originOf(snap.url),
+              fields: fields.map((e) => ({ id: e.id, label: e.name, inputType: e.role, required: true })),
+              signInOptions: p.sign_in_options ?? signInOptions,
+              submit: submit && { id: submit.id, label: submit.name },
+              // Reuse the run's own screenshot path; a live view streams the page already.
+              screenshot: input.liveView ? "" : await b.screenshot(page),
+              why: p.why,
+            }),
+          );
+        }
         if (p.tabId !== undefined && input.browserTabs) {
           if (!tabs?.some(t => t.id === p.tabId)) return end("error", "the requested tab is no longer available");
           history.push(`step ${step}: read "${snap.title}" (${snap.url}): ${snap.text.slice(0, 4000)}; switching to tab ${p.tabId}${p.why ? `: ${p.why}` : ''}`);
           page = await input.browserTabs.select(p.tabId);
           seenPages.add(page);
           lastFingerprint = "";
-          emit({ type: "step", step, url: page.url(), title: await page.title(), screenshot: "", elementCount: 0, answers: {}, action: `opened tab: ${await page.title()}`, plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd });
+          const switchedTitle = await page.title();
+          emit({
+            type: "step", step, url: page.url(), title: switchedTitle, screenshot: "", elementCount: 0, answers: {},
+            action: `opened tab: ${switchedTitle}`,
+            log: logEntry(`Opening tab: ${switchedTitle}`, `Opened tab: ${switchedTitle}`),
+            plan: p.why, jevMs: 0, planMs, execMs: 0, costUsd: p.cost_usd,
+          });
           continue;
         }
         if (!p.next) return end("error", "the planner gave no next action");
-        // The supervisor judged this action hard to undo. Ask before doing it, the same way a question stops
-        // the run; the user's reply, carried back in `resume`, is what lets it through.
-        if (p.risk === "high") {
-          // The answer covers the action it was asked about, never a different one the planner proposes next.
-          // Compared after normalizing quotes/whitespace/case, since the planner regenerates this text on
-          // resume and can rephrase trivially (different quote marks, extra space) without meaning a
-          // different action; the comparison still fails closed (re-pauses) on anything substantively different.
-          if (!riskApproved || normalizeAction(p.next) !== normalizeAction(approvedAction))
-            return pause(`i am about to ${p.next}${p.why ? `, because ${p.why}` : ""}. this is hard to undo. should i go ahead?`, p.next);
-          riskApproved = false; // one answer covers one action
-        }
         stepGoal = p.next;
         planText = p.next;
         planWhy = p.why;
@@ -485,6 +567,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       const chosen = op.choice;
       let jevMs = res.ms;
       let stepCost = res.cost_usd;
+      let log = genericLog(chosen);
       // A page that re-renders while we think can drop the element between snapshot and action. The
       // element ids belong to that stale snapshot, so the retry re-tags the page and finds the same
       // control by role + name instead.
@@ -516,7 +599,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             history.push(`read "${snap.title}" (${snap.url}): ${snap.text.slice(0, 4000)}`);
             page = await input.browserTabs.select(id);
             seenPages.add(page);
-            action = `opened tab: ${await page.title()}`;
+            const switchedTitle = await page.title();
+            action = `opened tab: ${switchedTitle}`;
+            log = logEntry(`Opening tab: ${switchedTitle}`, `Opened tab: ${switchedTitle}`);
             lastFingerprint = '';
             break;
           }
@@ -536,7 +621,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               }
             }
             const e = snap.elements.find((x) => x.id === id);
-            action = `CLICK ${e ? b.describe(e) : `[${id}]`}`;
+            const target = e ? b.describe(e) : `[${id}]`;
+            action = `CLICK ${target}`;
+            log = logEntry(`Clicking ${target}`, `Clicked ${target}`);
             actionElementKey = elementKey(e);
             if (e) retry = { el: e, run: (rid) => b.click(page, rid) };
             await b.click(page, id);
@@ -561,7 +648,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               note = "text written by text model";
             }
             typedSoFar.push(text);
-            action = `${chosen} ${JSON.stringify(text)} into ${e ? b.describe(e) : `[${id}]`}`;
+            const target = e ? b.describe(e) : `[${id}]`;
+            action = `${chosen} ${JSON.stringify(text)} into ${target}`;
+            log = logEntry(`Typing ${JSON.stringify(text)} into ${target}`, `Typed ${JSON.stringify(text)} into ${target}`);
             if (e) retry = { el: e, run: (rid) => b.typeText(page, rid, text, chosen === "TYPE_AND_ENTER", e?.contentEditable) };
             await b.typeText(page, id, text, chosen === "TYPE_AND_ENTER", e?.contentEditable);
             break;
@@ -584,7 +673,9 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               idx = Number((option.answers.select_option as ChoiceAnswer)?.choice.match(/^opt_(\d+)$/)?.[1]);
             }
             if (!e || !Number.isInteger(idx) || idx < 0 || idx >= e.options!.length) throw new Error("No matching dropdown option selected");
-            action = `SELECT "${e?.options?.[idx]}" in ${e ? b.describe(e) : `[${id}]`}`;
+            const target = e ? b.describe(e) : `[${id}]`;
+            action = `SELECT "${e?.options?.[idx]}" in ${target}`;
+            log = logEntry(`Selecting "${e?.options?.[idx]}" in ${target}`, `Selected "${e?.options?.[idx]}" in ${target}`);
             actionElementKey = elementKey(e);
             await b.selectOption(page, id, idx);
             break;
@@ -659,6 +750,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         plan: planText,
         why: planWhy,
         action,
+        log,
         jevMs: Math.round(jevMs),
         planMs,
         execMs: Math.round(execMs),
@@ -694,7 +786,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
     }
     return end("max_steps", `i stopped after ${maxSteps} steps without finishing. send a more specific task, or say "go on".`);
   } catch (err) {
-    if (signal.aborted) return end("stopped", "stopped");
+    if (signal.aborted) return stopped();
     return end("error", (err as Error).message.slice(0, 500));
   }
 }
