@@ -13,7 +13,7 @@ import {
   isBlockedReason,
   MAX_CREDENTIAL_FIELDS,
   pickBlocking,
-} from "./extension/requests.js";
+} from "../extension/requests.js";
 
 // Everything a paused run needs to carry on once a request is answered: the task it was given, what
 // it has read so far, and which step it stopped on. A resumed run is the same run, not a fresh task.
