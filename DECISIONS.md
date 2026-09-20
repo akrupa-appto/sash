@@ -169,3 +169,13 @@ So building the Codex-style cursor needs three things that do not exist: coordin
 
 - Settings surface for grants, per-origin access, voice, and the tab-group/badge/cursor toggles. Settings currently stores seven keys: four provider keys plus `mode`, `model`, `reasoning`.
 - The four `verify` items in `todo.md`, which need real keys or a real browser.
+
+### The tick track does not survive a real multi-step workflow (found 2026-09-20, not fixed)
+
+Adam sent four real screenshots of the currently-installed extension running actual multi-step tasks (an X/Twitter archive workflow, ~20 actions; a search/bookmark/pagination workflow, ~40 actions). The tick track — the signature move of design 4, a row of small squares that fills in per step — was designed and only ever tested against the 2-4 step demo task used throughout this whole redesign effort ("upload the quarterly report..."). It does not degrade gracefully:
+
+- At ~40 steps the dot row is one unbroken flex row with no wrap and no cap, so it overflows its container width. In the captured screenshots this pushes the sibling "Worked for 3m" duration text into a squeezed vertical single-character-per-line stack down the right edge of the panel — Adam's words, "it moves the whole dome around and breaks it."
+- At ~20 steps (narrower panel) the row wraps onto a second line instead, which reads better but the dots are still individually meaningless at that count — nobody is going to count 20 identical green squares to know which step failed.
+- Every real screenshot Adam sent was a genuine multi-step browser workflow: multiple tabs, retries, an explicit `action failed: Error: the control is covered or not visible` recovering mid-run. This is not an edge case; ordinary tasks on real sites regularly run 15-40+ actions. The demo task the whole design process was built and screenshotted against only ever had 2-3.
+
+Not fixed. Adam explicitly said not to fix it now — capture it for later. Whoever picks this up needs a real design pass, not a patch: the tick track needs either a cap with an overflow affordance (a count past N, e.g. "12 more"), a different visual unit at high counts (a progress bar/percentage instead of discrete dots), or grouping (collapse consecutive same-kind actions). Screenshots referenced above are not preserved in the repo; ask Adam to resend if needed when this is picked up.
