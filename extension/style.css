@@ -208,7 +208,14 @@ details.trace>.trace-header{cursor:pointer}
 /* Palette 4 is signal-only: send, ticks, and every primary button fill are neutral. Green is
    reserved for the per-step done check (.status-glyph below), not the track itself. */
 .tick.is-done{background:var(--accent)}
-.trace-label{flex:1 1 auto;color:var(--text-3)}
+/* The one hue the track carries: a tick whose step (or, past the cap, whose run of steps) had an
+   action fail. Red 25° already means "failed / blocked" in this palette; nothing else is coloured.
+   It is also hollow — the only unfilled square in the row — so the cue survives without colour. */
+.tick.is-failed{background:transparent;box-shadow:inset 0 0 0 2px var(--status-danger)}
+/* The track is capped at 8 ticks in panel.js, so the label always has room; min-width:0 is the
+   belt to that: a flex child that may never be crushed below its content into a character column.
+   overflow-wrap is the braces, for a live ticker with one unbroken token longer than the column. */
+.trace-label{flex:1 1 auto;min-width:0;overflow-wrap:anywhere;color:var(--text-3)}
 .trace-header .chev{width:10px;height:10px;color:var(--text-3);transition:transform var(--dur-basic) var(--ease-out);flex:none}
 details.trace[open]>.trace-header .chev{transform:rotate(90deg)}
 .trace-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--dur-relaxed) var(--ease-out)}
@@ -218,6 +225,7 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
 
 .step{display:flex;align-items:flex-start;gap:var(--sp-2);font-size:var(--text-xs);color:var(--text-2);line-height:1.5}
 .status-glyph{width:14px;height:14px;flex:none;display:grid;place-items:center;color:var(--status-success);margin-top:2px}
+.step.is-failed .status-glyph{color:var(--status-danger)}
 .status-glyph svg{width:12px;height:12px}
 .step-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
 .step-label{flex:1 1 auto}

@@ -22,6 +22,7 @@ const sidePanelOpens = [];
 const menuCreated = [];
 let pendingRequest; // set to make the fixture run end waiting on the user
 let nextOutcome; // set to make the fake run end straight away with that outcome
+let stepsToEmit; // set to make the fake run report these steps instead of its one default step
 let lastInput;
 // Voice dictation: stands in for the offscreen document's own lifecycle and message replies.
 let offscreenDocs = 0;
@@ -103,7 +104,8 @@ mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, e
   taskStarted++;
   activeSignal = signal;
   lastInput = input;
-  emit({ type: 'step', step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload', costUsd: 0 });
+  for (const s of stepsToEmit ?? [{ step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload' }]) emit({ type: 'step', costUsd: 0, ...s });
+  stepsToEmit = undefined;
   if (nextOutcome) { const outcome = nextOutcome; nextOutcome = undefined; emit({ type: 'end', totalCostUsd: 0, ...outcome }); return; }
   await new Promise(resolve => {
     finishTask = resolve;
@@ -278,6 +280,29 @@ test('a finished run keeps its actions on the reply it produced', async () => {
   assert.equal(reply.role, 'agent');
   assert.equal(reply.text, 'finished');
   assert.deepEqual(reply.steps.map(s => s.action), ['CLICK [5] button "upload"']);
+});
+
+// The reply used to keep only the last 60 steps. The panel's trace header reports the run's step count
+// off that array and marks where an action failed, so an 80-step run read "60 steps" and a failure on
+// step 1 vanished from both the track and the row list once the run ended.
+test('a long run keeps every step on its reply, including an early failure, so the finished trace counts and marks the run truthfully', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  stepsToEmit = Array.from({ length: 80 }, (_, i) => ({
+    step: i + 1, action: `CLICK [${i}] link "next"`, plan: `click next (${i + 1})`,
+    ...(i === 0 ? { note: 'action failed: Error: the control is covered or not visible' } : {}),
+  }));
+  assert.equal((await send({ type: 'run', tabId: 12, goal: 'sweep the archive', mode: 'fast' })).ok, true);
+  await until(() => taskStarted === before + 1);
+  // Live state already holds all 80; the terminal reply must carry the same, not a tail.
+  assert.equal(data.runState.steps.length, 80);
+  finishTask();
+  await until(() => data.runState?.running === false);
+  const reply = data.runState.messages.at(-1);
+  assert.equal(reply.steps.length, 80);
+  assert.equal(reply.steps[0].step, 1);
+  assert.match(reply.steps[0].note, /^action failed/);
+  assert.equal(reply.steps.at(-1).step, 80);
 });
 
 // --- the favicon badge as an unread marker -----------------------------------------------------

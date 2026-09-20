@@ -557,9 +557,13 @@ async function execute(run, message) {
     state.endedAt = Date.now();
     // Keep the run's actions with the reply they produced so earlier runs still show their steps,
     // and the run's own duration/stop-state so the duration divider reads right after it moves off screen.
+    // All of them: a grant-covered resume (the loop above) keeps appending to state.steps, so a run
+    // can outgrow one runTask's maxSteps, and the panel's trace header reports the count and marks
+    // where an action failed — a tail slice would under-count the run and drop an early failure.
+    // Storage is not the constraint: a step is a few hundred bytes and messages are capped at 20.
     state.messages.push({
       role: 'agent', text: safeError(outcome?.answer || outcome?.message || 'the task ended unexpectedly', settings),
-      steps: state.steps.slice(-60), startedAt: state.startedAt, endedAt: state.endedAt, stopped: state.status === 'stopped',
+      steps: state.steps, startedAt: state.startedAt, endedAt: state.endedAt, stopped: state.status === 'stopped',
       // Carried onto the reply so its trace header (the panel's one place a run reports on itself)
       // can still show what the run cost after it moves out of the live status strip.
       cost: state.cost,

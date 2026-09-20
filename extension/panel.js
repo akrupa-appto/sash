@@ -173,15 +173,19 @@ function chooseTab(tab) {
   closePicker(); renderSelected(); input.focus(); controls();
 }
 const ICON_CHECK = '<svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_CROSS = '<svg viewBox="0 0 16 16" fill="none"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const ICON_CHEV = '<svg class="chev" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 // A finished step's row always shows its expanded sentence: by the time an entry exists the action is
-// already done, so every glyph resolves straight to its check — there is no live/ticker form to show
-// here (the ticker is folded into the live trace header instead). Raw execution detail (why a step was corrected,
+// already done, so the glyph resolves straight to its outcome — a check, or a cross for a step whose action
+// failed (its note says so, in words, right under the label; the glyph is the at-a-glance form of that) —
+// there is no live/ticker form to show here (the ticker is folded into the live trace header instead).
+// Raw execution detail (why a step was corrected,
 // retried or failed) is the one thing on this row set in monospace, faded out behind a gradient mask
 // rather than hard-clipped; everything else on the row is Archivo.
 function stepElement(s) {
-  const el = document.createElement('div'); el.className = 'step';
-  const glyph = document.createElement('span'); glyph.className = 'status-glyph'; glyph.innerHTML = ICON_CHECK; glyph.setAttribute('aria-hidden', 'true');
+  const failed = stepFailed(s);
+  const el = document.createElement('div'); el.className = 'step' + (failed ? ' is-failed' : '');
+  const glyph = document.createElement('span'); glyph.className = 'status-glyph'; glyph.innerHTML = failed ? ICON_CROSS : ICON_CHECK; glyph.setAttribute('aria-hidden', 'true');
   const body = document.createElement('div'); body.className = 'step-body';
   const label = document.createElement('span'); label.className = 'step-label'; label.textContent = s.log?.expanded || s.plan || s.action;
   body.append(label);
@@ -197,21 +201,53 @@ function stepElement(s) {
 // The collapsed trace reads as one joined sentence ("opened the upload tab, clicked upload"), not a
 // step count or a stack trace, when read by assistive tech: it is the header's aria-label, kept off
 // the visible face so the visible face can carry checkto's own tick track and duration instead.
+// Past the tick cap the sentence would run to dozens of clauses, so it becomes a summary instead:
+// the count, which steps failed, and the first and last thing done. Either way the failures are
+// named, since the track's red ticks are aria-hidden and colour alone must not be the only cue.
 function summarySentence(steps) {
   if (!steps.length) return 'activity';
-  return steps.map((s, i) => (s.log ? (i === 0 ? s.log.fragmentCapitalized : s.log.fragment) : (s.plan || s.action))).join(', ');
+  const fragment = (s, i) => (s.log ? (i === 0 ? s.log.fragmentCapitalized : s.log.fragment) : (s.plan || s.action));
+  const failed = steps.filter(stepFailed).map(s => s.step);
+  const failures = failed.length ? `; ${failed.length} failed (step${failed.length === 1 ? '' : 's'} ${failed.join(', ')})` : '';
+  if (steps.length <= TICK_CAP) return steps.map(fragment).join(', ') + failures;
+  return `${stepCountLabel(steps.length)}${failures}: ${fragment(steps[0], 0)}, … ${fragment(steps.at(-1), 1)}`;
 }
 // The segmented tick track — checkto's signature move. One filled tick per step that has landed;
 // there is no "pending" tick because the agent loop only ever records a step once it is done, so the
 // track itself, growing turn over turn, is the progress signal (see the .trace-header comment in
 // style.css for why glyphs never show an in-flight state).
-function ticksMarkup(count) {
-  return `<span class="ticks" aria-hidden="true">${'<span class="tick is-done"></span>'.repeat(count)}</span>`;
+//
+// The track is bounded. Real tasks run 20-40+ actions (pagination, archive sweeps, retries), and an
+// unbounded row of 8px squares at that count overran the header and squeezed "Worked for 3m" into a
+// one-character-per-line stack. Up to TICK_CAP steps the track is the approved comp exactly: one tick
+// per step. Past that it stays TICK_CAP ticks wide and each tick stands for a contiguous run of steps
+// (the first tick the earliest ones, the last tick the latest), so the track keeps its shape and its
+// left-to-right time axis while the label carries the exact count ("40 steps · Worked for 3m").
+// A tick containing a step whose action failed (the agent loop's own `action failed:` note) is drawn
+// hollow in the danger hue: at any count the one thing worth seeing in the track is where it went
+// wrong, not how many identical squares there are — and hollow-vs-filled reads without colour.
+const TICK_CAP = 8;
+const stepFailed = s => typeof s.note === 'string' && s.note.startsWith('action failed');
+function tickBuckets(steps) {
+  const n = steps.length;
+  if (n <= TICK_CAP) return steps.map(s => ({ failed: stepFailed(s) }));
+  return Array.from({ length: TICK_CAP }, (_, i) => ({ failed: steps.slice(Math.floor(i * n / TICK_CAP), Math.floor((i + 1) * n / TICK_CAP)).some(stepFailed) }));
+}
+function ticksMarkup(steps) {
+  const ticks = tickBuckets(steps).map(t => `<span class="tick is-done${t.failed ? ' is-failed' : ''}"></span>`).join('');
+  return `<span class="ticks" aria-hidden="true">${ticks}</span>`;
 }
 function stepCountLabel(count) { return `${count} step${count === 1 ? '' : 's'}`; }
+// Segments of the header label join on a non-breaking " · ": at 320px the label wraps, and a plain
+// space on either side of the dot left it orphaned at a line end ("Worked for 2m ·" / "$0.0002").
+// Bound to both neighbours it can only wrap inside a segment's own words, never around the dot.
+const SEP = '\u00a0·\u00a0';
+// Once the track is compressed the count is no longer readable off it, so the label states it —
+// unless the label already opens with that count (a finished run too short to report a duration).
+function countPrefix(count, label) { return count > TICK_CAP && !label.startsWith(stepCountLabel(count)) ? stepCountLabel(count) + SEP : ''; }
 // Cost lives in the trace header now, next to the duration/step-count it already reports —
 // there is no separate status strip to hold it any more.
-function costSuffix(cost) { return cost ? ` · $${cost.toFixed(4)}` : ''; }
+function costSuffix(cost) { return cost ? `${SEP}$${cost.toFixed(4)}` : ''; }
 const escapeHtml = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // The visible face of a trace header: ticks, then a plain label, then (for a collapsible, finished
 // trace) the chevron. The prose join-sentence goes on aria-label instead, so screen readers still get
@@ -220,7 +256,7 @@ const escapeHtml = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;',
 // not just a computed word or number like the finished-trace label always was — so it is escaped
 // before going into innerHTML, the same way any other untrusted string would be.
 function traceHeaderMarkup(steps, label, { chevron } = {}) {
-  return ticksMarkup(steps.length) + `<span class="trace-label">${escapeHtml(label)}</span>` + (chevron ? ICON_CHEV : '');
+  return ticksMarkup(steps) + `<span class="trace-label">${escapeHtml(countPrefix(steps.length, label) + label)}</span>` + (chevron ? ICON_CHEV : '');
 }
 // Three states only, phrased as what happened to the run, not as the agent's failure.
 function formatDuration(ms) {
