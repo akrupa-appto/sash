@@ -100,7 +100,8 @@ export function approvalRequest({ action, origin, why, type = RequestType.APPROV
       { id: ApprovalScope.CONVERSATION, label: 'allow for this conversation' },
       {
         id: ApprovalScope.ALWAYS,
-        label: 'always allow',
+        // The button both allows and remembers: "save" is what the user is choosing, not just a yes.
+        label: 'allow & save',
         ...(wholeInternet
           ? {
               confirm: {

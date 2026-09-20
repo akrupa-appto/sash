@@ -524,7 +524,11 @@ async function execute(run, message) {
       if (run.popupError) throw run.popupError;
       const blocking = outcome?.status === 'needs_input' ? pickBlocking(outcome.requests || []) : undefined;
       const isApproval = blocking && (blocking.type === RequestType.APPROVAL || blocking.type === RequestType.PERMISSION_REQUEST);
-      if (!isApproval || !isGranted(blocking) || ++autoApprovals > MAX_AUTO_APPROVALS) break;
+      // Two kinds of approval never reach the panel: one a stored grant already covers, and any at
+      // all when the user chose "never ask" (approvalMode 'none'). Nothing is stored for the second
+      // case -- the setting is the permission, so there is nothing per-action to remember.
+      const autoAnswer = !!blocking && (isGranted(blocking) || settings.approvalMode === 'none');
+      if (!isApproval || !autoAnswer || ++autoApprovals > MAX_AUTO_APPROVALS) break;
       const denials = { ...(state.denials || {}) };
       delete denials[denialKey(blocking)];
       state.denials = denials;

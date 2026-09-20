@@ -261,6 +261,40 @@ test('a new run is refused while a request is pending, and the request survives 
   } finally { pendingRequest = undefined; }
 });
 
+test('approval mode "none" answers an approval in place, without ever showing a card', async () => {
+  await send({ type: 'clear' });
+  data.settings.approvalMode = 'none';
+  const before = taskStarted;
+  const request = { id: 'req-none', type: 'approval', action: 'send the message', origin: 'https://example.test' };
+  nextOutcome = { status: 'needs_input', message: 'needs approval', requests: [request], request };
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'careful' });
+    // The run resumes on its own: the fixture is called a second time with no answer from the panel.
+    await until(() => taskStarted === before + 2);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'done');
+    assert.deepEqual(data.runState.requests, [], 'the approval never became a pending card');
+    assert.equal(lastInput.goal, 'go on');
+    assert.equal(data.runState.denials?.['approval:https://example.test:send the message'], undefined, 'allowing is not a denial');
+  } finally {
+    nextOutcome = undefined; pendingRequest = undefined;
+    data.settings.approvalMode = 'every';
+  }
+});
+
+test('the same approval still waits for the user at the default setting', async () => {
+  await send({ type: 'clear' });
+  const request = { id: 'req-every', type: 'approval', action: 'send the message', origin: 'https://example.test' };
+  nextOutcome = { status: 'needs_input', message: 'needs approval', requests: [request], request };
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'careful' });
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-every']);
+  } finally { nextOutcome = undefined; }
+});
+
 test('a paused request carries the coverage/failure guards back in when the answer resumes the run', async () => {
   await send({ type: 'clear' });
   const resumeState = { goal: 'open the readme', history: ['step 1: did CLICK [1] link "README.md"'], step: 1, realActions: 1, pagesSeen: ['fp1'], coverageRefusals: 0 };

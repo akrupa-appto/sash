@@ -87,6 +87,23 @@ export function plannerModel() {
   return env.PLANNER_MODEL ?? "anthropic/claude-sonnet-5";
 }
 
+/**
+ * The user's approval setting, expressed as a prompt instruction.
+ *
+ * The planner is what raises an approval (see the "approve" status above), so "ask before every
+ * action" has to live here: there is no per-op gate in the executor, and a second one would be a
+ * second source of truth for the same decision. `env.APPROVAL_MODE` is set by the extension from
+ * settings (extension/config.js); unset means the server's original behaviour, which is the middle
+ * setting.
+ */
+export function approvalInstruction(mode: string | undefined): string {
+  if (mode === "every")
+    return '\nThe user chose "ask before every action": before every action that changes the page or sends anything (clicking a control, typing, submitting, choosing an option, deleting, uploading), reply with {"status":"approve","action":"what you are about to do","origin":"the current site","why":"one short sentence"} and take no other action in that step. Reading, scrolling, waiting, and switching tabs need no approval. Ask again for each new action unless the user already allowed this exact action for this conversation or always; a longer step is cheaper than an unasked-for click.';
+  if (mode === "none")
+    return '\nThe user chose "never ask": never reply with status "approve" and never with "ask". Decide from the page and act.';
+  return "";
+}
+
 export type ReasoningLevel = "auto" | Effort;
 
 // Output budget per effort level; reasoning tokens share it on most providers.
@@ -109,7 +126,10 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   const t0 = performance.now();
   const reply = await chat({
     spec: model,
-    system: SYSTEM + (ctx.tabs ? '\nYou can also switch to an existing browser tab. open_tabs lists every available website tab across windows. To switch, return {"status":"continue","tabId":<numeric id>,"why":"reason"}; this uses one step and performs no page action. Read each relevant tab before comparing or summarizing multiple tabs. Tab references in the task identify exact IDs. Remember observed facts in your history when switching tabs. Never claim you read an unvisited tab.' : ''),
+    system:
+      SYSTEM +
+      (ctx.tabs ? '\nYou can also switch to an existing browser tab. open_tabs lists every available website tab across windows. To switch, return {"status":"continue","tabId":<numeric id>,"why":"reason"}; this uses one step and performs no page action. Read each relevant tab before comparing or summarizing multiple tabs. Tab references in the task identify exact IDs. Remember observed facts in your history when switching tabs. Never claim you read an unvisited tab.' : '') +
+      approvalInstruction(env.APPROVAL_MODE),
     user,
     effort: reasoning,
     maxTokens: (effort) => Math.min(32768, BUDGET[effort] * (recovery ? 2 : 1)),
