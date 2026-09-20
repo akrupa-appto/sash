@@ -128,7 +128,9 @@ textarea{resize:vertical}
 .access-copy strong,.access-copy small{display:block}
 .access-copy small{margin-top:var(--sp-1);color:var(--text-3)}
 .access-row button{flex-shrink:0}
-#refresh-access{margin-top:var(--sp-4)}
+.access-row.is-required .access-copy strong{color:var(--text-2)}
+.access-tag{flex-shrink:0;font-size:var(--text-2xs);font-weight:500;color:var(--text-3);background:var(--surface-1);border-radius:var(--r-8);padding:var(--sp-1) var(--sp-2)}
+.access-actions{margin-top:var(--sp-4)}
 .privacy{padding:var(--sp-4);background:var(--surface-1);border-radius:var(--r-12);margin:var(--sp-6) 0 0}
 .settings-page details summary{cursor:pointer;color:var(--text-3);margin-bottom:var(--sp-4)}
 .model-button{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);width:100%;text-align:left;font-weight:400}

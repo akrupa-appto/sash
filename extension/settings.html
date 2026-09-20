@@ -34,10 +34,10 @@
 <p class="muted">actions allowed for this conversation or always. revoking asks you again next time; it does not cancel an action already approved.</p>
 <div id="approval-list"></div>
 <h3>site access</h3>
-<p class="muted">sites you allowed Chrome to share with checkto. removing access stops the current task first. removing a custom provider's site also disconnects that provider until you allow it again.</p>
+<p class="muted">every site Chrome currently lets checkto reach. access marked required comes with the extension itself: Chrome only lets you narrow it (to specific sites, or on click) from checkto's page in chrome://extensions, not from here. anything else can be revoked below; that stops the current task first, and removing a custom provider's site disconnects that provider until you allow it again.</p>
 <div id="site-access-list"></div>
-<p class="muted">built-in model provider connections are required by this extension and are not listed here. removing site access does not remove a saved approval, or vice versa.</p>
-<button type="button" class="secondary" id="refresh-access">refresh access</button>
+<p class="muted">removing site access does not remove a saved approval, or vice versa.</p>
+<div class="row access-actions"><button type="button" class="secondary" id="refresh-access">refresh access</button><button type="button" class="secondary" id="manage-site-access">open Chrome site access</button></div>
 <div id="access-status" class="status" role="status" aria-live="polite"></div>
 </section>
 </main><script type="module" src="options.js"></script></body></html>
