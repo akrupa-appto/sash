@@ -40,7 +40,7 @@ test('settings clamp budgets and require the right provider keys', () => {
 });
 
 test('the default text model stays a fallback while an explicit one is passed through', async () => {
-  const { configure, clearConfig, env } = await import('./extension/config.js');
+  const { configure, clearConfig, env } = await import('../extension/config.js');
   configure(normalizeSettings({ openaiKey: 'k', model: 'openai:gpt-5.2' }));
   assert.equal(env.TEXT_MODEL, undefined);
   configure(normalizeSettings({ openaiKey: 'k', model: 'openai:gpt-5.2', textModel: 'openai:gpt-5-mini' }));

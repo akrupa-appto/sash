@@ -88,7 +88,7 @@ mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, e
     ...(!signal.aborted && pendingRequest ? { requests: [pendingRequest], request: pendingRequest } : {}),
   });
 } } });
-await import('./extension/background.js');
+await import('../extension/background.js');
 const send = message => new Promise(resolve => chrome.runtime.onMessage.fire(message, { id: chrome.runtime.id, url: chrome.runtime.getURL('panel.html') }, resolve));
 const until = async predicate => {
   for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); }

@@ -26,7 +26,7 @@ mock.module('../src/planner.ts', { namedExports: {
   plannerModel: () => 'fixture',
   plan: async (ctx) => { planCalls.push(ctx); return { ...plans.shift(), ms: 1, cost_usd: 0 }; },
 }});
-const { runTask } = await import('./agent.ts');
+const { runTask } = await import('../src/agent.ts');
 const choice = (operation, achieved = 0) => ({
   operation: { choice: operation }, goal_achieved: { noul: achieved },
   click_target: { choice: 'el_1' },

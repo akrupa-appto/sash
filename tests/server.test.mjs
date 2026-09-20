@@ -26,7 +26,7 @@ mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, e
 const oldPort = process.env.PORT;
 process.env.PORT = '0';
 process.env.OPENROUTER_API_KEY ??= 'test-key'; // careful-mode tasks need a connected planner provider
-const { server } = await import('./server.ts');
+const { server } = await import('../src/server.ts');
 if (!server.listening) await once(server, 'listening');
 if (oldPort === undefined) delete process.env.PORT; else process.env.PORT = oldPort;
 const base = `http://127.0.0.1:${server.address().port}`;

@@ -11,7 +11,7 @@ globalThis.chrome = {
     request: async ({ origins }) => { requested.push(origins); held.push(...origins); return true; },
   },
 };
-const { ensureOriginAccess, ensureAllSitesAccess, originPrompt, allSitesPrompt } = await import('./extension/permissions.js');
+const { ensureOriginAccess, ensureAllSitesAccess, originPrompt, allSitesPrompt } = await import('../extension/permissions.js');
 
 const reset = () => { requested.length = 0; held = []; };
 // What the panel does with a prompt: ask Chrome from the click, then answer the worker.
