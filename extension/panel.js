@@ -106,19 +106,43 @@ function chooseTab(tab) {
   input.setRangeText('', mention.start, mention.end, 'end');
   closePicker(); renderSelected(); input.focus(); controls();
 }
+const ICON_CHECK = '<svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_CHEV = '<svg class="chev" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 // A finished step's row always shows its expanded sentence: by the time an entry exists the action is
-// already done, so there is no live/ticker form to show here (the ticker is used in #status-text instead).
+// already done, so every glyph resolves straight to its check — there is no live/ticker form to show
+// here (the ticker is used in #status-text instead). Raw execution detail (why a step was corrected,
+// retried or failed) is the one thing on this row set in monospace, faded out behind a gradient mask
+// rather than hard-clipped; everything else on the row is Archivo.
 function stepElement(s) {
   const el = document.createElement('div'); el.className = 'step';
-  el.textContent = `${s.step}. ${s.log?.expanded || s.plan || s.action}`;
-  for (const text of [s.log ? '' : (s.plan ? s.action : ''), s.note].filter(Boolean)) { const p = document.createElement('p'); p.textContent = text; el.append(p); }
+  const glyph = document.createElement('span'); glyph.className = 'status-glyph'; glyph.innerHTML = ICON_CHECK; glyph.setAttribute('aria-hidden', 'true');
+  const body = document.createElement('div'); body.className = 'step-body';
+  const label = document.createElement('span'); label.className = 'step-label'; label.textContent = s.log?.expanded || s.plan || s.action;
+  body.append(label);
+  if (s.note) { const detail = document.createElement('div'); detail.className = 'tool-output'; detail.textContent = s.note; body.append(detail); }
+  el.append(glyph, body);
   return el;
 }
-// The collapsed <details> summary reads as one joined sentence ("opened the upload tab, clicked upload"),
-// not a step count or a stack trace: the first fragment starts a sentence, the rest read lowercase mid-sentence.
+// The collapsed trace reads as one joined sentence ("opened the upload tab, clicked upload"), not a
+// step count or a stack trace, when read by assistive tech: it is the header's aria-label, kept off
+// the visible face so the visible face can carry checkto's own tick track and duration instead.
 function summarySentence(steps) {
   if (!steps.length) return 'activity';
   return steps.map((s, i) => (s.log ? (i === 0 ? s.log.fragmentCapitalized : s.log.fragment) : (s.plan || s.action))).join(', ');
+}
+// The segmented tick track — checkto's signature move. One filled tick per step that has landed;
+// there is no "pending" tick because the agent loop only ever records a step once it is done, so the
+// track itself, growing turn over turn, is the progress signal (see the .trace-header comment in
+// style.css for why glyphs never show an in-flight state).
+function ticksMarkup(count) {
+  return `<span class="ticks" aria-hidden="true">${'<span class="tick is-done"></span>'.repeat(count)}</span>`;
+}
+function stepCountLabel(count) { return `${count} step${count === 1 ? '' : 's'}`; }
+// The visible face of a trace header: ticks, then a plain label, then (for a collapsible, finished
+// trace) the chevron. The prose join-sentence goes on aria-label instead, so screen readers still get
+// a sentence, never a step count read as a stack trace.
+function traceHeaderMarkup(steps, label, { chevron } = {}) {
+  return ticksMarkup(steps.length) + `<span class="trace-label">${label}</span>` + (chevron ? ICON_CHEV : '');
 }
 // Three states only, phrased as what happened to the run, not as the agent's failure.
 function formatDuration(ms) {
@@ -180,7 +204,17 @@ function requestCard(pending) {
   const card = el('div', 'notice request-card');
   card.dataset.requestType = pending.type;
   if (pending.kind) card.dataset.requestKind = pending.kind;
-  card.append(el('p', 'request-question', pending.question || `allow checkto to ${pending.action}?`));
+  // An explicit question (an ask, a picker) is plain sentence text. An approval with no question of
+  // its own is phrased around the action it wants to take, and that action is the one place in the
+  // whole panel where colour is used to mean "needs you": it's the thing being asked about, set in
+  // the same amber the status strip's "needs your attention" state uses.
+  if (pending.question) {
+    card.append(el('p', 'request-question', pending.question));
+  } else if (pending.action) {
+    const q = el('p', 'request-question');
+    q.append('allow checkto to ', el('span', 'request-target', pending.action), '?');
+    card.append(q);
+  }
   if (pending.why) card.append(el('p', 'muted', pending.why));
   if (pending.screenshot) {
     const shot = document.createElement('img');
@@ -286,21 +320,28 @@ function render(state) {
     const body = document.createElement('div'); body.textContent = m.text;
     el.append(label);
     // The actions belong above the reply they produced, so the answer stays the last thing on screen.
-    // The duration divider sits between them: it is that run's own outcome, not the current run's.
+    // The trace header IS that run's duration line ("Worked for Ns ›") — there is no separate divider
+    // repeating it below; when a run ended too fast to report a duration, the header falls back to a
+    // plain step count instead of leaving the header blank.
     if (m.steps?.length) {
-      const wrap = document.createElement('details'); wrap.className = 'steps';
-      const summary = document.createElement('summary'); summary.textContent = summarySentence(m.steps);
-      wrap.append(summary, ...m.steps.map(stepElement));
+      const wrap = document.createElement('details'); wrap.className = 'trace steps';
+      const header = document.createElement('summary'); header.className = 'trace-header';
+      header.setAttribute('aria-label', summarySentence(m.steps));
+      const label = durationText({ startedAt: m.startedAt, endedAt: m.endedAt, stopped: m.stopped, live: false }) || stepCountLabel(m.steps.length);
+      header.innerHTML = traceHeaderMarkup(m.steps, label, { chevron: true });
+      const body = document.createElement('div'); body.className = 'trace-body';
+      const inner = document.createElement('div'); inner.className = 'trace-steps'; inner.append(...m.steps.map(stepElement));
+      body.append(inner);
+      wrap.append(header, body);
       el.append(wrap);
-      const text = durationText({ startedAt: m.startedAt, endedAt: m.endedAt, stopped: m.stopped, live: false });
-      if (text) { const d = document.createElement('div'); d.className = 'duration'; d.textContent = text; el.append(d); }
     }
     el.append(body);
     return el;
   }));
   // The live list only covers the run in flight; once it ends the steps move onto that run's reply.
   $('#steps-wrap').hidden = !running || !state.steps.length;
-  $('#steps-label').textContent = summarySentence(state.steps);
+  $('#steps-label').setAttribute('aria-label', summarySentence(state.steps));
+  $('#steps-label').innerHTML = traceHeaderMarkup(state.steps, stepCountLabel(state.steps.length));
   $('#steps').replaceChildren(...state.steps.map(stepElement));
   const latest = state.steps.at(-1);
   $('#status-text').textContent = running ? (latest?.log?.ticker || latest?.plan || latest?.action || (state.status === 'connecting' ? 'connecting to your tab…' : 'reading your page…')) : ({ ready: 'ready when you are', done: 'finished', error: 'could not finish', stopped: 'stopped', blocked: 'needs your attention', needs_input: 'waiting for your answer', max_steps: 'step limit reached' }[state.status] || state.status);
@@ -322,7 +363,7 @@ function render(state) {
 }
 // A single scrollTop = scrollHeight read right after replaceChildren() is not actually stale —
 // browsers force layout on that read — but content can still grow *after* this point (the
-// Outfit web font swapping in via font-display:swap, an image finishing decode, the steps
+// Archivo web font swapping in via font-display:swap, an image finishing decode, the steps
 // <details> settling its final box), and nothing re-corrects the scroll position when that
 // happens. That's what leaves the scrollbar thumb short of the track end, or the actions
 // toggle sitting right at the clipped edge next to the status strip. So instead of a one-shot
