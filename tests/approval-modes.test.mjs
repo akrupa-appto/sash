@@ -43,6 +43,11 @@ test('the widest approval scope allows and saves, and warns before it does', () 
 test('each approval mode reaches the planner as an instruction, and the default stays silent', () => {
   assert.match(approvalInstruction('every'), /ask before every action/);
   assert.match(approvalInstruction('every'), /before every action that changes the page or sends anything/);
+  // Without this sentence the resumed run asks the same approval again and the action the user just
+  // allowed never runs — the card answers a question the planner then repeats. Lab-verified against
+  // the real planner: with an approved line in the history it continues, without one it still asks.
+  assert.match(approvalInstruction('every'), /paused → approved <action> \(<scope>\)/, 'the instruction says what an answered approval means');
+  assert.match(approvalInstruction('every'), /Any other action still needs its own approval/, 'and that every other action is still asked about');
   assert.match(approvalInstruction('none'), /never ask/);
   assert.equal(approvalInstruction('risky'), '', 'the middle setting is the prompt that shipped');
   assert.equal(approvalInstruction(undefined), '', 'a server with no extension settings keeps its own behaviour');
