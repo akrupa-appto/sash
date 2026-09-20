@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>checkto — microphone</title>
+</head>
+<body>
+<!-- Offscreen document (reason: USER_MEDIA). No UI: this page only exists so getUserMedia and
+     MediaRecorder have a stable extension document to run in, since a side panel document cannot
+     reliably anchor the mic permission prompt. See https://developer.chrome.com/docs/extensions/reference/api/offscreen -->
+<script src="offscreen.js" type="module"></script>
+</body>
+</html>

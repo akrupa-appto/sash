@@ -43,8 +43,8 @@ const finished = {
   ],
 };
 
-async function panel(state) {
-  const page = await browser.newPage();
+async function panel(state, { width } = {}) {
+  const page = await browser.newPage(width ? { viewport: { width, height: 720 } } : undefined);
   await page.addInitScript(() => {
     const ev = () => ({ addListener() {}, removeListener() {} });
     window.chrome = {
@@ -71,14 +71,24 @@ async function panel(state) {
   return page;
 }
 
-test('a finished run shows its answer after its own actions and their duration, not before them', { skip }, async () => {
+test('a finished run shows its answer after its own actions and duration, the duration line itself being the trace handle', { skip }, async () => {
   const page = await panel(finished);
+  // No separate ".duration" divider any more: design 4's trace header line ("Worked for Ns") IS the
+  // duration line — repeating it in a sibling element would just say the same thing twice.
   const order = await page.evaluate(() => [...document.querySelector('.message.agent').children].map(el => el.className || el.tagName.toLowerCase()));
-  assert.deepEqual(order, ['message-label', 'steps', 'duration', 'div']);
+  assert.deepEqual(order, ['message-label', 'trace steps', 'div']);
   assert.equal(await page.locator('.message.agent > div').last().innerText(), 'uploaded it; the file URL opens.');
-  // The collapsed summary reads as one lowercase-joined sentence, not a step count or a stack trace.
-  assert.equal(await page.locator('.message.agent .steps summary').innerText(), 'Opened tab: ~/upload, clicked the "upload" button');
-  assert.equal(await page.locator('.message.agent .duration').innerText(), 'Worked for 2m');
+  // The visible trace header reads "Worked for Ns", not a prose step sentence; the joined-sentence
+  // prose lives on aria-label instead, so assistive tech still gets a sentence, never a stack trace.
+  assert.equal(await page.locator('.message.agent .steps summary .trace-label').innerText(), 'Worked for 2m');
+  assert.equal(await page.locator('.message.agent .steps summary').getAttribute('aria-label'), 'Opened tab: ~/upload, clicked the "upload" button');
+  assert.doesNotMatch(
+    await page.locator('.message.agent .steps summary').evaluate(el => getComputedStyle(el).fontFamily),
+    /mono/i,
+  );
+  // The signature move: one filled tick per step that landed.
+  assert.equal(await page.locator('.message.agent .steps .tick').count(), 2);
+  assert.equal(await page.locator('.message.agent .steps .tick.is-done').count(), 2);
   // The answer is the last thing in the transcript, so autoscroll lands on it; the live steps/duration
   // elements stay in the DOM but hidden, since no run is in flight.
   assert.equal(await page.locator('#steps-wrap').isHidden(), true);
@@ -95,7 +105,7 @@ test('a run the user stopped reads as the user\'s action, not the agent\'s failu
     ],
   };
   const page = await panel(stopped);
-  assert.equal(await page.locator('.message.agent .duration').innerText(), 'You stopped after 40s');
+  assert.equal(await page.locator('.message.agent .steps summary .trace-label').innerText(), 'You stopped after 40s');
   await page.close();
 });
 
@@ -106,12 +116,38 @@ test('a run shorter than one second shows no duration divider at all', { skip },
   await page.close();
 });
 
-test('the live action list only shows while the run is in flight, and ticks a "Working" duration once a second has passed', { skip }, async () => {
+test('the live action list only shows while the run is in flight, carries the join-sentence as its aria-label, and ticks a "Working" duration once a second has passed', { skip }, async () => {
   const page = await panel({ ...finished, running: true, status: 'working', startedAgoMs: 2000, messages: finished.messages.slice(0, 1) });
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);
-  assert.equal(await page.locator('#steps-label').innerText(), 'Opened tab: ~/upload, clicked the "upload" button');
+  assert.equal(await page.locator('#steps-label .trace-label').innerText(), '2 steps');
+  assert.equal(await page.locator('#steps-label').getAttribute('aria-label'), 'Opened tab: ~/upload, clicked the "upload" button');
   assert.equal(await page.locator('.message.agent').count(), 0);
   assert.equal(await page.locator('#live-duration').innerText(), 'Working');
+  await page.close();
+});
+
+test('the segmented tick track advances as steps land', { skip }, async () => {
+  const page = await panel({ ...finished, running: true, status: 'working', startedAgoMs: 2000, steps: steps.slice(0, 1), messages: finished.messages.slice(0, 1) });
+  assert.equal(await page.locator('#steps-label .tick').count(), 1);
+  assert.equal(await page.locator('#steps-label .tick.is-done').count(), 1);
+  // A second step lands: the track grows by one more filled tick, it does not reset or replace itself.
+  await page.evaluate(s => window.onState({ type: 'state', state: s }), { ...finished, running: true, status: 'working', steps, messages: finished.messages.slice(0, 1) });
+  assert.equal(await page.locator('#steps-label .tick').count(), 2);
+  assert.equal(await page.locator('#steps-label .tick.is-done').count(), 2);
+  await page.close();
+});
+
+test('monospace is confined to genuine tool output: the row label stays sans, only a raw execution note goes mono', { skip }, async () => {
+  const notedSteps = [{ ...steps[0], note: 'jev chose "confirm", corrected to the element the supervisor named' }, steps[1]];
+  const page = await panel({ ...finished, steps: notedSteps, messages: [finished.messages[0], { ...finished.messages[1], steps: notedSteps }] });
+  // The trace is collapsed at rest, so its content has no rendered box yet; read it structurally
+  // (textContent) rather than by rendered innerText, the same way a stylesheet-agnostic check should.
+  const row = page.locator('.message.agent .step').first();
+  assert.equal(await row.locator('.tool-output').textContent(), 'jev chose "confirm", corrected to the element the supervisor named');
+  assert.match(await row.locator('.tool-output').evaluate(el => getComputedStyle(el).fontFamily), /Plex Mono/i);
+  assert.doesNotMatch(await row.locator('.step-label').evaluate(el => getComputedStyle(el).fontFamily), /Plex Mono/i);
+  // The second row has no note at all, so it renders no tool-output block whatsoever.
+  assert.equal(await page.locator('.message.agent .step').nth(1).locator('.tool-output').count(), 0);
   await page.close();
 });
 
@@ -134,6 +170,22 @@ test('a page that blocked the run says in the panel which check stopped it', { s
   assert.equal(await page.locator('#blocked').isVisible(), true);
   assert.match(await page.locator('#blocked').innerText(), /captcha/);
   assert.equal(await page.locator('#status-text').innerText(), 'needs your attention');
+  // It gets the same bordered-card treatment as its sibling "needs you" states (ask, approval,
+  // credential), not bare caption text: same background and radius as a request card.
+  const [blockedBg, blockedRadius] = await page.locator('#blocked').evaluate(el => {
+    const style = getComputedStyle(el);
+    return [style.backgroundColor, style.borderRadius];
+  });
+  const cardStyle = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.className = 'notice request-card';
+    document.body.append(probe);
+    const style = getComputedStyle(probe);
+    const result = [style.backgroundColor, style.borderRadius];
+    probe.remove();
+    return result;
+  });
+  assert.deepEqual([blockedBg, blockedRadius], cardStyle);
   // A run that ended cleanly says nothing about being blocked.
   await page.evaluate(s => window.onState({ type: 'state', state: s }), finished);
   assert.equal(await page.locator('#blocked').isHidden(), true);
@@ -243,6 +295,14 @@ test('the widest approval scope is confirmed a second time with the warning spel
   await page.close();
 });
 
+test('the approval scope buttons form an even grid at narrow width, not a ragged wrap', { skip }, async () => {
+  const page = await panel(waiting([approvalRequest({ action: 'submit the $89.00 order', origin: 'https://example.test' })]), { width: 320 });
+  const widths = await page.locator('.request-actions button').evaluateAll(els => els.map(e => e.getBoundingClientRect().width));
+  assert.equal(widths.length, 4);
+  for (const w of widths) assert.ok(Math.abs(w - widths[0]) <= 1, `every scope button should share one column width, got ${widths}`);
+  await page.close();
+});
+
 test('a run waiting on the user reads as asking, not as ordinary chat text', { skip }, async () => {
   const page = await panel({
     running: false, status: 'needs_input', steps: [],
@@ -345,8 +405,10 @@ test('clicking new-chat resets the status strip to ready, even if a stale broadc
   await page.close();
 });
 
-// The plum tokens once lived on .panel-page, so settings.html rendered the old cream theme.
-test('the settings page renders the same plum theme as the panel', { skip }, async () => {
+// The old plum tokens once lived only on .panel-page, so settings.html rendered a different theme
+// from the panel. Both now read the same design-4/palette-4 tokens from :root, so they must compute
+// to the exact same near-black neutral and the same UI typeface.
+test('the settings page renders the same neutral theme as the panel', { skip }, async () => {
   const page = await browser.newPage();
   await page.addInitScript(() => {
     const store = {};
@@ -361,10 +423,10 @@ test('the settings page renders the same plum theme as the panel', { skip }, asy
     const style = getComputedStyle(document.body);
     return { bg: style.backgroundColor, fg: style.color, font: style.fontFamily, scheme: getComputedStyle(document.documentElement).colorScheme };
   });
-  assert.equal(theme.bg, 'rgb(23, 16, 32)');
-  assert.equal(theme.fg, 'rgb(245, 235, 240)');
+  assert.equal(theme.bg, 'oklch(0.14 0 0)');
+  assert.equal(theme.fg, 'oklch(0.95 0 0)');
   assert.equal(theme.scheme, 'dark');
-  assert.match(theme.font, /^Outfit/);
+  assert.match(theme.font, /^Archivo/);
   await page.close();
 });
 
@@ -377,7 +439,9 @@ test('the compose box is a full pill for a single-line message and steps down on
   const radius = async () => box.evaluate(el => getComputedStyle(el).borderRadius);
   assert.equal(await radius(), '999px');
   await goal.fill('one\ntwo\nthree');
-  assert.equal(await radius(), '20px');
+  // r-20 in checkto's radius scale (20px * 1.25) — the "role" radius token for a multi-line container,
+  // not the bare 20px a scale-less system would reach for.
+  assert.equal(await radius(), '25px');
   await goal.fill('back to one line');
   assert.equal(await radius(), '999px');
   await page.close();
@@ -394,5 +458,17 @@ test('the @ and send buttons sit at the bottom of a tall compose box, next to th
   for (const button of [mentionBox, sendBox]) {
     assert.ok(Math.abs((button.y + button.height) - (goalBox.y + goalBox.height)) <= 4, 'button bottom should align with the textarea bottom, not float in the middle');
   }
+  await page.close();
+});
+
+test('the @ button stays centered next to a wrapped placeholder, not pinned under it, when the composer is disabled', { skip }, async () => {
+  const page = await panel(waiting([{ id: 'ask-1', type: 'user_input', question: 'which README do you mean?' }]), { width: 320 });
+  const goal = page.locator('#goal');
+  assert.equal(await goal.isDisabled(), true);
+  const [goalBox, mentionBox] = await Promise.all([goal.boundingBox(), page.locator('#mention-tabs').boundingBox()]);
+  assert.ok(goalBox.height > 30, 'the disabled placeholder should have wrapped to more than one line');
+  const goalCenter = goalBox.y + goalBox.height / 2;
+  const mentionCenter = mentionBox.y + mentionBox.height / 2;
+  assert.ok(Math.abs(goalCenter - mentionCenter) <= 4, '@ should sit centered beside the wrapped placeholder, not next to only its last line');
   await page.close();
 });

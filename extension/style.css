@@ -1,39 +1,299 @@
-:root,:host{color-scheme:dark;--bg:#171020;--deep:#0E0A14;--panel:#0E0A14;--line:rgba(255,255,255,.1);--fg:#F5EBF0;--dim:rgba(245,235,240,.55);--acc:#FFB48A;--sky:#97D7FF;--bad:#FF8A7A;font:14px/1.5 Outfit,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}[data-surface=settings]{--panel:#1F1529}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg)}button,input,select,textarea{font:inherit}button,a,input,select,textarea{outline-offset:3px}button{cursor:pointer;border:1px solid transparent;border-radius:8px;padding:10px 15px;background:var(--fg);color:var(--bg);font-weight:550}button:hover{filter:brightness(.94)}button:disabled{opacity:.35;cursor:default}button.secondary{border-color:var(--line);background:var(--deep);color:var(--fg)}a{color:var(--acc)}h1,h2,p{margin-top:0}h1{font-size:28px;letter-spacing:-1px;font-weight:550;line-height:1.15}h2{font-size:16px;font-weight:600}p{color:var(--dim)}.muted{color:var(--dim);font-size:12px}.eyebrow{font-size:16px;color:var(--fg);margin-bottom:20px;font-weight:650}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.spacer{flex:1}.field{display:grid;gap:7px;margin-bottom:20px}.field label{font-weight:550}.field small{color:var(--dim)}input,select,textarea{width:100%;min-width:0;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 12px}input::placeholder,textarea::placeholder{color:rgba(245,235,240,.35)}textarea{resize:vertical}.status{font-size:12px;color:var(--acc)}.error{color:var(--bad);overflow-wrap:anywhere}.error:empty{display:none}[hidden]{display:none!important}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.settings-page{max-width:660px;margin:0 auto;padding:48px 24px 60px}.settings-page header{margin-bottom:32px}.settings-page section{border-top:1px solid var(--line);padding-top:24px;margin-top:28px}.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}.key-row{display:flex;gap:8px}.key-row button{padding:8px 12px;font-size:12px}.save-row{margin-top:24px;padding:20px 0 0}.save-row .status{margin-top:12px}.privacy{padding:16px;background:var(--deep);border:1px solid var(--line);border-radius:12px;margin:24px 0 0}.settings-page details summary{cursor:pointer;color:var(--dim);margin-bottom:16px}
-@font-face{font-family:Outfit;src:url(fonts/outfit.woff2) format("woff2");font-weight:100 900;font-display:swap}
-.panel-page{height:100dvh;display:flex;flex-direction:column;min-width:260px;background:var(--bg);color:var(--fg);font-size:13px}
-.panel-header{padding:20px 20px 0;display:flex;align-items:center;justify-content:space-between;flex:none}.brand{font:400 17px/1 Outfit,sans-serif;letter-spacing:-.01em}.header-actions{display:flex;gap:14px}.text-button{background:transparent;border:0;padding:4px 0;font-size:12px;color:var(--dim);font-weight:400}.text-button:hover{color:var(--fg);filter:none}
-.content{flex:1;min-height:0;overflow-y:auto;overflow-anchor:auto;padding:12px 20px 20px;scrollbar-width:thin}
-.intro{padding-top:clamp(20px,9vh,60px)}.intro h1{font:300 34px/1.05 Outfit,sans-serif;letter-spacing:-.02em;margin-bottom:28px}.intro h1 b{font-weight:600}.intro p{line-height:1.7;margin-top:22px}
-.tab-card{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--deep)}.tab-card-shot{position:relative;aspect-ratio:16/9;display:grid;place-items:center;background:radial-gradient(80% 90% at 50% 100%,#2A1B33,var(--deep))}.tab-card-shot img{width:36px;height:36px;border-radius:8px;filter:grayscale(1);opacity:.85}.tab-card-mark{font:600 32px/1 Outfit,sans-serif;color:rgba(245,235,240,.35)}.tab-card-mark[hidden]{display:none!important}.tab-card .hand{position:absolute;width:24px;height:24px;left:56%;top:34%;filter:drop-shadow(0 4px 8px rgba(0,0,0,.4));animation:drift 2.4s ease-in-out infinite alternate}@keyframes drift{to{transform:translate(18px,-10px)}}
-.tab-card-foot{display:flex;justify-content:space-between;gap:10px;padding:10px 14px;font-size:11px}.tab-card-foot span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tab-card-foot span:last-child{color:var(--dim);white-space:nowrap}
-.examples{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}.examples button{background:transparent;border:1px solid var(--line);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:400;color:var(--dim)}.examples button:hover{color:var(--fg);border-color:rgba(255,255,255,.3);filter:none}
-.message{margin:8px 0 20px;overflow-wrap:anywhere}.message-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.message>div{white-space:pre-wrap;line-height:1.6}.message.user>div{font:400 21px/1.3 Outfit,sans-serif;letter-spacing:-.01em;margin-top:10px}.message.agent>div{font-size:14px;padding-left:16px;position:relative;color:rgba(245,235,240,.85)}.message.agent>div::before{content:"";position:absolute;left:0;top:.6em;width:7px;height:7px;border-radius:50%;background:var(--acc)}.message.agent.asking>div{color:var(--fg)}.message.agent.asking>div::before{background:#facc15}
-.steps{margin-top:8px;border-top:1px solid var(--line);padding-top:12px}.steps summary{color:var(--dim);font-size:11px;cursor:pointer;font-family:ui-monospace,Menlo,monospace}.step{font-size:12px;border-left:1px solid rgba(255,255,255,.15);padding:6px 0 6px 12px;margin:8px 0;overflow-wrap:anywhere;color:rgba(245,235,240,.85)}.step p{font-size:11px;margin:4px 0}.message .steps{margin:10px 0 14px}.duration{font-size:11px;color:var(--dim);font-family:ui-monospace,Menlo,monospace;margin:8px 0}
-.composer{flex:none;padding:0 12px 12px;background:var(--bg)}
-.run-status{display:flex;align-items:center;gap:8px;font:11px/1 ui-monospace,Menlo,monospace;color:var(--dim);background:var(--deep);border:1px solid var(--line);border-bottom:0;border-radius:14px 14px 0 0;padding:10px 14px;min-width:0}#status-text{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;flex:1}.dot{width:6px;height:6px;background:rgba(245,235,240,.3);border-radius:50%;flex:none}.running .dot{background:var(--sky);animation:pulse 1.2s ease-in-out infinite}.cost{margin-left:auto;font-variant-numeric:tabular-nums}
-.mode-row{display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:6px 6px 6px;background:var(--bg)}.mode-row #model-link{font-size:11px;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mode-row select{width:auto;border:0;background:transparent;color:var(--acc);font-size:11px;padding:2px 0;cursor:pointer;text-decoration:underline;text-underline-offset:4px}
-.compose-box{position:relative;background:var(--deep);border:1px solid var(--line);border-radius:999px;padding:6px 6px 6px 14px}.compose-box:has(textarea[data-multiline]){border-radius:20px}.compose-box:focus-within{border-color:rgba(255,180,138,.5)}
-.compose-row{display:flex;align-items:flex-end;gap:6px}.composer textarea{flex:1;border:0;box-shadow:none;outline:none;padding:7px 0;min-height:32px;max-height:140px;resize:none;font-size:13px;line-height:1.4;background:transparent;color:var(--fg);field-sizing:content}.composer textarea::placeholder{color:rgba(245,235,240,.35)}
-.mention-button{background:transparent;color:var(--dim);padding:0 4px;font-size:17px;border:0}.mention-button:hover{color:var(--fg);filter:none}
-.send-button,.stop-button{display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:50%;font-size:18px;background:var(--acc);color:var(--bg);flex:none}.stop-button{font-size:12px;background:var(--fg)}.panel-page .send-button,.panel-page .stop-button{color:var(--bg)}
-.composer-caption{display:flex;justify-content:space-between;gap:8px;color:var(--dim);font-size:10px;margin:8px 8px 0}.composer-caption span:last-child{white-space:nowrap}.composer .error{margin:8px 8px 0;color:var(--bad)}
-.notice{padding:14px;background:var(--deep);border:1px solid var(--line);border-radius:12px;margin-bottom:16px}.notice p{margin:0 0 10px;color:var(--fg)}.notice button{font-size:12px}
-.selected-tabs{display:flex;gap:5px;flex-wrap:wrap}.selected-tabs:not(:empty){padding:4px 0 6px}.tab-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 8px;font-size:10px;background:rgba(255,180,138,.12);color:var(--acc);border:1px solid rgba(255,180,138,.25);border-radius:999px}
-.tab-picker{position:absolute;z-index:3;left:-1px;right:-1px;bottom:calc(100% + 8px);border:1px solid var(--line);border-radius:14px;background:var(--deep);box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden}.picker-heading{display:flex;justify-content:space-between;padding:11px 12px 7px;font-size:11px;font-weight:600;color:var(--dim)}#tab-count{font-weight:400}#tab-results{max-height:min(310px,43dvh);overflow:auto;padding:3px 5px;scrollbar-width:thin}
-.tab-option{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;color:var(--fg);padding:8px;border-radius:8px;font-weight:400}.tab-option[aria-selected=true]{background:rgba(255,255,255,.07)}.tab-option[aria-disabled=true]{opacity:.5}.tab-monogram{display:grid;place-items:center;width:26px;height:26px;border-radius:7px;background:rgba(255,255,255,.08);color:var(--acc);flex:none;font-size:12px}.tab-option-text{min-width:0;display:grid;gap:2px}.tab-option strong,.tab-option small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400}.tab-option strong{font-size:12px}.tab-option small{font-size:10px;color:var(--dim)}.picker-footer{display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--line);padding:8px 12px;font-size:9px;color:var(--dim)}.picker-empty{font-size:12px;padding:16px 8px;margin:0}
-@keyframes pulse{50%{opacity:.3}}@media(prefers-reduced-motion:reduce){.running .dot,.tab-card .hand{animation:none}}@media(max-width:500px){.settings-page{padding:28px 18px}.two{grid-template-columns:1fr;gap:0}}@media(max-height:550px){.intro{padding-top:12px}.tab-card{display:none}.intro h1{font-size:28px}}
-.model-button{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;font-weight:400}.model-button #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.settings-page .label{display:block;margin-bottom:6px}.settings-page dialog.mp{--mp-bg:var(--deep);--mp-active:rgba(255,255,255,.08)}
+/* checkto — design 4 "Marked Rows" / palette 4 "Signal-Only". See DESIGN.md at the repo root
+   for the full rationale and token table; this file is the implementation of that record. */
 
-.blocked-reason{margin:0 8px 8px;font-size:11px;color:var(--bad)}
-.request-card{margin:0 0 8px;padding:12px}
-.request-question{margin:0 0 8px;font-size:13px}
-.request-card .muted{margin:0 0 8px}
-.request-shot{display:block;width:100%;border:1px solid var(--line);border-radius:8px;margin-bottom:10px}
-.request-fields{display:grid;gap:8px}
-.request-field{display:grid;gap:4px;font-size:11px;color:var(--dim)}
-.request-field input,.request-text{padding:8px 10px;font-size:12px}
-.request-options{display:flex;flex-wrap:wrap;gap:6px}
-.request-options button{font-size:11px;padding:6px 10px;border-radius:999px}
-.request-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
-.request-actions button{font-size:11px;padding:7px 11px}
-.confirm-warning{margin:0 0 10px;font-size:12px;color:var(--bad)}
+@font-face{font-family:Archivo;src:url(fonts/archivo.woff2) format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url(fonts/ibm-plex-mono-400.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url(fonts/ibm-plex-mono-500.woff2) format("woff2");font-weight:500;font-style:normal;font-display:swap}
+
+:root,:host{
+  color-scheme:dark;
+  /* ---- neutral ramp, chroma 0 throughout: separation is lightness only. ---- */
+  --bg-page:oklch(0.14 0 0);
+  --bg:oklch(0.17 0 0);
+  --surface-1:oklch(0.21 0 0);
+  --surface-2:oklch(0.25 0 0);
+  --surface-3:oklch(0.30 0 0);
+  --line:oklch(1 0 0/10%);
+  --line-strong:oklch(1 0 0/16%);
+  --text-1:oklch(0.95 0 0);
+  --text-2:oklch(0.74 0 0);
+  --text-3:oklch(0.62 0 0);
+  /* ---- no brand accent: interactive fills are neutral, told apart by lightness/weight. ---- */
+  --accent:oklch(0.92 0 0);
+  --accent-strong:oklch(0.98 0 0);
+  --accent-ink:oklch(0.15 0 0);
+  /* ---- colour exists only to carry meaning. ---- */
+  --status-success:oklch(0.75 0.15 145);
+  --status-danger:oklch(0.68 0.19 25);
+  --status-danger-bg:oklch(0.68 0.19 25/14%);
+  --status-warning:oklch(0.78 0.15 75);
+  --status-info:oklch(0.72 0.12 230);
+
+  /* px, not rem: :root also sets its own font-size below (14px, the panel's base body size),
+     which would otherwise silently shrink every rem-based token by the same 14/16 ratio. */
+  --spacing:4px;
+  --sp-1:calc(var(--spacing)*1);
+  --sp-2:calc(var(--spacing)*2);
+  --sp-3:calc(var(--spacing)*3);
+  --sp-4:calc(var(--spacing)*4);
+  --sp-5:calc(var(--spacing)*5);
+  --sp-6:calc(var(--spacing)*6);
+  --sp-8:calc(var(--spacing)*8);
+
+  --radius-scale:1.25;
+  --r-2:calc(2px*var(--radius-scale));
+  --r-4:calc(4px*var(--radius-scale));
+  --r-6:calc(6px*var(--radius-scale));
+  --r-8:calc(8px*var(--radius-scale));
+  --r-10:calc(10px*var(--radius-scale));
+  --r-12:calc(12px*var(--radius-scale));
+  --r-16:calc(16px*var(--radius-scale));
+  --r-20:calc(20px*var(--radius-scale));
+  --r-24:calc(24px*var(--radius-scale));
+  --radius-pill:999px;
+
+  --text-2xs:11px;
+  --text-xs:12px;
+  --text-sm:14px;
+  --text-md:16px;
+  --text-xl:28px;
+  --text-2xl:36px;
+
+  --dur-basic:.15s;
+  --dur-relaxed:.3s;
+  --ease-out:cubic-bezier(0,0,.2,1);
+  --ease-enter:cubic-bezier(.23,1,.32,1);
+  --hairline:.5px;
+
+  --font-ui:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+
+  /* legacy aliases some components still key off */
+  --fg:var(--text-1);
+  --dim:var(--text-2);
+  --deep:var(--bg-page);
+  --panel:var(--bg-page);
+  --acc:var(--accent);
+  --bad:var(--status-danger);
+
+  font:var(--text-sm)/1.5 var(--font-ui);
+}
+[data-surface=settings]{--panel:var(--bg-page)}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg-page);color:var(--text-1)}
+button,input,select,textarea{font:inherit;color:inherit}
+button,a,input,select,textarea{outline-offset:3px}
+button{cursor:pointer;border:1px solid transparent;border-radius:var(--r-8);padding:var(--sp-2) var(--sp-3);background:var(--accent);color:var(--accent-ink);font-weight:500;font-size:var(--text-xs);transition:transform var(--dur-basic) var(--ease-out),opacity var(--dur-basic) var(--ease-out)}
+button:hover{background:var(--accent-strong)}
+button:active{transform:scale(.97)}
+button:disabled{opacity:.35;cursor:default}
+button.secondary{background:var(--surface-2);color:var(--text-1)}
+button.secondary:hover{background:var(--surface-3)}
+a{color:var(--text-1);text-decoration-color:var(--text-3)}
+h1,h2,p{margin-top:0}
+h1{font-size:var(--text-xl);letter-spacing:-.01em;font-weight:700;line-height:1.2}
+h2{font-size:var(--text-md);font-weight:600}
+p{color:var(--text-2)}
+.muted{color:var(--text-3);font-size:var(--text-xs)}
+.eyebrow{font-size:var(--text-md);color:var(--text-1);margin-bottom:var(--sp-5);font-weight:700}
+.row{display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.field{display:grid;gap:var(--sp-2);margin-bottom:var(--sp-5)}
+.field label{font-weight:500}
+.field small{color:var(--text-3)}
+input,select,textarea{width:100%;min-width:0;color:var(--text-1);background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r-8);padding:var(--sp-3)}
+input::placeholder,textarea::placeholder{color:var(--text-3)}
+textarea{resize:vertical}
+.status{font-size:var(--text-xs);color:var(--text-2)}
+.error{color:var(--status-danger);overflow-wrap:anywhere}
+.error:empty{display:none}
+[hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* ---- settings page ------------------------------------------------------ */
+.settings-page{max-width:660px;margin:0 auto;padding:var(--sp-8) var(--sp-6) 60px;font-size:var(--text-sm)}
+.settings-page header{margin-bottom:var(--sp-8)}
+.settings-page section{border-top:var(--hairline) solid var(--line);padding-top:var(--sp-6);margin-top:var(--sp-6)}
+.settings-page section h2{font-size:var(--text-2xs);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin-bottom:var(--sp-5)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-5)}
+.key-row{display:flex;gap:var(--sp-2)}
+.key-row button{padding:var(--sp-2) var(--sp-3);font-size:var(--text-2xs)}
+.save-row{margin-top:var(--sp-6);padding:var(--sp-5) 0 0}
+.save-row .status{margin-top:var(--sp-3)}
+.privacy{padding:var(--sp-4);background:var(--surface-1);border-radius:var(--r-12);margin:var(--sp-6) 0 0}
+.settings-page details summary{cursor:pointer;color:var(--text-3);margin-bottom:var(--sp-4)}
+.model-button{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);width:100%;text-align:left;font-weight:400}
+.model-button #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.settings-page .label{display:block;margin-bottom:var(--sp-2)}
+.settings-page dialog.mp{--mp-bg:var(--surface-1);--mp-active:var(--surface-2)}
+
+/* ---- panel shell --------------------------------------------------------- */
+.panel-page{height:100dvh;display:flex;flex-direction:column;min-width:260px;background:var(--bg-page);color:var(--text-1);font-size:var(--text-sm)}
+.panel-header{padding:var(--sp-5) var(--sp-5) 0;display:flex;align-items:center;justify-content:space-between;flex:none}
+.brand{font:600 var(--text-sm)/1 var(--font-ui);letter-spacing:-.01em;color:var(--text-1)}
+.header-actions{display:flex;gap:var(--sp-4)}
+.text-button{background:transparent;border:0;padding:var(--sp-1) 0;font-size:var(--text-xs);color:var(--text-3);font-weight:400}
+.text-button:hover{color:var(--text-1);background:transparent}
+
+.content{flex:1;min-height:0;overflow-y:auto;overflow-anchor:auto;padding:var(--sp-3) var(--sp-5) var(--sp-5);scrollbar-width:thin}
+.content::-webkit-scrollbar{width:8px}
+.content::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:var(--r-8)}
+
+/* ---- empty state ---------------------------------------------------------- */
+.intro{padding-top:clamp(var(--sp-5),9vh,60px)}
+.intro h1{font:700 var(--text-xl)/1.25 var(--font-ui);letter-spacing:-.01em;margin-bottom:var(--sp-6);color:var(--text-1)}
+.intro h1 b{font-weight:700}
+.intro p{line-height:1.7;margin-top:var(--sp-5);color:var(--text-2)}
+.tab-card{border-radius:var(--r-16);overflow:hidden;background:var(--surface-1)}
+.tab-card-shot{position:relative;aspect-ratio:16/9;display:grid;place-items:center;background:var(--surface-2)}
+.tab-card-shot img{width:36px;height:36px;border-radius:var(--r-8);filter:grayscale(1);opacity:.85}
+.tab-card-mark{font:700 32px/1 var(--font-ui);color:var(--text-3)}
+.tab-card-mark[hidden]{display:none!important}
+.tab-card .hand{position:absolute;width:24px;height:24px;left:56%;top:34%;filter:drop-shadow(0 4px 8px rgba(0,0,0,.4));animation:drift 2.4s ease-in-out infinite alternate}
+@keyframes drift{to{transform:translate(18px,-10px)}}
+.tab-card-foot{display:flex;justify-content:space-between;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);font-size:var(--text-2xs)}
+.tab-card-foot span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* "or type @ for another" is an instructive hint (tells the user an action they can take), not a
+   status caption like the title beside it — the 12px functional floor, not the 11px caption size. */
+.tab-card-foot span:last-child{color:var(--text-3);white-space:nowrap;font-size:var(--text-xs)}
+.examples{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-6)}
+.examples button{background:var(--surface-1);color:var(--text-2);border-radius:var(--r-8);padding:var(--sp-2) var(--sp-3);font-size:var(--text-xs);font-weight:400}
+.examples button:hover{background:var(--surface-2);color:var(--text-1)}
+
+/* ---- transcript ------------------------------------------------------------ */
+.message{margin:0 0 var(--sp-6);overflow-wrap:anywhere}
+.message-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.message>div{white-space:pre-wrap;line-height:1.55;font-size:var(--text-sm)}
+.message.user{display:flex;justify-content:flex-end}
+.message.user>div{background:var(--surface-2);color:var(--text-1);max-width:84%;padding:var(--sp-2) var(--sp-3);border-radius:var(--r-16) var(--r-16) var(--r-4) var(--r-16)}
+.message.agent>div{background:var(--surface-2);border-radius:var(--r-12);padding:var(--sp-3);color:var(--text-1)}
+
+/* ---- trace: the collapsible "Worked for Ns" line, with the segmented tick
+   track — checkto's signature move. One tick lands per completed step; the
+   real agent loop only ever materializes a step once it has finished, so
+   every rendered tick is filled, not "pending" — the progression itself is
+   the track growing turn over turn, not a per-row spinner. ---- */
+.trace{margin:0 0 var(--sp-3)}
+.trace-header{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-1) 0;cursor:default;list-style:none;color:var(--text-3);font-size:var(--text-xs)}
+.trace-header::-webkit-details-marker{display:none}
+details.trace>.trace-header{cursor:pointer}
+.ticks{display:flex;gap:3px;flex:none}
+.tick{width:8px;height:8px;border-radius:var(--r-2);background:var(--surface-3);transform:scale(1);transition:background-color var(--dur-relaxed) var(--ease-out),transform var(--dur-basic) var(--ease-enter)}
+.tick.is-done{background:var(--status-success)}
+.trace-label{flex:1 1 auto;color:var(--text-3)}
+.trace-header .chev{width:10px;height:10px;color:var(--text-3);transition:transform var(--dur-basic) var(--ease-out);flex:none}
+details.trace[open]>.trace-header .chev{transform:rotate(90deg)}
+.trace-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--dur-relaxed) var(--ease-out)}
+details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1fr}
+.trace-body>div{overflow:hidden}
+#steps,.trace-steps{display:flex;flex-direction:column;gap:var(--sp-2);padding:var(--sp-2) 0 var(--sp-1) 0}
+
+.step{display:flex;align-items:flex-start;gap:var(--sp-2);font-size:var(--text-xs);color:var(--text-2);line-height:1.5}
+.status-glyph{width:14px;height:14px;flex:none;display:grid;place-items:center;color:var(--status-success);margin-top:2px}
+.status-glyph svg{width:12px;height:12px}
+.step-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+.step-label{flex:1 1 auto}
+
+/* ---- monospace tool output, fades out rather than clipping. This is the
+   ONLY place mono type appears: the raw execution note the agent loop
+   attaches to a step (why an action was corrected, retried, or failed),
+   never chrome, labels, or timings. ---- */
+.tool-output{font-family:var(--font-mono);font-size:var(--text-2xs);line-height:1.6;color:var(--text-2);background:var(--surface-1);border-radius:var(--r-8);padding:var(--sp-3);margin-top:var(--sp-1);max-height:92px;overflow:hidden;position:relative;-webkit-mask-image:linear-gradient(to bottom,black 55%,transparent 96%);mask-image:linear-gradient(to bottom,black 55%,transparent 96%)}
+
+.duration{font-size:var(--text-2xs);color:var(--text-3);margin:var(--sp-2) 0}
+
+/* ---- composer -------------------------------------------------------------- */
+.composer{flex:none;padding:0 var(--sp-3) var(--sp-3);background:var(--bg-page)}
+.run-status{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--text-2xs);line-height:1;color:var(--text-3);background:var(--surface-1);border-radius:var(--r-16) var(--r-16) 0 0;padding:var(--sp-3) var(--sp-4);min-width:0}
+#status-text{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;flex:1}
+.dot{width:6px;height:6px;background:var(--text-3);border-radius:50%;flex:none}
+.running .dot{background:var(--status-info);animation:pulse 1.2s ease-in-out infinite}
+.cost{margin-left:auto;font-variant-numeric:tabular-nums}
+
+.mode-row{display:flex;justify-content:flex-end;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-2) var(--sp-2);background:var(--bg-page)}
+.mode-row #model-link{font-size:var(--text-2xs);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mode-row select{width:auto;border:0;background:transparent;color:var(--text-2);font-size:var(--text-2xs);padding:2px 0;cursor:pointer;text-decoration:underline;text-underline-offset:4px}
+
+/* unslop-ignore: pill-to-rounded-rect on this one control is a deliberate ChatGPT-style
+   composer decision from todo.md, not the default "round everything" tell. */
+.compose-box{position:relative;background:var(--surface-1);border-radius:var(--radius-pill);padding:var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4)}
+.compose-box:has(textarea[data-multiline]){border-radius:var(--r-20)}
+.compose-box:focus-within{border:1px solid var(--line-strong)}
+.compose-row{display:flex;align-items:center;gap:var(--sp-2)}
+.compose-row:has(textarea[data-multiline]:not(:disabled)){align-items:flex-end}
+.composer textarea{flex:1;border:0;box-shadow:none;outline:none;padding:var(--sp-2) 0;min-height:32px;max-height:140px;resize:none;font-size:var(--text-sm);line-height:1.4;background:transparent;color:var(--text-1);field-sizing:content}
+.composer textarea::placeholder{color:var(--text-3)}
+.mention-button{background:transparent;color:var(--text-3);padding:0 var(--sp-1);font-size:17px;border:0}
+.mention-button:hover{color:var(--text-1);background:transparent}
+.send-button,.stop-button{display:grid;place-items:center;width:28px;height:28px;padding:0;border-radius:50%;font-size:var(--text-md);background:var(--accent);color:var(--accent-ink);flex:none}
+.stop-button{font-size:var(--text-xs)}
+/* Functional hint text, not meta caption: #tab-context tells the user what "send" is about to do
+   with their tabs, and "↵ send" is the keyboard-shortcut label. Both are read every time the
+   composer is used, so they get the 12px functional floor, not the 11px caption size. */
+.composer-caption{display:flex;justify-content:space-between;gap:var(--sp-2);color:var(--text-3);font-size:var(--text-xs);margin:var(--sp-2) var(--sp-2) 0}
+.composer .error{margin:var(--sp-2) var(--sp-2) 0;color:var(--status-danger)}
+
+.notice{padding:var(--sp-4);background:var(--surface-2);border-radius:var(--r-12);margin-bottom:var(--sp-4)}
+.notice p{margin:0 0 var(--sp-3);color:var(--text-1)}
+.notice button{font-size:var(--text-xs)}
+
+.selected-tabs{display:flex;gap:var(--sp-1);flex-wrap:wrap}
+.selected-tabs:not(:empty){padding:var(--sp-1) 0 var(--sp-2)}
+.tab-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:var(--sp-1) var(--sp-2);font-size:var(--text-2xs);background:var(--surface-2);color:var(--text-2);border-radius:var(--r-10)}
+
+.tab-picker{position:absolute;z-index:3;left:-1px;right:-1px;bottom:calc(100% + var(--sp-2));border-radius:var(--r-16);background:var(--surface-1);box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden}
+.picker-heading{display:flex;justify-content:space-between;padding:var(--sp-3) var(--sp-3) var(--sp-2);font-size:var(--text-2xs);font-weight:600;color:var(--text-3)}
+#tab-count{font-weight:400}
+#tab-results{max-height:min(310px,43dvh);overflow:auto;padding:3px var(--sp-1);scrollbar-width:thin}
+.tab-option{display:flex;align-items:center;gap:var(--sp-2);width:100%;text-align:left;background:transparent;color:var(--text-1);padding:var(--sp-2);border-radius:var(--r-8);font-weight:400}
+.tab-option[aria-selected=true]{background:var(--surface-2)}
+.tab-option[aria-disabled=true]{opacity:.5}
+.tab-monogram{display:grid;place-items:center;width:26px;height:26px;border-radius:var(--r-6);background:var(--surface-2);color:var(--text-2);flex:none;font-size:var(--text-xs)}
+.tab-option-text{min-width:0;display:grid;gap:2px}
+.tab-option strong,.tab-option small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400}
+.tab-option strong{font-size:var(--text-xs)}
+.tab-option small{font-size:var(--text-2xs);color:var(--text-3)}
+.picker-footer{display:flex;justify-content:space-between;gap:var(--sp-2);border-top:var(--hairline) solid var(--line);padding:var(--sp-2) var(--sp-3);font-size:var(--text-2xs);color:var(--text-3)}
+.picker-empty{font-size:var(--text-xs);padding:var(--sp-4) var(--sp-2);margin:0}
+
+@keyframes pulse{50%{opacity:.3}}
+@media(prefers-reduced-motion:reduce){
+  .running .dot,.tab-card .hand{animation:none}
+  .trace-body,.trace.is-live>.trace-body,.tick,.trace-header .chev{transition:none}
+}
+@media(max-width:500px){.settings-page{padding:28px 18px}.two{grid-template-columns:1fr;gap:0}}
+@media(max-height:550px){.intro{padding-top:12px}.tab-card{display:none}.intro h1{font-size:var(--text-md)}}
+
+/* ---- request / blocked cards: every "needs you or ends here" surface shares
+   this one treatment (deep background lift) — the same reading the finished
+   answer gets, marking it as this turn's confirmed output. ---- */
+.blocked-reason{margin:0;font-size:var(--text-sm);color:var(--status-danger)}
+.request-card,.blocked-card{margin:0 0 var(--sp-2);padding:var(--sp-3)}
+.request-question{margin:0 0 var(--sp-2);font-size:var(--text-sm)}
+.request-target{color:var(--status-warning);font-weight:500}
+.request-card .muted{margin:0 0 var(--sp-2)}
+.request-shot{display:block;width:100%;border-radius:var(--r-8);margin-bottom:var(--sp-3)}
+.request-fields{display:grid;gap:var(--sp-2)}
+.request-field{display:grid;gap:var(--sp-1);font-size:var(--text-2xs);color:var(--text-3)}
+.request-field input,.request-text{padding:var(--sp-2) var(--sp-3);font-size:var(--text-xs);background:var(--surface-1)}
+.request-options{display:flex;flex-wrap:wrap;gap:var(--sp-2)}
+.request-options button{font-size:var(--text-2xs);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-8)}
+.request-actions{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-1)}
+.request-actions button{font-size:var(--text-2xs);padding:var(--sp-2) var(--sp-3)}
+/* Affirmative actions read as one neutral surface across the panel: composer send, request-card
+   "go" buttons, and the credential submit all fill the same neutral the send button uses —
+   palette 4 carries no brand accent, so the one non-secondary button per card is told apart
+   by weight and lightness, not hue. */
+.request-actions button:not(.secondary){background:var(--accent);color:var(--accent-ink)}
+/* The scope list (allow once / this conversation / always / deny) is an even grid, not a wrap that
+   pairs whatever widths happen to fit a row: every cell is the same width at any panel width. */
+.request-actions.request-scopes{display:grid;grid-template-columns:1fr 1fr}
+.request-actions.request-scopes button{width:100%}
+.confirm-warning{margin:0 0 var(--sp-3);font-size:var(--text-xs);color:var(--status-danger)}
+/* A secondary button sits inside a card that is already surface-2 (the same deep lift the card
+   itself uses); without its own step down to surface-1 it would blend straight into the card and
+   read as plain text, not a control. */
+.notice button.secondary{background:var(--surface-1)}
+.notice button.secondary:hover{background:var(--surface-3)}

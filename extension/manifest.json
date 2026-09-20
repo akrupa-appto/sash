@@ -12,7 +12,8 @@
     "tabGroups",
     "activeTab",
     "contextMenus",
-    "scripting"
+    "scripting",
+    "offscreen"
   ],
   "host_permissions": [
     "https://openrouter.ai/*",
