@@ -18,17 +18,21 @@ export function originOf(url) {
 }
 
 export function originPattern(url) {
-  const origin = originOf(url);
-  return origin ? `${origin}/*` : '';
+  try {
+    const parsed = new URL(url);
+    // Chrome match patterns do not accept ports. Access is necessarily host-wide across ports,
+    // while the prompt still names the exact origin the task opened.
+    return /^https?:$/.test(parsed.protocol) ? `${parsed.protocol}//${parsed.hostname}/*` : '';
+  } catch { return ''; }
 }
 
 export function originPrompt(origin) {
   return {
     scope: 'origin',
     origin,
-    origins: [`${origin}/*`],
+    origins: [originPattern(origin)],
     title: `allow checkto to access ${origin}?`,
-    detail: `checkto will read and act on pages on ${origin} while a task is running. you can take this back in chrome's extension settings.`,
+    detail: `checkto will read and act on pages on ${origin} while a task is running. Chrome grants access to every port on this host. you can take this back in chrome's extension settings.`,
     allow: 'allow this site',
     deny: 'not now',
   };
