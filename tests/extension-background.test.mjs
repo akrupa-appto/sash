@@ -86,6 +86,12 @@ globalThis.chrome = {
 // environment variables; transcribeCapability's own provider-resolution logic has its coverage in
 // tests/transcribe.test.mjs.
 mock.module('../src/transcribe.ts', { namedExports: {
+  defaultTranscriptionSpec: provider => ({
+    openrouter: 'openai/whisper-1',
+    openai: 'openai:whisper-1',
+    gemini: 'gemini:gemini-2.5-flash',
+    custom: 'custom:whisper-1',
+  })[provider],
   transcribeCapability: spec => {
     const provider = spec?.startsWith('openai:') ? 'openai' : spec?.startsWith('gemini:') ? 'gemini' : spec?.startsWith('custom:') ? 'custom' : 'openrouter';
     const key = { openrouter: data.settings.openrouterKey, openai: data.settings.openaiKey, gemini: data.settings.geminiKey, custom: data.settings.customKey }[provider];
@@ -643,6 +649,24 @@ test('a dictation:partial with no session behind it (voice disabled, or never st
   const reply = await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'buy oat milk now' }, offscreenSender, resolve));
   assert.equal(reply.ok, true);
   assert.equal(taskStarted, before, 'voice is off by default in this fixture, so this must never start a run');
+});
+
+test('voice errors are redacted before replies, broadcasts, and persisted state', async () => {
+  await withVoiceSettings({ openaiKey: 'voice-session-secret', voiceProvider: 'openai' }, async () => {
+    offscreenDocs = 0;
+    offscreenStartResult = { ok: true };
+    try {
+      offscreenStopResult = { error: 'upstream echoed voice-session-secret' };
+      await send({ type: 'dictation:start' });
+      const reply = await send({ type: 'dictation:stop' });
+      assert.equal(reply.error, 'upstream echoed [redacted]');
+      assert.equal(data.runState.dictation.error, 'upstream echoed [redacted]');
+      assert.doesNotMatch(JSON.stringify(data.runState), /voice-session-secret/);
+      assert.equal(messages.filter(message => message.type === 'state').at(-1).state.dictation.error, 'upstream echoed [redacted]');
+    } finally {
+      offscreenStopResult = { text: 'hello from the mic' };
+    }
+  });
 });
 
 // --- voice: the global "toggle-dictation" shortcut ----------------------------------------------

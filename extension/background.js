@@ -1,6 +1,5 @@
 import { runTask } from '../src/agent.ts';
-import { transcribeCapability } from '../src/transcribe.ts';
-import { PROVIDERS } from '../src/providers.ts';
+import { defaultTranscriptionSpec, transcribeCapability } from '../src/transcribe.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { ensureOriginAccess } from './permissions.js';
@@ -133,7 +132,7 @@ let seq = 0;
 // must never run while a run is mid-flight and depending on it staying configured — hence the
 // `active` check up front instead of bracketing every caller with its own guard.
 function voiceSpecFor(provider) {
-  return provider ? `${PROVIDERS[provider]?.prefix || ''}x` : undefined; // parseModel only needs the prefix
+  return provider ? defaultTranscriptionSpec(provider) : undefined;
 }
 // The last real capability this settings shape computed, so getState/the panel can keep showing an
 // accurate "what can voice do" while a run is active instead of a blanket "not available right now"
@@ -693,16 +692,21 @@ async function handle(message) {
     try {
       await ensureOffscreen();
     } catch (err) {
-      return { ok: false, error: safeError(err) };
+      return { ok: false, error: safeError(err, await readSettings()) };
     }
-    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:start', chunkMs: message.chunkMs }).catch(err => ({ error: safeError(err) }));
+    // Offscreen documents only expose chrome.runtime, not chrome.storage. Pass the already-local
+    // settings into that extension context so it can configure transcription without trying to read
+    // storage itself; raw audio still never crosses a runtime message.
+    const settings = await readSettings();
+    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:start', chunkMs: message.chunkMs, settings }).catch(err => ({ error: safeError(err, settings) }));
     if (reply?.error) {
       await closeOffscreen();
-      const needsPermissionTab = NEEDS_PERMISSION_TAB.test(reply.error);
+      const error = safeError(reply.error, settings);
+      const needsPermissionTab = NEEDS_PERMISSION_TAB.test(error);
       if (needsPermissionTab) await chrome.tabs.create({ url: chrome.runtime.getURL('mic-permission.html') }).catch(() => {});
-      state.dictation = { status: 'error', error: reply.error };
+      state.dictation = { status: 'error', error };
       await persist();
-      return { ok: false, error: reply.error, needsPermissionTab };
+      return { ok: false, error, needsPermissionTab };
     }
     dictationTriggered = false; // a fresh session: eager/prewarm may auto-run again for it
     state.dictation = { status: 'listening', partialText: '' };
@@ -712,12 +716,14 @@ async function handle(message) {
   // Stop capture, transcribe whatever is left, then always tear the offscreen document down —
   // whether or not the offscreen side reported an error — so nothing keeps a hot mic.
   if (message.type === 'dictation:stop') {
-    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(err => ({ error: safeError(err) }));
+    const settings = await readSettings();
+    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(err => ({ error: safeError(err, settings) }));
     await closeOffscreen();
     if (reply?.error) {
-      state.dictation = { status: 'error', error: reply.error };
+      const error = safeError(reply.error, settings);
+      state.dictation = { status: 'error', error };
       await persist();
-      return { ok: false, error: reply.error };
+      return { ok: false, error };
     }
     state.dictation = { status: 'idle', text: reply?.text || '' };
     await persist();
@@ -735,7 +741,7 @@ async function handle(message) {
     return { ok: true };
   }
   if (message.type === 'dictation:error') {
-    state.dictation = { ...(state.dictation || {}), status: 'error', error: safeError(message.error) };
+    state.dictation = { ...(state.dictation || {}), status: 'error', error: safeError(message.error, await readSettings()) };
     await persist();
     // A single failed partial transcription is not fatal to the session; a MediaRecorder error is —
     // it has already stopped itself and released the mic in offscreen.js, so close the document too.
