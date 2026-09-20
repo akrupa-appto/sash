@@ -1,10 +1,11 @@
 import { defaults, normalizeSettings, readSettings, validateSettings, PROVIDER_KEYS, customOrigin } from './settings.js';
 import { createModelPicker } from '../public/model-picker.js';
-import { listModels, PROVIDERS, providerLabel } from '../src/providers.ts';
+import { listModels, listTranscriptionModels, PROVIDERS, providerLabel } from '../src/providers.ts';
 import { configure, clearConfig } from '../src/env.ts';
-import { defaultTranscriptionSpec, transcribeCapability } from '../src/transcribe.ts';
+import { transcribeCapability } from '../src/transcribe.ts';
 import { VOICE_MODE_ORDER, VOICE_MODES, supportedVoiceModes } from './voice.js';
 import { mountAccessSettings } from './access-settings.js';
+import { ALL_SITES } from './permissions.js';
 mountAccessSettings();
 const form = document.querySelector('#settings');
 const status = document.querySelector('#status');
@@ -14,15 +15,39 @@ function render(settings) {
   for (const key of Object.keys(defaults)) form.elements[key].value = settings[key];
   // voiceEnabled is a boolean under the hood, not a string matching one of the select's own option
   // values, so the generic loop above leaves it on whatever the select's default happens to be;
-  // set it explicitly. voiceProvider's options are built dynamically from the keys typed above (see
-  // renderVoiceProviderOptions), so it needs the same explicit pass, done with the stored value
-  // rather than trusting .value, which the generic loop could only set against the placeholder option.
+  // set it explicitly. The same applies to the approval and site-access radios (the generic loop
+  // cannot check one from a stored string if this build does not offer that string) and to
+  // transcriptionModel, whose options are built from the keys typed above (see
+  // renderTranscriptionOptions). voiceProvider is not restored here: it is derived from the chosen
+  // speech model, so the picker stays the one place that decides it.
   form.elements.voiceEnabled.value = settings.voiceEnabled ? 'on' : 'off';
   document.querySelector('#typesafe-field').hidden = settings.provider !== 'typesafe';
-  renderVoiceProviderOptions(settings.voiceProvider);
+  restoreChoice('approvalMode', settings.approvalMode, 'every');
+  restoreChoice('siteAccessMode', settings.siteAccessMode, 'ask');
+  // The line under the site-access radios is Chrome's grant, never the stored choice: only the
+  // browser can say whether "allow every site without asking" can do what it says.
+  renderSiteAccessState();
+  // A provider saved without a model resolves to that provider's recommended one, and the same gate
+  // the key-input listener applies then decides whether a model this build does not offer may stay on
+  // screen at all — it may only while the provider it names is still connected.
+  const savedSpeech = settings.transcriptionModel || RECOMMENDED_TRANSCRIPTION[settings.voiceProvider] || '';
+  renderTranscriptionOptions({ stored: savedSpeech, savedProvider: settings.voiceProvider, keepUnlisted: keepsUnlistedModel(savedSpeech) });
+  // The rows above are on screen already; this only swaps the OpenRouter group if the live
+  // transcription catalog answers. It never blocks the paint and never empties the select.
+  refreshTranscriptionModels();
   renderVoiceModes();
   ensurePicker()?.warm(current().model).then(renderModel).catch(() => {});
   renderModel();
+}
+// A stored value that is not one of the choices this build offers (written by an older or a newer
+// build) must not leave the control blank: a select falls back to its first option, a radio group to
+// its first choice. RadioNodeList and HTMLSelectElement both accept `.value` for this, so one pass
+// covers both. The values themselves are the engine layer's (extension/settings.js).
+function restoreChoice(name, value, fallback) {
+  const field = form.elements[name];
+  if (!field) return;
+  const values = field.options ? [...field.options].map(o => o.value) : [...field].map(input => input.value);
+  field.value = values.includes(value) ? value : fallback;
 }
 const current = () => ({ model: form.elements.model.value, reasoning: form.elements.reasoning.value || 'auto' });
 const connected = () => Object.keys(PROVIDERS)
@@ -36,18 +61,219 @@ function grantCustomOrigin() {
   if (!origin || !form.elements.customKey.value.trim()) return Promise.resolve(true);
   return chrome.permissions.request({ origins: [`${origin}/*`] });
 }
+// "Allow every site without asking" is a promise about Chrome's own optional host permission, and
+// chrome.permissions.request runs from a user gesture only — a service worker never has one, so the
+// worker cannot ask for this page. The save click is the one gesture the settings page has. Called
+// with no await in front of it, so the request goes out while the gesture still counts; true means
+// Chrome granted it, and a declined prompt or a rejection means it did not.
+async function requestEverySite() {
+  try { return (await chrome.permissions.request({ origins: ALL_SITES })) === true; } catch { return false; }
+}
+// Chrome's real grant, read from the browser: the only source that can say whether the every-site
+// card is doing what it says. Never inferred from the stored setting.
+async function grantedEverySite() {
+  try { return (await chrome.permissions.contains({ origins: ALL_SITES })) === true; } catch { return false; }
+}
+// The line under the radios, in plain words and always about the grant that exists right now.
+async function renderSiteAccessState() {
+  const node = document.querySelector('#site-access-state');
+  if (!node) return;
+  const granted = await grantedEverySite();
+  const wantsEverySite = form.elements.siteAccessMode.value === 'all';
+  node.textContent = granted
+    ? 'Chrome allows checkto on every site right now.'
+    : wantsEverySite
+      ? 'Chrome has not allowed every site yet: saving asks you to confirm, and declining keeps the per-site ask.'
+      : 'Chrome has not allowed every site: checkto asks the first time on each site.';
+}
 function renderModel() {
   const label = document.querySelector('#model-label');
   label.textContent = picker ? picker.label(current()) : (current().model ? `${current().model} · reasoning ${current().reasoning}` : 'choose a model');
 }
-// The dictation provider dropdown offers only providers a key is typed for above, same as the model
-// picker's own `connected()`; "same as the planner model" (empty value) is always offered first.
-function renderVoiceProviderOptions(selected = form.elements.voiceProvider.value) {
-  const select = form.elements.voiceProvider;
-  select.replaceChildren(...[{ id: '', label: 'same as the planner model above' }, ...connected()].map(p => {
-    const option = document.createElement('option'); option.value = p.id; option.textContent = p.label; return option;
+// Speech-to-text is its own job with its own models: a chat model cannot transcribe audio, so this
+// is a separate list, not a filtered view of the planner picker above.
+//
+// These rows are the fallback, not the catalog. With an OpenRouter key typed, the page fetches
+// OpenRouter's live transcription catalog (listTranscriptionModels — the API's own
+// output_modalities=transcription filter) and replaces the OpenRouter group with it; what is written
+// here is what that group shows before the fetch lands, and what it keeps if the fetch fails
+// (offline, non-200). So this list is never the whole picture and must not claim to be: a row only
+// belongs here if it is still in the live catalog, and the live rows carry the catalog's own names
+// and prices rather than the notes below.
+//
+// The OpenRouter rows are bare model ids, not `openrouter:…`: parseModel() in src/providers.ts only
+// recognises the openai/gemini/custom prefixes and resolves everything else to OpenRouter with the
+// whole string as the model id, so a prefixed spec would be sent as a model literally named
+// "openrouter:openai/gpt-transcribe". A bare spec means OpenRouter, by design.
+// `tag` is the one-line note shown inside a fallback option, `detail` the sentence shown under the
+// select once it is chosen. The recommended row keeps its detail once the live catalog lands.
+const TRANSCRIPTION_CHOICES = [
+  { spec: 'openai/gpt-transcribe', provider: 'openrouter', label: 'GPT Transcribe (OpenAI)', tag: 'recommended', detail: "OpenAI's current speech-to-text model, reached through OpenRouter. the best all-round choice here." },
+  { spec: 'meta/muse-voice-transcribe-1.0', provider: 'openrouter', label: 'Muse Voice Transcribe (Meta)', tag: 'newest', detail: "the newest speech model in OpenRouter's catalog." },
+  { spec: 'deepgram/nova-3', provider: 'openrouter', label: 'Nova 3 (Deepgram)', tag: 'steady pick', detail: 'Deepgram\'s production speech model; a long-standing, widely used choice.' },
+  { spec: 'nvidia/parakeet-tdt-0.6b-v3', provider: 'openrouter', label: 'Parakeet TDT (NVIDIA)', tag: 'cheapest here', detail: 'a small NVIDIA model; the lowest cost per minute of these five.' },
+  { spec: 'google/chirp-3', provider: 'openrouter', label: 'Chirp 3 (Google)', tag: 'earlier Google model', detail: 'Google\'s earlier speech model; the Gemini 3.5 entry is its newer replacement.' },
+  { spec: 'openai:gpt-transcribe', provider: 'openai', label: 'GPT Transcribe', tag: 'your OpenAI key', detail: "OpenAI's current speech model on your own key, with no OpenRouter mark-up." },
+  { spec: 'gemini:gemini-3.5-transcribe', provider: 'gemini', label: 'Gemini 3.5 Transcribe', tag: 'your Gemini key', detail: "Google's current speech model on your own key." },
+  { spec: 'custom:whisper-1', provider: 'custom', label: 'your custom server\'s speech model', tag: '', detail: 'the model id your custom server expects; it must implement /v1/audio/transcriptions.' },
+];
+// A provider saved before this picker existed (voiceProvider set, no model yet) becomes that
+// provider's recommended model rather than being dropped on the next save.
+const RECOMMENDED_TRANSCRIPTION = { openrouter: 'openai/gpt-transcribe', openai: 'openai:gpt-transcribe', gemini: 'gemini:gemini-3.5-transcribe', custom: 'custom:whisper-1' };
+// The recommended model is pinned to the top of the OpenRouter group, live or fallback: it is the one
+// this page points people at, and the one "same provider as my planner model" resolves to in
+// practice. Order is therefore ours, not the catalog's.
+// OpenAI has deprecated these three (removal 2027-02-26) and they must not come back — the owner
+// rejected them by name (DECISIONS.md). OpenRouter still lists all three and publishes no
+// deprecation signal for them (`expiration_date` is null on every entry in that catalog), so naming
+// them is the only way a live list can stay honest about what is safe to offer.
+const DEPRECATED_SPEECH_MODELS = new Set(['openai/whisper-1', 'openai/gpt-4o-transcribe', 'openai/gpt-4o-mini-transcribe']);
+// The live catalog, the key it was fetched with, and the request in flight. Nothing here is a
+// promise that a fetch happened: null means "no live list", which is the first paint, a failed
+// fetch, and a page with no OpenRouter key — all three render the fallback rows.
+let liveTranscription = null;
+let liveTranscriptionKey = '';
+let liveTranscriptionRequest = null;
+// providerOfSpec mirrors parseModel's rule for the three prefixed providers and treats everything
+// else as OpenRouter, which is what a bare "openai/gpt-transcribe"-style spec means, and what ""
+// means too ("same as the planner model"). This is why no row above carries an `openrouter:` prefix.
+function providerOfSpec(spec) {
+  return Object.keys(PROVIDERS).find(id => PROVIDERS[id].prefix && spec.startsWith(PROVIDERS[id].prefix)) || (spec ? 'openrouter' : '');
+}
+// Whether a speech model this build does not offer may stay on screen at all: only while the provider
+// it names is still connected. The first paint and every key-typed re-render both ask this one
+// function, so a key that is gone cannot leave a saved model selected under "your saved choice" in
+// one path while the other drops it.
+function keepsUnlistedModel(spec) {
+  const provider = providerOfSpec(spec);
+  return Boolean(provider) && connected().some(candidate => candidate.id === provider);
+}
+// voiceProvider is the setting the voice engine still reads (extension/background.js,
+// offscreen.js). It is derived from the chosen model rather than shown as a second control, so the
+// two can never disagree: "" = whatever provider backs the planner model.
+function syncVoiceProvider() {
+  form.elements.voiceProvider.value = providerOfSpec(form.elements.transcriptionModel.value.trim());
+}
+function choiceOption(text, value) {
+  const option = document.createElement('option'); option.textContent = text; option.value = value; return option;
+}
+// 0.000075 as OpenRouter writes it, not 7.5e-5 and not a float's whole tail.
+const trimmed = value => String(value).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+// What the catalog itself publishes about a live row, in the units it publishes them in. OpenRouter
+// prices most speech models by the second of audio, and price (kept as USD per 1M units like every
+// ModelInfo — see openrouterModelInfo in src/providers.ts) comes back down to one... but not for all
+// of them, so the sentence follows the price rather than one assumed unit.
+//
+// Checked against the live catalog and each vendor's own rate card on 2026-09-20:
+// openai/whisper-1 0.0001 (OpenAI $0.006/min), deepgram/nova-3 0.0000716667 (Deepgram $0.0043/min),
+// google/chirp-3 0.0002667 (Google $0.016/min) and openai/gpt-transcribe 0.000075 all divide out to
+// their vendor's per-minute rate over 60, so "per second of audio" is literally true for them. The
+// exception is a speech model billed **per token**: those are the only catalog entries carrying a
+// non-zero completion price, and OpenRouter's own description for them says "priced per token"
+// (openai/gpt-4o-transcribe, openai/gpt-4o-mini-transcribe — both deprecated speech models this page
+// refuses to offer, so this branch is for the next token-priced row the catalog gains). Their input
+// price is therefore already USD per 1M tokens, and calling it a per-second rate would understate it
+// by orders of magnitude.
+// So: non-zero completion price means per-token wording, everything else keeps per-second. Do not
+// fold the two back into one unit. Nothing is shown for a field the payload left out, or for a zero
+// price — an unlisted or free model gets its name and no story.
+function catalogFacts(model) {
+  const facts = [];
+  const perSecond = model.price ? model.price.input / 1e6 : 0;
+  const perMillionTokens = model.price && model.price.output > 0 ? model.price.input : 0;
+  if (perMillionTokens) facts.push(`$${trimmed(perMillionTokens)} per 1M input tokens`);
+  else if (perSecond) facts.push(`$${trimmed(perSecond)} per second of audio`);
+  if (model.context) facts.push(`${model.context} token context`);
+  return facts.join(' · ');
+}
+// One row as the select wants it: `label` is the option text, `detail` the sentence under the select.
+// The fallback rows carry their own tag inside the label; a live row is labelled with the catalog's
+// name and no tag we wrote, because that name is the honest one.
+const transcriptionRows = providerId => providerId !== 'openrouter'
+  ? TRANSCRIPTION_CHOICES.filter(row => row.provider === providerId).map(row => ({ spec: row.spec, label: row.tag ? `${row.label} — ${row.tag}` : row.label, detail: row.detail }))
+  : openrouterRows();
+// The OpenRouter group's rows: the live catalog once a fetch has landed, the fallback rows until then
+// (and forever, if it never lands). Everything the live catalog superseded is gone from the list —
+// the fallback's own notes and the deprecated ids both.
+function openrouterRows() {
+  const fallback = TRANSCRIPTION_CHOICES.filter(row => row.provider === 'openrouter');
+  if (!liveTranscription?.length) return fallback.map(row => ({ spec: row.spec, label: row.tag ? `${row.label} — ${row.tag}` : row.label, detail: row.detail }));
+  const recommended = RECOMMENDED_TRANSCRIPTION.openrouter;
+  const recommendedDetail = fallback.find(row => row.spec === recommended)?.detail;
+  const live = liveTranscription.filter(model => !DEPRECATED_SPEECH_MODELS.has(model.id) && model.id !== recommended);
+  const pinned = liveTranscription.find(model => model.id === recommended);
+  return [pinned, ...live].filter(Boolean).map(model => ({
+    spec: model.id,
+    label: model.name || model.id,
+    // The recommended row keeps the sentence this page wrote about it; every other live row is
+    // described by its own catalog entry.
+    detail: model.id === recommended ? recommendedDetail : [model.name || model.id, catalogFacts(model)].filter(Boolean).join(' — '),
   }));
-  select.value = [...select.options].some(o => o.value === selected) ? selected : '';
+}
+// Fetched with whichever OpenRouter key is typed above, and only when one is: a page with no key has
+// nothing to list. The typed key is handed to listTranscriptionModels as well as gating the call —
+// nothing here is saved until "save settings", so a key that only the env knows about is not the key
+// this page is showing. Typing a key fires this per keystroke, so a newer request aborts the one
+// before it, and a reply that arrives after that is dropped rather than painted. A failure leaves the
+// fallback rows exactly as they were — a stale list is fine, a broken picker is not.
+function refreshTranscriptionModels() {
+  const key = form.elements.openrouterKey.value.trim();
+  if (!key) { liveTranscriptionRequest?.abort(); liveTranscriptionRequest = null; liveTranscriptionKey = ''; liveTranscription = null; return; }
+  if (key === liveTranscriptionKey) return;
+  liveTranscriptionKey = key;
+  liveTranscriptionRequest?.abort();
+  const request = new AbortController();
+  liveTranscriptionRequest = request;
+  listTranscriptionModels(request.signal, key).then(models => {
+    if (request.signal.aborted) return;
+    liveTranscription = models;
+    // Re-rendered under the same rule as the first paint, so the swap cannot change what is selected
+    // — including a saved model this list does not offer (see keepUnlisted below).
+    renderTranscriptionOptions({ keepUnlisted: true });
+  }).catch(() => {});
+}
+// Only providers a key is typed for above are offered, same rule as the model picker's own
+// `connected()`; "same as my planner model" (empty value) is always first.
+function renderTranscriptionOptions({ stored = form.elements.transcriptionModel.value, savedProvider = '', keepUnlisted = false } = {}) {
+  const select = form.elements.transcriptionModel;
+  const chosen = stored || RECOMMENDED_TRANSCRIPTION[savedProvider] || '';
+  const connectedIds = new Set(connected().map(p => p.id));
+  const nodes = [choiceOption('same provider as my planner model, its default speech model', '')];
+  const offered = [];
+  for (const id of ['openrouter', 'openai', 'gemini', 'custom']) {
+    const rows = transcriptionRows(id);
+    if (!connectedIds.has(id) || !rows.length) continue;
+    offered.push(...rows.map(row => row.spec));
+    const group = document.createElement('optgroup');
+    group.label = id === 'custom' ? 'your custom server' : PROVIDERS[id].label;
+    group.append(...rows.map(row => choiceOption(row.label, row.spec)));
+    nodes.push(group);
+  }
+  // A saved model this build does not offer (an id from an earlier build, or one still saved after
+  // its provider key was removed) stays visible and selected. Silently swapping the user's speech
+  // model for a different one is worse than showing a line this page has no blurb for.
+  if (keepUnlisted && chosen && !offered.includes(chosen)) {
+    const group = document.createElement('optgroup');
+    group.label = 'your saved choice';
+    group.append(choiceOption(chosen, chosen));
+    nodes.push(group);
+  }
+  select.replaceChildren(...nodes);
+  // A key removed above takes its models out of the list; a selection that is no longer offered
+  // falls back to "same as my planner model" instead of sitting on an option that is gone.
+  select.value = chosen && (offered.includes(chosen) || keepUnlisted) ? chosen : '';
+  syncVoiceProvider();
+  renderTranscriptionDetail();
+}
+// The sentence under the select: what the chosen model actually is, in plain words — a live row
+// describes itself from the catalog, the rows this file wrote use their own sentence.
+function renderTranscriptionDetail() {
+  const select = form.elements.transcriptionModel;
+  const choice = select.value ? transcriptionRows(providerOfSpec(select.value)).find(row => row.spec === select.value) : undefined;
+  const capability = currentVoiceCapability();
+  document.querySelector('#transcription-detail').textContent = select.value
+    ? (choice ? choice.detail : `your saved choice: ${select.value}.`)
+    : (capability.canTranscribe ? `that is ${providerLabel(capability.provider)} today, using its own default speech model.` : (capability.reason || ''));
 }
 // Computed live from whatever is typed in the form right now, exactly like ensurePicker()'s own
 // fetchModels() does — nothing here is saved until "save settings", so this must never read from
@@ -55,8 +281,9 @@ function renderVoiceProviderOptions(selected = form.elements.voiceProvider.value
 function currentVoiceCapability() {
   configure(normalizeSettings(Object.fromEntries(new FormData(form))));
   try {
-    const provider = form.elements.voiceProvider.value;
-    return transcribeCapability(provider ? defaultTranscriptionSpec(provider) : undefined);
+    // The chosen speech model names its own provider; empty means the planner's provider, exactly
+    // as transcribe.ts resolves an absent spec.
+    return transcribeCapability(form.elements.transcriptionModel.value.trim() || undefined);
   } finally { clearConfig(); }
 }
 // One button per mode, in VOICE_MODE_ORDER, each showing its real behaviour — never a mode the
@@ -112,19 +339,44 @@ document.querySelector('#model-button').addEventListener('click', async () => {
 });
 readSettings().then(render).catch(err => show(err.message, true));
 form.elements.provider.addEventListener('change', () => { document.querySelector('#typesafe-field').hidden = form.elements.provider.value !== 'typesafe'; });
-// A key typed (or removed) above, or a different dictation provider chosen, changes which modes are
-// honestly offerable right now — recomputed live, the same way the model picker's own list is.
-['openrouterKey', 'openaiKey', 'geminiKey', 'customKey', 'customBaseUrl'].forEach(id => form.elements[id].addEventListener('input', () => { renderVoiceProviderOptions(); renderVoiceModes(); }));
-form.elements.voiceProvider.addEventListener('change', renderVoiceModes);
+// A key typed (or removed) above, or a different speech model chosen, changes which providers and
+// modes are honestly offerable right now — recomputed live, the same way the model picker's own
+// list is. A changed OpenRouter key also refetches the speech catalog it lists.
+['openrouterKey', 'openaiKey', 'geminiKey', 'customKey', 'customBaseUrl'].forEach(id => form.elements[id].addEventListener('input', () => {
+  refreshTranscriptionModels();
+  // This re-render has to keep the same rule the first paint does (renderTranscriptionOptions's own
+  // keepUnlisted): a saved speech model this build does not offer stays selected while its own
+  // provider is still connected, and falls back once that provider's key is removed. One function,
+  // keepsUnlistedModel, is that rule for both callers — deriving it from the form's current selection
+  // here is what keeps them in step.
+  renderTranscriptionOptions({ keepUnlisted: keepsUnlistedModel(form.elements.transcriptionModel.value.trim()) });
+  renderVoiceModes();
+}));
+form.elements.transcriptionModel.addEventListener('change', () => { syncVoiceProvider(); renderTranscriptionDetail(); renderVoiceModes(); });
+// The every-site line describes the choice that is on screen, so it re-reads Chrome's grant when the
+// choice changes; the save path re-renders it after the settings are stored.
+form.elements.siteAccessMode.forEach(radio => radio.addEventListener('change', () => { void renderSiteAccessState(); }));
 form.addEventListener('submit', async event => {
   event.preventDefault();
   try {
     const settings = normalizeSettings(Object.fromEntries(new FormData(form)));
     validateSettings(settings);
-    if (!(await grantCustomOrigin())) throw new Error('Chrome did not allow access to the custom provider site; the custom provider will not work until you allow it.');
+    // Chrome's every-site grant is asked for here: straight from the click and before the first
+    // await, which is what makes it a user gesture as far as Chrome is concerned. That grant already
+    // covers the custom provider's origin, so when it is chosen it stands in for grantCustomOrigin's
+    // own prompt — one prompt behind one save, never two.
+    const wantsEverySite = settings.siteAccessMode === 'all';
+    const everySite = wantsEverySite ? await requestEverySite() : undefined;
+    if (!wantsEverySite && !(await grantCustomOrigin())) throw new Error('Chrome did not allow access to the custom provider site; the custom provider will not work until you allow it.');
+    // Storing "all" when Chrome did not grant it would tell the worker to skip the per-site ask for
+    // access Chrome is about to refuse. What is stored is what Chrome answered, not what the radio said.
+    if (wantsEverySite) settings.siteAccessMode = everySite ? 'all' : 'ask';
     await chrome.storage.local.set({ settings });
     render(settings);
-    show('saved on this device. open checkto from the toolbar to start.');
+    if (wantsEverySite && !everySite) {
+      const nextSave = customOrigin(settings.customBaseUrl) && settings.customKey ? ' save again to allow your custom provider\u2019s site.' : '';
+      show(`saved. Chrome did not allow every site, so checkto asks the first time on each site.${nextSave}`);
+    } else show('saved on this device. open checkto from the toolbar to start.');
   } catch (err) { show(err.message, true); }
 });
 document.querySelectorAll('[data-reveal]').forEach(button => button.addEventListener('click', () => {

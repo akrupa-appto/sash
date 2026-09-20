@@ -165,6 +165,14 @@ textarea{resize:vertical}
 
 /* ---- empty state ---------------------------------------------------------- */
 .intro{padding-top:clamp(var(--sp-5),9vh,60px)}
+/* The animated tab-card belongs to the first launch only (the flag it reads lives in panel.js,
+   INTRO_SEEN_KEY). It is hidden until the panel knows this is that first run — the other way round
+   would flash the animation on every later launch, which is the thing the owner asked to stop — and
+   the compact state that every later empty panel shows also drops the vh-sized well of empty space
+   above the headline that the card used to fill. */
+.intro:not(.is-first-run){padding-top:var(--sp-5)}
+.intro .tab-card{display:none}
+.intro.is-first-run .tab-card{display:block}
 .intro-eyebrow{font-size:var(--text-2xs);font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 var(--sp-3)}
 .intro h1{font:700 var(--text-xl)/1.25 var(--font-ui);letter-spacing:-.01em;margin-bottom:var(--sp-3);color:var(--text-1)}
 .intro h1 b{font-weight:700}
@@ -318,13 +326,26 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
   .trace-body,.trace.is-live>.trace-body,.tick,.trace-header .chev{transition:none}
 }
 @media(max-width:500px){.settings-page{padding:28px 18px}.two{grid-template-columns:1fr;gap:0}}
-@media(max-height:550px){.intro{padding-top:12px}.tab-card{display:none}.intro h1{font-size:var(--text-md)}}
+@media(max-height:550px){.intro{padding-top:12px}.intro.is-first-run .tab-card{display:none}.intro h1{font-size:var(--text-md)}}
 
 /* ---- request / blocked cards: every "needs you or ends here" surface shares
    this one treatment (deep background lift) — the same reading the finished
    answer gets, marking it as this turn's confirmed output. ---- */
 .blocked-reason{margin:0;font-size:var(--text-sm);color:var(--status-danger)}
 .request-card,.blocked-card,.permission-card{margin:0 0 var(--sp-2);padding:var(--sp-3)}
+/* A pending approval is the one card that authorises an action rather than answering a question,
+   and the run does not move until it is answered — the owner's complaint was that it read as one
+   more notice in the chat. So it carries a flag line saying the run is stopped, and an amber edge:
+   the same --status-warning .request-target already uses for the action being asked about. The one
+   outlined card in the panel is then the one waiting on the user; colour is carrying meaning here,
+   not decoration. Its buttons also step up to the 12px functional floor — they are decisions, not
+   captions. Nothing here renames or reorders the scopes: those labels are the engine's. */
+.request-card[data-blocking=true]{border-left:2px solid var(--status-warning)}
+/* Two classes on the flag, not one: `.notice p` (one class, one element) already sets a colour and
+   a margin on every paragraph in a card, and it outranks a single class however late this file
+   declares it. */
+.request-card .request-flag{margin:0 0 var(--sp-2);font-size:var(--text-2xs);font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--status-warning)}
+.request-card[data-blocking=true] .request-actions button{font-size:var(--text-xs);padding:var(--sp-2) var(--sp-3)}
 .permission-actions{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-1)}
 .request-question,.notice-lead{margin:0 0 var(--sp-2);font-size:var(--text-sm);color:var(--text-1)}
 .request-target{color:var(--status-warning);font-weight:500}

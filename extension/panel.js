@@ -332,6 +332,15 @@ function requestCard(pending) {
   const card = el('div', 'notice request-card');
   card.dataset.requestType = pending.type;
   if (pending.kind) card.dataset.requestKind = pending.kind;
+  // An approval is not a question: the run is stopped until it is answered, and nothing else on
+  // this panel may read like ordinary chat while that is true (owner: "i still can't really see the
+  // approvals"). An approval is the only request that carries scopes, so that is the signal; the
+  // flag line and the amber edge it switches on in style.css are the whole prominence change — the
+  // scope ids and labels below are the engine's and stay exactly as it sent them.
+  if (pending.scopes?.length) {
+    card.dataset.blocking = 'true';
+    card.append(el('p', 'request-flag', 'the task is paused until you answer'));
+  }
   // An explicit question (an ask, a picker) is plain sentence text. An approval with no question of
   // its own is phrased around the action it wants to take, and that action is the one place in the
   // whole panel where colour is used to mean "needs you": it's the thing being asked about, set in
@@ -437,6 +446,35 @@ function renderRequest(state, pending) {
   $('#request').hidden = !pending;
   $('#request').replaceChildren(...(pending ? [requestCard(pending)] : []));
 }
+// ---- the first-run hero.
+// The animated tab-card earns its height exactly once, the first time the panel is ever opened;
+// after that the owner wants it gone ("it just takes up too much space ... on the next ones,
+// that's bad"). `introSeen` is its own chrome.storage.local key, deliberately not a `settings`
+// field: it is a fact about this install, not a preference, and the settings object is read and
+// written by the options page.
+const INTRO_SEEN_KEY = 'introSeen';
+// Assume a returning user until storage answers: guessing the other way flashes the big animated
+// card on every launch, which is the one thing this is here to stop.
+let introSeen = true;
+// This session's own latch, so a later render in the same session — a broadcast, a settings reload
+// — cannot collapse a hero the user is still looking at.
+let introFirstRun = false;
+async function readIntroSeen() {
+  try { return (await chrome.storage.local.get(INTRO_SEEN_KEY))?.[INTRO_SEEN_KEY] === true; }
+  catch { return true; } // no storage to ask: the compact intro is the safe answer
+}
+async function writeIntroSeen() {
+  try { await chrome.storage.local.set({ [INTRO_SEEN_KEY]: true }); } catch { /* a later launch just gets the compact intro too */ }
+}
+function renderIntro(state) {
+  const empty = !state.messages.length;
+  $('#intro').hidden = !empty;
+  if (!empty) return;
+  // Written the first time the card is actually put on screen, not when the panel merely loads:
+  // that first showing is the one launch the animation belongs to.
+  if (!introSeen && !introFirstRun) { introFirstRun = true; void writeIntroSeen(); }
+  $('#intro').classList.toggle('is-first-run', introFirstRun);
+}
 function render(state) {
   currentState = state; running = state.running;
   // A run starting (from any trigger — the mic, the global shortcut, or a plain typed message) ends
@@ -474,8 +512,8 @@ function render(state) {
   } else if (running && micFilledComposer) {
     $('#goal').value = ''; micFilledComposer = false; updateMultiline();
   }
-  if (state.dictation?.status === 'error' && state.dictation.error) $('#error').textContent = state.dictation.error;
-  $('#intro').hidden = !!state.messages.length;
+  if (state.dictation?.status === 'error' && state.dictation.error) setErrorLine(state.dictation.error);
+  renderIntro(state);
   // The run stopped on a request: the last reply is what the user has to answer, not a finished result.
   const waiting = !running && state.status === 'needs_input';
   $('#messages').replaceChildren(...state.messages.map((m, i) => {
@@ -617,13 +655,60 @@ chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' &
 let refreshTimer;
 const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => void refreshTabs().catch(showError), 150); };
 chrome.tabs.onCreated.addListener(scheduleRefresh); chrome.tabs.onRemoved.addListener(scheduleRefresh); chrome.tabs.onUpdated.addListener(scheduleRefresh); chrome.tabs.onActivated.addListener(scheduleRefresh);
-function showError(err) { $('#error').textContent = err.message || String(err); }
+// ---- the error line.
+// A provider failure arrives here as its own raw text — `Custom 401: {"error":{"message":"The
+// gateway key is invalid, expired, or revoked..."}}` is what the owner was shown. That says
+// nothing a person can act on, so the recognised cases get one short sentence naming what
+// happened and what to do about it. The raw text is not hidden: it stays on the element's title,
+// and anything unrecognised is shown verbatim, exactly as before — this never guesses and never
+// replaces a message it does not understand.
+// Both shapes this codebase actually throws are matched: providers.ts's `Label 401: body` for a
+// run, and transcribe.ts's `Label transcription failed (401): body` for dictation.
+// A status is only a cause when it is the status the provider sent back. 401 is the one that means
+// the key itself was refused; 403 is a valid key that the account, plan, model or a provider policy
+// did not authorise, so it says that and never "invalid key" — the old wording told people to
+// paste a new key for something a new key does not fix, and the provider's own words are on the
+// title either way.
+const PROVIDER_ERROR = /^([A-Za-z][^:]{0,39}?)\s(?:\((\d{3})\)|(\d{3})):\s*([\s\S]+)$/;
+const PROVIDER_SUFFIX = /\s*(?:transcription|request|chat|completion|generation)?\s*failed$/i;
+// A connection failure is only rewritten for the exact exception text a dead connection produces:
+// Node's `fetch failed` (undici), Chromium's `Failed to fetch`, Safari's `Load failed`, Firefox's
+// NetworkError, and Node's socket/syscall codes. Every alternative is anchored to the whole
+// message — optionally behind an error class name — because the unanchored list matched ordinary
+// provider prose: "file upload failed validation" contains "load failed", and an unrecognised
+// error was being reported as a connection failure the provider never mentioned. Anything that is
+// not one of these shapes stays verbatim.
+const NETWORK_ERROR = /^(?:[A-Za-z_$]*Error:\s*)?(?:failed to fetch|fetch failed|load failed|network ?error when attempting to fetch resource\.?|network request failed|the operation was aborted due to timeout|the network connection was lost\.?|a server with the specified hostname could not be found\.?|socket hang up|(?:connect|read|write|getaddrinfo|querya|querysrv) (?:econnrefused|econnreset|econnaborted|etimedout|ehostunreach|enetunreach|enotfound|eai_again)\b[^\n]*|(?:net::)?(?:econnrefused|econnreset|etimedout|enotfound|eai_again|err_name_not_resolved|err_connection_refused|err_connection_timed_out|err_connection_reset|err_internet_disconnected|err_network_changed))\s*$/i;
+function humanError(message) {
+  const raw = String(message ?? '').trim();
+  const match = raw.match(PROVIDER_ERROR);
+  const provider = match ? match[1].replace(PROVIDER_SUFFIX, '').trim() : '';
+  const status = match ? Number(match[2] || match[3]) : undefined;
+  if (status === 401) return `${provider} rejected the api key: it is invalid, expired or revoked. open settings and paste a current one.`;
+  if (status === 403) return `${provider} refused this request (403): the key or account is not permitted to do that — open settings to change the key or model, or hover this line for the provider's own message.`;
+  if (status === 429) return `${provider} is rate-limiting this key, or its quota is used up. wait a moment and try again.`;
+  if (status >= 500) return `${provider} failed at its own end (${status}). that one is theirs, not yours — try again in a moment.`;
+  if (NETWORK_ERROR.test(raw)) return 'checkto could not reach the model provider: the connection failed. check this machine is online, then try again.';
+  return raw;
+}
+function setErrorLine(message) {
+  const raw = String(message ?? '').trim();
+  const line = $('#error');
+  line.textContent = humanError(raw);
+  if (raw && line.textContent !== raw) line.title = raw; else line.removeAttribute('title');
+}
+function clearError() { const line = $('#error'); line.textContent = ''; line.removeAttribute('title'); }
+function showError(err) { setErrorLine(err?.message || err || 'something went wrong'); }
 const singleLineHeight = $('#goal').scrollHeight; // measured while the textarea starts out empty, i.e. one line
 function updateMultiline() {
   const goal = $('#goal');
   goal.toggleAttribute('data-multiline', goal.scrollHeight > singleLineHeight + 1);
 }
 document.querySelectorAll('.settings-link').forEach(b => b.addEventListener('click', () => chrome.runtime.openOptionsPage()));
+// The examples row. The contract is: fill the composer from the chip's own task, and a task that
+// mentions tabs pre-selects the tab picker. That last rule still runs through #mention-tabs even
+// though the button is hidden (panel.html) — a hidden element still dispatches a click, and typing
+// "@" reaches the same picker without it.
 document.querySelectorAll('[data-task]').forEach(b => b.addEventListener('click', event => { event.stopPropagation(); $('#goal').value = b.dataset.task; $('#goal').focus(); updateMultiline(); controls(); if (b.dataset.task.includes('tabs')) $('#mention-tabs').click(); }));
 $('#mention-tabs').addEventListener('click', () => {
   const input = $('#goal'); input.focus();
@@ -640,13 +725,13 @@ $('#new-chat').addEventListener('click', async () => {
       if (response.seq !== undefined) lastSeq = response.seq;
       render(response.state);
     }
-    selected = []; renderSelected(); $('#error').textContent = '';
+    selected = []; renderSelected(); clearError();
   } catch (err) { showError(err); }
 });
 $('#stop').addEventListener('click', async () => { try { await request({ type: 'stop' }); } catch (err) { showError(err); } });
 $('#task-form').addEventListener('submit', async event => {
   event.preventDefault(); if (running || submitting || pendingRequest) return;
-  $('#error').textContent = '';
+  clearError();
   submitting = true; controls();
   try {
     const goal = $('#goal').value.trim();
@@ -677,5 +762,16 @@ $('#goal').addEventListener('keydown', event => {
   }
   if (event.key === 'Enter' && !event.shiftKey && !running && !pendingRequest) { event.preventDefault(); $('#task-form').requestSubmit(); }
 });
-document.addEventListener('click', event => { if (!event.target.closest('.compose-box')) closePicker(); });
+// The whole composer form counts as "inside" here, not just .compose-box: the actions row the
+// tab-attach control sits in is a sibling of .compose-box, so a click on it used to close the picker
+// in the same breath as opening it — which is exactly why the "+" read as a button that "just adds
+// an add symbol". The picker is part of the composer, so nothing in the composer closes it.
+document.addEventListener('click', event => { if (!event.target.closest('#task-form')) closePicker(); });
+// Read the first-run flag before the first empty render lands, and re-render the hero if a state
+// broadcast beat this read (the settle below is the only place that can still promote a compact
+// hero to the full one, and it only ever does that once, on a genuine first run).
+void readIntroSeen().then(seen => {
+  introSeen = seen;
+  if (currentState) renderIntro(currentState);
+});
 void load().catch(showError);

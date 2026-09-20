@@ -1,12 +1,13 @@
 <!doctype html>
-<html lang="en" data-surface="settings"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto · settings</title><link rel="stylesheet" href="style.css"></head>
+<html lang="en" data-surface="settings"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto · settings</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="settings.css"></head>
 <body><main class="settings-page">
 <header><div class="eyebrow">checkto</div><h1>your browser. your keys.</h1><p>connect your models once, then open checkto from the Chrome toolbar.</p></header>
+<nav class="settings-nav" aria-label="settings sections"><a href="#connections">connections</a><a href="#agent-preferences">agent preferences</a><a href="#voice">voice</a><a href="#access-settings">approvals and site access</a></nav>
 <form id="settings">
-<section><h2>connections</h2>
+<section id="connections"><h2>connections</h2>
 <div class="field"><label for="openrouterKey">OpenRouter API key</label><div class="key-row"><input id="openrouterKey" name="openrouterKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…"><button type="button" class="secondary" data-reveal="openrouterKey" aria-label="show OpenRouter key">show</button></div><small>powers careful mode, text generation, and Jev through OpenRouter. <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noreferrer">get a key</a></small></div>
-<div class="field"><label for="openaiKey">OpenAI API key</label><div class="key-row"><input id="openaiKey" name="openaiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…"><button type="button" class="secondary" data-reveal="openaiKey" aria-label="show OpenAI key">show</button></div><small>optional. lets careful mode plan with OpenAI models directly. <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">get a key</a></small></div>
-<div class="field"><label for="geminiKey">Gemini API key</label><div class="key-row"><input id="geminiKey" name="geminiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…"><button type="button" class="secondary" data-reveal="geminiKey" aria-label="show Gemini key">show</button></div><small>optional. lets careful mode plan with Gemini models directly. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">get a key</a></small></div>
+<div class="field"><label for="openaiKey">OpenAI API key</label><div class="key-row"><input id="openaiKey" name="openaiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…"><button type="button" class="secondary" data-reveal="openaiKey" aria-label="show OpenAI key">show</button></div><small>optional. lets careful mode plan with OpenAI models directly, and gives dictation a direct speech-to-text model. <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">get a key</a></small></div>
+<div class="field"><label for="geminiKey">Gemini API key</label><div class="key-row"><input id="geminiKey" name="geminiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…"><button type="button" class="secondary" data-reveal="geminiKey" aria-label="show Gemini key">show</button></div><small>optional. lets careful mode plan with Gemini models directly, and gives dictation a direct speech-to-text model. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">get a key</a></small></div>
 <details class="field"><summary>custom OpenAI-compatible provider</summary>
 <div class="field"><label for="customBaseUrl">base URL</label><input id="customBaseUrl" name="customBaseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://api.groq.com/openai/v1"><small>any server that speaks the OpenAI chat completions API: Groq, Together, vLLM, LM Studio, a proxy. Chrome will ask once to allow that site.</small></div>
 <div class="field"><label for="customKey">API key</label><div class="key-row"><input id="customKey" name="customKey" type="password" autocomplete="off" spellcheck="false"><button type="button" class="secondary" data-reveal="customKey" aria-label="show custom key">show</button></div></div>
@@ -15,29 +16,48 @@
 <div class="field" id="typesafe-field" hidden><label for="typesafeKey">TypeSafe API key</label><div class="key-row"><input id="typesafeKey" name="typesafeKey" type="password" autocomplete="off" spellcheck="false"><button type="button" class="secondary" data-reveal="typesafeKey" aria-label="show TypeSafe key">show</button></div><small>optional direct connection for Jev. careful mode then needs an OpenRouter, OpenAI, or Gemini key for the planner; writing new text uses OpenRouter when present, otherwise the planner's provider.</small></div>
 <p class="privacy muted">keys stay in this Chrome profile, in local extension storage. they are never synced or sent to a Checkto server. during a task, page text and your instructions go directly to your selected model providers.</p>
 </section>
-<section><h2>agent preferences</h2>
+<section id="agent-preferences"><h2>agent preferences</h2>
 <div class="two"><div class="field"><label for="mode">default mode</label><select id="mode" name="mode"><option value="careful">careful · planner + Jev</option><option value="fast">fast · Jev only</option></select></div><div class="field"><label for="maxSteps">step limit</label><input id="maxSteps" name="maxSteps" type="number" min="1" max="60" required></div></div>
 <div class="field"><span class="label">planner model</span><button type="button" id="model-button" class="secondary model-button" aria-haspopup="dialog"><span id="model-label">choose a model</span><span aria-hidden="true">▾</span></button><input type="hidden" id="model" name="model"><input type="hidden" id="reasoning" name="reasoning"><small>used only in careful mode. the picker lists the models your saved keys unlock and the reasoning levels each one accepts.</small></div>
 <details><summary>advanced model settings</summary><div class="field"><label for="jevModel">Jev model</label><input id="jevModel" name="jevModel" placeholder="leave blank for the provider default" spellcheck="false"></div><div class="field"><label for="textModel">text model</label><input id="textModel" name="textModel" spellcheck="false"><small>used when the task needs text that Jev cannot copy from your instructions.</small></div></details>
 </section>
-<section><h2>voice</h2>
+<section id="voice"><h2>voice</h2>
+<p class="muted" id="voice-lead">dictation uses a second model, not the planner above: a text model cannot listen to audio. your recording goes to the speech-to-text model you pick here, and nowhere else.</p>
 <div class="field"><label for="voiceEnabled">voice dictation</label><select id="voiceEnabled" name="voiceEnabled"><option value="off">off</option><option value="on">on</option></select><small>hold the mic button in the panel, or the keyboard shortcut, to talk. audio goes straight to the provider below — never to a checkto server, never to Google's free speech recognition.</small></div>
-<div class="field"><label for="voiceProvider">dictation provider</label><select id="voiceProvider" name="voiceProvider"><option value="">same as the planner model above</option></select><small>which of your configured keys transcribes audio. defaults to whichever provider backs your planner model.</small></div>
+<div class="field"><label for="transcriptionModel">speech-to-text model</label><select id="transcriptionModel" name="transcriptionModel"><option value="">same provider as my planner model</option></select><input type="hidden" id="voiceProvider" name="voiceProvider"><small>only models your saved keys can reach are listed. this one field sets both the model and the provider your audio is sent to.</small><small id="transcription-detail" class="transcription-detail"></small></div>
 <div class="field"><span class="label">how eager it acts</span><div id="voice-modes" class="voice-modes" role="radiogroup" aria-label="how eager checkto acts on your voice"></div><input type="hidden" id="voiceMode" name="voiceMode"><small id="voice-capability" class="muted"></small></div>
 </section>
-<div class="save-row"><div class="row"><button type="submit">save settings</button><button id="clear-keys" class="secondary" type="button">remove saved keys</button></div><div id="status" class="status" role="status" aria-live="polite"></div></div>
-</form>
 <section id="access-settings" aria-labelledby="access-heading">
 <h2 id="access-heading">approvals and site access</h2>
-<p class="muted">changes here take effect immediately, without saving settings. revoking access does not undo actions already taken.</p>
+<p class="muted">the two choices below save with the rest of your settings, using the save button at the bottom. everything under them is live: revoking takes effect immediately, and revoking does not undo an action already taken.</p>
+<fieldset class="choice-field">
+<legend>action approvals</legend>
+<p class="muted">when checkto has to stop and ask before doing something. the first choice prompts a lot on purpose — you see every action before it happens. a fast run has no planner, so it never stops to ask: these choices only apply in careful mode.</p>
+<div class="choice-list">
+<label class="choice"><input type="radio" name="approvalMode" value="every"><span><strong>ask me before every action</strong><small>every click, keystroke, and send waits for your yes. the default, and the loudest.</small></span></label>
+<label class="choice"><input type="radio" name="approvalMode" value="risky"><span><strong>ask only before risky actions</strong><small>sending a message, spending, deleting, and anything else irreversible still ask. ordinary clicking and typing does not.</small></span></label>
+<label class="choice"><input type="radio" name="approvalMode" value="none"><span><strong>never ask — just do it</strong><small>checkto acts on whatever it decides, including sending and spending. fastest, and nothing waits for you. “allow &amp; save” approvals you already saved still count.</small></span></label>
+</div>
+</fieldset>
+<fieldset class="choice-field">
+<legend>site access</legend>
+<p class="muted">whether Chrome lets checkto reach a site at all. this is Chrome's access to a site, not individual actions — the choice above covers those.</p>
+<div class="choice-list">
+<label class="choice"><input type="radio" name="siteAccessMode" value="ask"><span><strong>ask me the first time on each site</strong><small>Chrome asks before checkto can read or act on a site it has not been allowed yet. the default.</small></span></label>
+<label class="choice"><input type="radio" name="siteAccessMode" value="all"><span><strong>allow every site without asking</strong><small>checkto may reach any site you have open, with no prompt. saving asks Chrome for that access once; if you decline, the per-site ask stays.</small></span></label>
+</div>
+<p class="muted" id="site-access-state" role="status"></p>
+</fieldset>
 <h3>saved approvals</h3>
 <p class="muted">actions allowed for this conversation or always. revoking asks you again next time; it does not cancel an action already approved.</p>
 <div id="approval-list"></div>
-<h3>site access</h3>
+<h3>sites Chrome has allowed</h3>
 <p class="muted">every site Chrome currently lets checkto reach. access marked required comes with the extension itself: Chrome only lets you narrow it (to specific sites, or on click) from checkto's page in chrome://extensions, not from here. anything else can be revoked below; that stops the current task first, and removing a custom provider's site disconnects that provider until you allow it again.</p>
 <div id="site-access-list"></div>
 <p class="muted">removing site access does not remove a saved approval, or vice versa.</p>
 <div class="row access-actions"><button type="button" class="secondary" id="refresh-access">refresh access</button><button type="button" class="secondary" id="manage-site-access">open Chrome site access</button></div>
 <div id="access-status" class="status" role="status" aria-live="polite"></div>
 </section>
+<div class="save-row"><div class="row"><button type="submit">save settings</button><button id="clear-keys" class="secondary" type="button">remove saved keys</button></div><div id="status" class="status" role="status" aria-live="polite"></div></div>
+</form>
 </main><script type="module" src="options.js"></script></body></html>

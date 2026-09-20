@@ -7,9 +7,11 @@ on:
     branches: [main]
     paths:
       - extension/**
+      - src/snapshot.js
       - src/agent.ts
       - src/planner.ts
       - src/providers.ts
+      - src/transcribe.ts
       - src/jev.ts
       - public/model-picker.js
       - scripts/build-extension.mjs

@@ -46,10 +46,19 @@ const finished = {
   ],
 };
 
-async function panel(state, { width, configured = true, voice } = {}) {
-  const page = await browser.newPage(width ? { viewport: { width, height: 720 } } : undefined);
+async function panel(state, { width, configured = true, introSeen, reducedMotion, voice } = {}) {
+  const page = await browser.newPage({
+    ...(width ? { viewport: { width, height: 720 } } : {}),
+    ...(reducedMotion ? { reducedMotion } : {}),
+  });
   await page.addInitScript(cfg => {
     const ev = () => ({ addListener() {}, removeListener() {} });
+    // chrome.storage.local over a plain object: the panel's first-run flag (introSeen) is the only
+    // thing it ever writes here, so two functions are the whole stub. `window.store` is how a test
+    // reads back what the panel stored, and a missing `introSeen` is a profile that has never run
+    // the panel before — the state the first-run hero exists for.
+    const store = cfg.introSeen === undefined ? {} : { introSeen: cfg.introSeen };
+    window.store = store;
     window.chrome = {
       runtime: {
         sendMessage: async message => (message.type === 'getState'
@@ -60,9 +69,15 @@ async function panel(state, { width, configured = true, voice } = {}) {
         onMessage: { addListener: f => { window.onState = f; } }, openOptionsPage() {},
       },
       tabs: { query: async () => [{ id: 1, url: 'https://example.test/', title: 'Example', active: true, windowId: 1, index: 0 }], onCreated: ev(), onRemoved: ev(), onUpdated: ev(), onActivated: ev() },
-      storage: { onChanged: ev() },
+      storage: {
+        local: {
+          get: async key => (typeof key === 'string' ? (key in store ? { [key]: store[key] } : {}) : { ...store }),
+          set: async values => { Object.assign(store, values); },
+        },
+        onChanged: ev(),
+      },
     };
-  }, { configured, voice });
+  }, { configured, introSeen, voice });
   await page.goto(`${base}/panel.html`);
   await page.waitForFunction(() => window.onState);
   // A live run's age is measured against the page's own clock at the moment it renders, so a test
@@ -429,7 +444,7 @@ test('the handoff form is typed, starts empty, and keeps nothing once it is sent
 test('the widest approval scope is confirmed a second time with the warning spelled out', { skip }, async () => {
   const request = approvalRequest({ action: 'act on any site you open', origin: '*' });
   const page = await panel(waiting([request]));
-  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'always allow', 'deny']);
+  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'allow & save', 'deny']);
   await captureSent(page);
   await page.locator('button[data-scope=always]').click();
   assert.deepEqual(await page.evaluate(() => window.sent), [], 'the widest scope is not granted on the first click');
@@ -582,40 +597,44 @@ test('the settings page renders the same neutral theme as the panel', { skip }, 
 const readyState = { running: false, status: 'ready', messages: [], steps: [] };
 
 // Adopted from the comp: a rounded composer-field (the input alone) sits above a fixed
-// composer-actions row ("+", model/mode, send) — not the single morphing pill the shipped build
-// used to grow around every control as the textarea wrapped.
-test('the composer field grows with the textarea, but the actions row underneath ("+", model pill, send) keeps its own fixed height', { skip }, async () => {
+// composer-actions row (model/mode, send) — not the single morphing pill the shipped build used to
+// grow around every control as the textarea wrapped.
+test('the composer field grows with the textarea, but the actions row underneath (model pill, mode, send) keeps its own fixed height', { skip }, async () => {
   const page = await panel(readyState);
   const goal = page.locator('#goal');
   const field = page.locator('.composer-field');
-  const mention = page.locator('#mention-tabs');
+  const send = page.locator('#send');
   const fieldHeightBefore = (await field.boundingBox()).height;
-  const mentionHeightBefore = (await mention.boundingBox()).height;
+  const sendHeightBefore = (await send.boundingBox()).height;
   await goal.fill(Array.from({ length: 6 }, (_, i) => `line ${i}`).join('\n'));
   const fieldHeightAfter = (await field.boundingBox()).height;
-  const mentionHeightAfter = (await mention.boundingBox()).height;
+  const sendHeightAfter = (await send.boundingBox()).height;
   assert.ok(fieldHeightAfter > fieldHeightBefore + 40, 'the composer-field should grow with a multi-line message');
-  assert.ok(Math.abs(mentionHeightAfter - mentionHeightBefore) <= 1, 'the "+" control in the actions row below should not stretch with the field');
+  assert.ok(Math.abs(sendHeightAfter - sendHeightBefore) <= 1, 'the controls in the actions row below should not stretch with the field');
   await goal.fill('back to one line');
   const fieldHeightReset = (await field.boundingBox()).height;
   assert.ok(fieldHeightReset < fieldHeightAfter, 'the field should shrink back once the message is one line again');
   await page.close();
 });
 
-test('the actions row ("+", model pill, mode, send) stays below the composer field when the composer is disabled by a pending request', { skip }, async () => {
+test('the actions row (model pill, mode, send) stays below the composer field when the composer is disabled by a pending request', { skip }, async () => {
   const page = await panel(waiting([{ id: 'ask-1', type: 'user_input', question: 'which README do you mean?' }]), { width: 320 });
   const goal = page.locator('#goal');
   assert.equal(await goal.isDisabled(), true);
-  const [goalBox, mentionBox, sendBox] = await Promise.all([goal.boundingBox(), page.locator('#mention-tabs').boundingBox(), page.locator('#send').boundingBox()]);
-  assert.ok(mentionBox.y >= goalBox.y + goalBox.height - 2, '"+" should sit in the actions row under the field, not beside it');
+  const [goalBox, sendBox] = await Promise.all([goal.boundingBox(), page.locator('#send').boundingBox()]);
   assert.ok(sendBox.y >= goalBox.y + goalBox.height - 2, 'send should sit in the actions row under the field, not beside it');
   await page.close();
 });
 
 // ---- the first-run hero. This is the first thing every user sees; design 4 gives it a real
 // hierarchy (eyebrow, headline, lead copy, tab preview, then a labeled row of examples) instead of
-// the flat h1-then-card-then-paragraph stack a plain retokening left behind.
-test('the first-run hero reads eyebrow, headline, lead, tab preview, then labeled examples, all in design 4\'s neutral tokens', { skip }, async () => {
+// the flat h1-then-card-then-paragraph stack a plain retokening left behind. It is also the one and
+// only launch the animated tab-card belongs to: the owner's words were "it just takes up too much
+// space ... maybe on the first launch of the extension it can be there, but on the next ones, that's
+// bad", so the flag the first show writes (chrome.storage.local `introSeen`, its own key — never a
+// `settings` field) is what every later launch reads back to get the compact hero.
+test('the first-run hero reads eyebrow, headline, lead, tab preview, then labeled examples, and the animated card appears on the first run only', { skip }, async () => {
+  // No `introSeen` in storage: a profile that has never opened the panel.
   const page = await panel(readyState);
   const order = await page.evaluate(() => [...document.querySelector('#intro').children].map(el => el.className));
   assert.deepEqual(order, ['intro-eyebrow', '', 'intro-lead', 'tab-card', 'examples']);
@@ -633,6 +652,202 @@ test('the first-run hero reads eyebrow, headline, lead, tab preview, then labele
     page.locator('.intro h1').evaluate(el => getComputedStyle(el).color),
   ]);
   for (const color of [eyebrowColor, h1Color]) assert.match(color, /oklch\([\d.]+ 0 0\)/, `${color} should be chroma-0`);
+  // The examples say what a browser agent does to the page in front of it. Summarising and comparing
+  // were the old pair and the owner called them "completely pointless"; one tab example stays, and it
+  // is the one that needs the other tabs.
+  assert.deepEqual(
+    await page.locator('.examples button').allInnerTexts(),
+    ['fill this form', 'find the cheapest option', 'draft a reply', 'compare prices in these tabs'],
+  );
+  assert.deepEqual(
+    await page.locator('.examples button').evaluateAll(els => els.map(e => e.dataset.task)),
+    ['fill in this form with sensible details', 'find the cheapest option on this page', 'draft a reply to this email', 'compare the prices in these tabs'],
+  );
+  // First run: the card is on screen and this empty panel is the taller one.
+  assert.deepEqual(await page.locator('#intro').evaluate(el => [...el.classList]), ['intro', 'is-first-run']);
+  assert.equal(await page.locator('.tab-card').isVisible(), true);
+  const firstRunHeight = (await page.locator('#intro').boundingBox()).height;
+  // The flag is written as that card is shown, into its own key, and nothing else is touched: the
+  // settings object belongs to the options page.
+  await page.waitForFunction(() => window.store.introSeen === true);
+  assert.deepEqual(await page.evaluate(() => Object.keys(window.store)), ['introSeen']);
+  await page.close();
+
+  // Later launches: the stored flag comes back, so the same empty panel shows the compact hero —
+  // same headline and examples, no card, no animation, no second write.
+  const later = await panel(readyState, { introSeen: true });
+  assert.deepEqual(await later.locator('#intro').evaluate(el => [...el.classList]), ['intro']);
+  assert.equal(await later.locator('.tab-card').isVisible(), false);
+  assert.equal(await later.locator('#intro').isVisible(), true);
+  assert.equal(await later.locator('.intro h1').innerText(), 'what should i do\nin this tab?');
+  assert.deepEqual(await later.locator('.examples button').allInnerTexts(), ['fill this form', 'find the cheapest option', 'draft a reply', 'compare prices in these tabs']);
+  const laterHeight = (await later.locator('#intro').boundingBox()).height;
+  assert.ok(laterHeight < firstRunHeight - 100, `the compact hero should be much shorter than the first-run one (got ${laterHeight}px vs ${firstRunHeight}px)`);
+  assert.deepEqual(await later.evaluate(() => Object.keys(window.store)), ['introSeen'], 'a later launch writes nothing');
+  await later.close();
+});
+
+// Reduced motion is a promise to the user, not a nicety: the card's hand drifting across the preview
+// is decoration, and it is the only motion in the empty state.
+test('the first-run card\'s drifting hand is static under prefers-reduced-motion', { skip }, async () => {
+  const page = await panel(readyState, { reducedMotion: 'reduce' });
+  assert.equal(await page.locator('.tab-card').isVisible(), true, 'this page is a first run, so the card is there to be measured');
+  assert.equal(await page.locator('.tab-card .hand').evaluate(el => getComputedStyle(el).animationName), 'none');
+  await page.close();
+});
+
+// Owner: "The plus just adds an add symbol. Let's skip it for now." Skipping the button must not
+// skip the capability: typing "@" is the real path into the picker, and the tab example still goes
+// through the same hidden button.
+test('the "+" attach button is hidden without losing the tab path: typing "@" opens the picker, and the tabs example still pre-selects a tab', { skip }, async () => {
+  const page = await panel(readyState);
+  // Hidden, not deleted: the element and its handler stay in place for the tab example below.
+  assert.equal(await page.locator('#mention-tabs').count(), 1);
+  assert.equal(await page.locator('#mention-tabs').isVisible(), false);
+  // The typed path, which never needed the button.
+  await page.locator('#goal').click();
+  await page.keyboard.type('open @');
+  assert.equal(await page.locator('#tab-picker').isVisible(), true);
+  assert.equal(await page.locator('.tab-option').count(), 1);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#tab-picker').isHidden(), true);
+  // The example that mentions tabs fills the composer and pre-selects the picker.
+  await page.locator('.examples button', { hasText: 'compare prices in these tabs' }).click();
+  assert.match(await page.locator('#goal').inputValue(), /compare the prices in these tabs @$/);
+  assert.equal(await page.locator('#tab-picker').isVisible(), true);
+  // Choosing a tab replaces the mention text and records the reference.
+  await page.locator('.tab-option').first().click();
+  assert.match(await page.locator('#goal').inputValue(), /^compare the prices in these tabs ?$/);
+  assert.deepEqual(await page.locator('.tab-chip').allInnerTexts(), ['@ Example ×']);
+  await page.close();
+});
+
+// The owner could not see the approvals. A pending approval is not a question, it is a stopped run,
+// and the card has to read as one: a flag line saying so and the only amber edge in the panel.
+test('a pending approval reads as a stopped run: it carries the paused flag and the amber edge, and keeps the engine\'s own scope labels', { skip }, async () => {
+  const page = await panel(waiting([approvalRequest({ action: 'submit the $89.00 order', origin: 'https://example.test' })]), { width: 320 });
+  assert.equal(await page.locator('.request-card').getAttribute('data-blocking'), 'true');
+  // textContent, not innerText: the flag renders uppercased, the copy stays lowercase.
+  assert.equal(await page.locator('.request-flag').evaluate(el => el.textContent), 'the task is paused until you answer');
+  // The scopes are still the engine's four actions, in its order, with its own labels.
+  assert.deepEqual(await page.locator('.request-actions button').allInnerTexts(), ['allow once', 'allow for this conversation', 'allow & save', 'deny']);
+  const { edge, flagColor, questionColor, warning } = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.color = getComputedStyle(document.documentElement).getPropertyValue('--status-warning').trim();
+    document.body.append(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return {
+      edge: getComputedStyle(document.querySelector('.request-card')).borderLeft,
+      flagColor: getComputedStyle(document.querySelector('.request-flag')).color,
+      questionColor: getComputedStyle(document.querySelector('.request-target')).color,
+      warning: resolved,
+    };
+  });
+  assert.ok(edge.startsWith('2px solid'), `the approval card should carry the amber edge, got ${edge}`);
+  assert.ok(edge.includes(warning), `the edge should be --status-warning, got ${edge}`);
+  assert.equal(flagColor, warning);
+  // The same amber the action being asked about already uses — one "needs you" hue, not a new one.
+  assert.equal(questionColor, warning);
+  // A question rather than an authorisation keeps the plain card: no flag, no edge, no attribute.
+  await page.evaluate(s => window.onState({ type: 'state', state: s, seq: 7 }), waiting([{ id: 'ask-1', type: 'user_input', question: 'which folder?' }]));
+  assert.equal(await page.locator('.request-card').getAttribute('data-blocking'), null);
+  assert.equal(await page.locator('.request-flag').count(), 0);
+  assert.equal(await page.locator('.request-card').evaluate(el => getComputedStyle(el).borderLeftWidth), '0px');
+  await page.close();
+});
+
+// The owner was shown a raw `Custom 401: {"error":{"message":"The gateway key is invalid..."}}` in
+// the panel. A recognised provider failure gets one sentence naming what happened and what to do;
+// the untouched text stays on the element's title, and anything unrecognised is shown verbatim.
+const GATEWAY_401 = 'Custom 401: {"error":{"message":"The gateway key is invalid, expired, or revoked. Ask the gateway operator to issue a new virtual key.","type":"authentication_error"}}';
+const dictationError = (page, message, seq = 99) => page.evaluate(([text, tag]) => window.onState({
+  type: 'state', seq: tag,
+  state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'error', error: text } },
+}), [message, seq]);
+
+test('a provider error reads as one actionable sentence, with the raw text kept on the title', { skip }, async () => {
+  const page = await panel(readyState);
+  const line = page.locator('#error');
+  await dictationError(page, GATEWAY_401);
+  assert.match(await line.innerText(), /Custom rejected the api key/);
+  assert.match(await line.innerText(), /open settings/);
+  assert.equal(await line.getAttribute('title'), GATEWAY_401, 'the raw provider text stays available');
+  // 429 and 5xx say what happened without repeating the provider's JSON.
+  await dictationError(page, 'OpenRouter 429: {"error":{"message":"rate limit exceeded"}}', 100);
+  assert.match(await line.innerText(), /rate-limiting this key, or its quota is used up/);
+  await dictationError(page, 'OpenAI 503: upstream unavailable', 101);
+  assert.match(await line.innerText(), /OpenAI failed at its own end \(503\)/);
+  // A bare network failure has no provider to name.
+  await dictationError(page, 'TypeError: fetch failed', 102);
+  assert.match(await line.innerText(), /connection failed/);
+  assert.equal(await line.getAttribute('title'), 'TypeError: fetch failed');
+  // Anything unrecognised keeps today's text verbatim, and claims nothing it was not told.
+  const plain = 'a referenced tab was closed. remove it or pick another tab.';
+  await dictationError(page, plain, 103);
+  assert.equal(await line.innerText(), plain);
+  assert.equal(await line.getAttribute('title'), null);
+  // Dictation throws the same failure in transcribe.ts's own shape — `Label transcription failed
+  // (401): body` — and that is a real 401 a user can hit, so it gets the same sentence with the
+  // provider's name, not the phrase the throw happened to use.
+  const DICTATION_401 = 'Custom transcription failed (401): {"error":{"message":"The gateway key is invalid, expired, or revoked."}}';
+  await dictationError(page, DICTATION_401, 104);
+  assert.match(await line.innerText(), /^Custom rejected the api key/);
+  assert.equal(await line.getAttribute('title'), DICTATION_401);
+  // The other way an error lands here: the panel's own call threw, and showError got the message.
+  await page.evaluate(() => {
+    chrome.runtime.sendMessage = async message => (message.type === 'clear' ? { error: 'Custom 401: {"error":{"message":"The gateway key is invalid"}}' } : { ok: true });
+  });
+  await page.click('#new-chat');
+  assert.match(await line.innerText(), /Custom rejected the api key/);
+  assert.equal(await line.getAttribute('title'), 'Custom 401: {"error":{"message":"The gateway key is invalid"}}');
+  // Starting a new message clears both the sentence and the raw text behind it.
+  await page.evaluate(() => { chrome.runtime.sendMessage = async () => ({ ok: true }); });
+  await page.fill('#goal', 'do something');
+  await page.click('#send');
+  await page.waitForFunction(() => document.querySelector('#error').textContent === '');
+  assert.equal(await line.getAttribute('title'), null);
+  await page.close();
+});
+
+// A 403 is not proof the key is invalid: it is most often a valid key the account, plan, model or a
+// provider policy did not authorise. The panel saying "paste a new key" sends the user after
+// something the provider never said, so a 403 gets neutral wording and 401 keeps the key sentence.
+const GATEWAY_403 = 'Custom 403: {"error":{"message":"This model requires a paid plan.","type":"authorization_error"}}';
+
+test('a 403 reads as an authorization refusal, never as an invalid key', { skip }, async () => {
+  const page = await panel(readyState);
+  const line = page.locator('#error');
+  await dictationError(page, GATEWAY_403, 120);
+  const text = await line.innerText();
+  assert.match(text, /Custom refused this request \(403\)/);
+  assert.doesNotMatch(text, /api key|invalid|expired|revoked|paste a current one/i, `a 403 must not claim the key is bad, got: ${text}`);
+  // the provider's own words are still there, untouched, per the error-line contract.
+  assert.equal(await line.getAttribute('title'), GATEWAY_403);
+  // 401 is the one status that is about the key itself, and it keeps its sentence.
+  await dictationError(page, GATEWAY_401, 121);
+  assert.match(await line.innerText(), /Custom rejected the api key/);
+  await page.close();
+});
+
+// The connection sentence is only for a real network exception. "file upload failed validation"
+// contains "load failed", and the old unanchored pattern rewrote that ordinary message — one the
+// provider never sent and this panel never checked — into "could not reach the model provider".
+test('an unrecognised error containing "failed" passes through verbatim, not as a connection failure', { skip }, async () => {
+  const page = await panel(readyState);
+  const line = page.locator('#error');
+  const uploadFailed = 'file upload failed validation';
+  await dictationError(page, uploadFailed, 130);
+  assert.equal(await line.innerText(), uploadFailed);
+  assert.equal(await line.getAttribute('title'), null, 'verbatim text needs no title to carry it');
+  const stepFailed = 'the last step failed: no matching element';
+  await dictationError(page, stepFailed, 131);
+  assert.equal(await line.innerText(), stepFailed);
+  // A real fetch exception still gets its sentence: the anchoring must not silence the case this
+  // rewrite exists for.
+  await dictationError(page, 'TypeError: fetch failed', 132);
+  assert.match(await line.innerText(), /connection failed/);
+  assert.equal(await line.getAttribute('title'), 'TypeError: fetch failed');
   await page.close();
 });
 

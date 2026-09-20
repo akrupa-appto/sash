@@ -1,0 +1,47 @@
+/* checkto · settings page. Loaded after style.css and only adds what the shared sheet has no
+   reason to carry: the in-page nav, the approval/site-access choice cards, and the speech-to-text
+   hint line. Every value comes from style.css's own :root tokens — no new colours, sizes, or
+   radii are introduced here, and style.css itself is owned by the panel work and stays untouched. */
+
+/* ---- in-page nav -------------------------------------------------------- */
+/* The one-pager is long enough that the last section is otherwise only reachable by scrolling and
+   hoping. Sticky, so it works from anywhere on the page, not just from the top. */
+.settings-nav{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:var(--sp-1) var(--sp-4);background:var(--bg-page);border-bottom:var(--hairline) solid var(--line);padding:var(--sp-3) 0;margin-bottom:var(--sp-5)}
+.settings-nav a{font-size:var(--text-xs);color:var(--text-2);text-decoration:none}
+.settings-nav a:hover{color:var(--text-1);text-decoration:underline}
+.settings-nav a:focus-visible{outline:1px solid var(--line-strong);outline-offset:2px}
+/* Without this, a jumped-to section's heading lands underneath the sticky nav. */
+.settings-page section[id]{scroll-margin-top:calc(var(--sp-8) + var(--sp-4))}
+@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth}}
+
+/* ---- choice cards (action approvals, site access) ----------------------- */
+/* A setting with a consequence to the user's own accounts gets its description rendered, not just
+   a word in a dropdown. Native radios: arrow keys, screen readers, and form submission all work
+   with no script. */
+.choice-field{border:0;padding:0;margin:0 0 var(--sp-6)}
+.choice-field legend{font-size:var(--text-sm);font-weight:500;padding:0;margin-bottom:var(--sp-2)}
+.choice-field>p{margin-bottom:var(--sp-3)}
+.choice-list{display:grid;gap:var(--sp-2)}
+.choice{display:flex;align-items:flex-start;gap:var(--sp-3);background:var(--surface-1);border:1px solid var(--line);border-radius:var(--r-10);padding:var(--sp-3);cursor:pointer}
+.choice:hover{background:var(--surface-2)}
+.choice input{flex:none;width:16px;height:16px;margin:2px 0 0;padding:0;accent-color:var(--accent)}
+.choice input:focus-visible{outline:1px solid var(--line-strong);outline-offset:2px}
+.choice span{display:grid;gap:var(--sp-1);min-width:0}
+.choice strong{font-weight:500;overflow-wrap:anywhere}
+.choice small{color:var(--text-3)}
+.choice:has(input:checked){background:var(--surface-2);border-color:var(--line-strong)}
+/* Chrome 118 is this extension's floor and supports :has(); the rule is only the focus/hover
+   affordance on the card, so a browser without it still shows a checked radio and an outline on
+   the input itself. */
+.choice:has(input:focus-visible){outline:1px solid var(--line-strong);outline-offset:2px}
+
+/* ---- speech-to-text picker --------------------------------------------- */
+/* One line describing the saved choice in plain words, under the select. --text-2, not the
+   --text-3 captions use: this is the explanation of what the user just picked, not a footnote. */
+.transcription-detail{color:var(--text-2)}
+.transcription-detail:empty{display:none}
+
+/* ---- site-access grant line -------------------------------------------- */
+/* Chrome's own grant for the "allow every site without asking" choice, read back from the browser.
+   Written a microtask after the radios paint, so it is hidden until there is something true to say. */
+#site-access-state:empty{display:none}

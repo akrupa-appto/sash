@@ -41,9 +41,14 @@ export class TranscribeUnsupportedError extends Error {
 // Whole-file model used when the caller does not name one. These are documented as accepting the
 // webm/opus output MediaRecorder produces natively, with no client-side PCM conversion needed.
 const DEFAULT_MODEL: Record<ProviderId, string> = {
-  openrouter: "openai/whisper-1",
-  openai: "whisper-1",
-  gemini: "gemini-2.5-flash",
+  // Current as of 2026-09-20. OpenAI's own deprecation notice (2026-08-26) replaces whisper-1,
+  // gpt-4o-transcribe and gpt-4o-mini-transcribe with gpt-transcribe (file/whole-utterance) or
+  // gpt-live-transcribe (microphone streams); gemini-3.5-transcribe is Gemini's speech-to-text
+  // model. A custom OpenAI-compatible server is the one case with no shared answer: whisper-1 is
+  // still the id such servers most often implement, so it stays the custom default.
+  openrouter: "openai/gpt-transcribe",
+  openai: "gpt-transcribe",
+  gemini: "gemini-3.5-transcribe",
   custom: "whisper-1",
 };
 
@@ -91,14 +96,6 @@ async function toBytes(audio: AudioInput): Promise<Uint8Array> {
   throw new Error("unsupported audio input: expected a Blob, ArrayBuffer, or Uint8Array");
 }
 
-async function toBase64(bytes: Uint8Array): Promise<string> {
-  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  return btoa(binary);
-}
-
 // OpenRouter documents this endpoint's own upstream timeout at 60s; a client-side timeout on top of
 // that keeps a stalled request from leaving dictation:stop (and a hot mic) hanging indefinitely.
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -141,33 +138,138 @@ async function openaiStyleTranscribe(provider: ProviderId, model: string, key: s
   return String(json.text ?? "");
 }
 
-// Gemini has no dedicated transcription endpoint; audio goes inline (base64) in a normal
-// generateContent call, same as the chat path in providers.ts. 20MB inline cap.
-async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, mimeType: string): Promise<string> {
-  const data = await toBase64(bytes);
-  const body = {
-    contents: [{
-      role: "user",
-      parts: [
-        { text: "Transcribe the spoken audio exactly as spoken. Reply with only the transcript text and no other commentary." },
-        { inlineData: { mimeType: mimeType.split(";")[0], data } },
-      ],
-    }],
-  };
-  // The 20MB inline cap is on the serialized request, not the raw audio: base64 alone inflates the
-  // clip by ~4/3, on top of the JSON wrapper. Check the actual encoded payload, not the raw bytes.
-  const encodedSize = new TextEncoder().encode(JSON.stringify(body)).byteLength;
-  if (encodedSize > 20 * 1024 * 1024) throw new Error("audio clip is too large for Gemini's inline 20MB limit; use OpenRouter or OpenAI instead");
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+// Gemini runs speech through the Interactions API, which is the path Google recommends (the
+// generateContent transcription page is marked legacy): upload the bytes with the Files API, then
+// create an interaction that names the uploaded file's uri. A dedicated speech model
+// (gemini-3.5-transcribe) needs no instruction — `generation_config.transcription_config` is the
+// whole request — while a general multimodal model, which is what older settings named, still has
+// to be told what to do in words.
+// Documented at ai.google.dev/gemini-api/docs/transcribe and /docs/files (checked 2026-09-20).
+// There is no Gemini key on this machine: this shape is documentation-verified and covered by a
+// mocked fetch, not live-verified.
+const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta";
+// The Files API upload lives on the /upload host path, with /upload BEFORE the version — the plain
+// api host 404s for it (checked live 2026-09-20). The session PUT then goes to whatever
+// x-goog-upload-url the start call returns.
+const GEMINI_UPLOAD = "https://generativelanguage.googleapis.com/upload/v1beta";
+
+// The transcript arrives in `output_text`. The older shapes are still read so a change in the
+// response envelope cannot silently turn into an empty dictation: an `outputs` array with text
+// entries, steps[] content parts carrying the text, and word-level annotations (word_info) when
+// timestamps are on and no plain text part comes back at all.
+function geminiTranscript(json: any): string {
+  if (typeof json?.output_text === "string" && json.output_text.trim()) return json.output_text.trim();
+  const parts = [...(json?.outputs ?? []), ...((json?.steps ?? []).flatMap((s: any) => s?.content ?? []))];
+  const text = parts.filter((p: any) => typeof p?.text === "string").map((p: any) => p.text).join("").trim();
+  if (text) return text;
+  return parts
+    .flatMap((p: any) => (p?.annotations ?? []).filter((a: any) => a?.type === "word_info").map((a: any) => String(a.text ?? "")))
+    .join(" ")
+    .trim();
+}
+
+// Files API resumable upload, the documented way to hand audio to the Interactions API. The first
+// call only declares the upload and hands back the session URL in a header; the bytes go to that URL.
+// Cleanup has to be promised, not fired and forgotten: the caller (extension/offscreen.js, driven by
+// background.js) closes the offscreen document as soon as transcribe() resolves, and closing it
+// aborts every request that document still has in flight — so a DELETE or cancel that was only
+// kicked off is the same as one never sent, and the user's microphone clip stays in Google's file
+// store for its full 48 hours. Every cleanup below is therefore awaited to completion before
+// transcribe() can resolve. Losing the cleanup is not losing the transcript, though: it is reported
+// and not thrown, so it can neither turn a successful dictation into a user-facing error nor replace
+// the upload failure already on its way out of a failing one.
+async function cleanupStep(what: string, request: () => Promise<Response>): Promise<void> {
+  try {
+    const res = await request();
+    if (!res.ok) console.warn(`Gemini cleanup failed (${res.status}) for ${what}; the dictation clip may stay in Google's file store for up to 48 hours`);
+  } catch (err: any) {
+    console.warn(`Gemini cleanup failed for ${what} (${err?.message || err}); the dictation clip may stay in Google's file store for up to 48 hours`);
+  }
+}
+
+// The uploaded file itself, deleted by the name the Files API gave it.
+const deleteUploadedFile = (key: string, name: string) =>
+  cleanupStep(name, () => fetch(`${GEMINI_API}/${name}`, { method: "DELETE", headers: { "x-goog-api-key": key }, signal: requestTimeout() }));
+
+async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): Promise<{ uri: string; name: string }> {
+  const mime = mimeType.split(";")[0];
+  const start = await fetch(`${GEMINI_UPLOAD}/files`, {
     method: "POST",
-    headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: {
+      "x-goog-api-key": key,
+      "Content-Type": "application/json",
+      "X-Goog-Upload-Protocol": "resumable",
+      "X-Goog-Upload-Command": "start",
+      "X-Goog-Upload-Header-Content-Length": String(bytes.byteLength),
+      "X-Goog-Upload-Header-Content-Type": mime,
+    },
+    body: JSON.stringify({ file: { display_name: "dictation" } }),
     signal: requestTimeout(),
   });
-  if (!res.ok) throw new Error(`Gemini transcription failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-  const json: any = await res.json();
-  const parts = json.candidates?.[0]?.content?.parts ?? [];
-  return parts.map((p: any) => p.text ?? "").join("").trim();
+  if (!start.ok) throw new Error(`Gemini transcription failed (${start.status}): ${(await start.text()).slice(0, 300)}`);
+  const session = start.headers.get("x-goog-upload-url");
+  if (!session) throw new Error("Gemini accepted the audio but returned no upload URL for it");
+  // The session exists from the moment the start call returns, so a failure here has to cancel it:
+  // otherwise the clip sits in Google's file store for its full 48 hours with nothing to delete it.
+  const cancel = () => cleanupStep("the open upload session", () => fetch(session, { method: "POST", headers: { "X-Goog-Upload-Command": "cancel" }, signal: requestTimeout() }));
+  let upload: Response;
+  try {
+    upload = await fetch(session, {
+      method: "POST",
+      headers: {
+        "Content-Length": String(bytes.byteLength),
+        "X-Goog-Upload-Offset": "0",
+        "X-Goog-Upload-Command": "upload, finalize",
+      },
+      body: bytes,
+      signal: requestTimeout(),
+    });
+  } catch (err) {
+    await cancel();
+    throw err;
+  }
+  if (!upload.ok) {
+    await cancel();
+    throw new Error(`Gemini transcription failed (${upload.status}): ${(await upload.text()).slice(0, 300)}`);
+  }
+  // The bytes have landed, so the file now exists whether or not its reply is readable: a truncation
+  // here would otherwise leave the clip in Google's store for its full 48 hours with nothing pointing
+  // at it. Cancel the session on an unreadable reply, and delete a file whose name the reply did give.
+  let json: any;
+  try {
+    json = await upload.json();
+  } catch (err) {
+    await cancel();
+    throw err;
+  }
+  if (!json?.file?.uri) {
+    if (json?.file?.name) await deleteUploadedFile(key, json.file.name);
+    throw new Error("Gemini accepted the audio but returned no file uri for it");
+  }
+  return { uri: json.file.uri, name: json.file.name ?? "" };
+}
+
+async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, mimeType: string): Promise<string> {
+  const speech = /transcribe/i.test(model);
+  const { uri, name } = await geminiUpload(key, bytes, mimeType);
+  try {
+    const input: any[] = [{ type: "audio", uri, mime_type: mimeType.split(";")[0] }];
+    if (!speech) input.unshift({ type: "text", text: "Transcribe the spoken audio exactly as spoken. Reply with only the transcript text and no other commentary." });
+    const res = await fetch(`${GEMINI_API}/interactions`, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, input, ...(speech ? { generation_config: { transcription_config: {} } } : {}) }),
+      signal: requestTimeout(),
+    });
+    if (!res.ok) throw new Error(`Gemini transcription failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    return geminiTranscript(await res.json());
+  } finally {
+    // The clip is the user's own microphone audio. Uploaded files otherwise stay in Google's file
+    // store for 48 hours, so drop it as soon as the transcript is in hand — and before returning,
+    // because the caller closes the offscreen document the moment transcribe() resolves and that
+    // would abort this request. Failing to delete is not an error; it is reported (cleanupStep).
+    if (name) await deleteUploadedFile(key, name);
+  }
 }
 
 export async function transcribe(req: TranscribeRequest): Promise<TranscribeResult> {

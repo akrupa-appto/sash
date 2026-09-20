@@ -44,10 +44,12 @@ let calls;
 let specs;
 const resolvers = [];
 mock.module('../src/transcribe.ts', { namedExports: {
+  // Stands in for the real table (src/transcribe.ts DEFAULT_MODEL) so the wiring below can be driven
+  // deterministically; the real values are asserted against the real module in transcribe.test.mjs.
   defaultTranscriptionSpec: provider => ({
-    openrouter: 'openai/whisper-1',
-    openai: 'openai:whisper-1',
-    gemini: 'gemini:gemini-2.5-flash',
+    openrouter: 'openai/gpt-transcribe',
+    openai: 'openai:gpt-transcribe',
+    gemini: 'gemini:gemini-3.5-transcribe',
     custom: 'custom:whisper-1',
   })[provider],
   transcribe: async req => {
@@ -77,7 +79,7 @@ test('the chunked path transcribes the accumulated buffer, not a lone headerless
   recorder.fireData(new Blob(['A']));
   await resolveNext({ text: 'a' });
   assert.deepEqual(calls, ['A'], 'the first chunk alone is the whole buffer so far');
-  assert.deepEqual(specs, ['openai:whisper-1'], 'the explicit voice provider selects its real default transcription model');
+  assert.deepEqual(specs, ['openai:gpt-transcribe'], 'the explicit voice provider selects its default transcription model');
 
   recorder.fireData(new Blob(['B']));
   await resolveNext({ text: 'ab' });

@@ -3,7 +3,7 @@ import { defaultTranscriptionSpec, transcribeCapability } from '../src/transcrib
 import { parseModel, PROVIDERS } from '../src/providers.ts';
 import { ChromePage, setCursorSink, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
-import { ensureOriginAccess } from './permissions.js';
+import { ALL_SITES, ensureOriginAccess } from './permissions.js';
 import { readSettings, validateSettings } from './settings.js';
 import { BadgeState, RequestType } from './types.js';
 import { ApprovalScope, declineAll, denialKey, grantKey, pickBlocking, RequestOutcome } from './requests.js';
@@ -152,8 +152,12 @@ let seq = 0;
 // import at this same extension/config.js). clearConfig() wipes every key in that object, so this
 // must never run while a run is mid-flight and depending on it staying configured — hence the
 // `active` check up front instead of bracketing every caller with its own guard.
-function voiceSpecFor(provider) {
-  return provider ? defaultTranscriptionSpec(provider) : undefined;
+// The spec dictation will actually send: the user's own transcription model when they picked one,
+// otherwise the default model of the chosen provider (and, with neither, nothing at all — which
+// means "the provider behind the planner model, its default", resolved inside transcribe()).
+function voiceSpecFor(settings) {
+  if (settings?.transcriptionModel) return settings.transcriptionModel;
+  return settings?.voiceProvider ? defaultTranscriptionSpec(settings.voiceProvider) : undefined;
 }
 // Offscreen documents only expose chrome.runtime, so the settings transcription needs have to
 // travel with the command. Send only those: the key of the provider that will actually make the
@@ -162,9 +166,11 @@ function voiceSpecFor(provider) {
 // other configured key — including the planner's — sitting in a second context for no reason.
 function voiceSettingsFor(settings) {
   const chosen = PROVIDERS[settings.voiceProvider] ? settings.voiceProvider : '';
-  const provider = chosen || parseModel(settings.model || '').provider;
+  // A named transcription model decides the provider too: sending the OpenAI key to transcribe with
+  // Gemini would fail after the mic was already hot.
+  const provider = settings.transcriptionModel ? parseModel(settings.transcriptionModel).provider : chosen || parseModel(settings.model || '').provider;
   const keyField = { openrouter: 'openrouterKey', typesafe: 'typesafeKey', openai: 'openaiKey', gemini: 'geminiKey', custom: 'customKey' }[provider];
-  const narrowed = { voiceProvider: chosen, model: settings.model };
+  const narrowed = { voiceProvider: chosen, transcriptionModel: settings.transcriptionModel, model: settings.model };
   if (provider === 'typesafe') { narrowed.provider = 'typesafe'; narrowed.typesafeKey = settings.typesafeKey; }
   else if (keyField) narrowed[keyField] = settings[keyField];
   if (provider === 'custom') narrowed.customBaseUrl = settings.customBaseUrl;
@@ -177,7 +183,7 @@ let lastVoiceCapability;
 function voiceCapability(settings) {
   if (active) return lastVoiceCapability || { canTranscribe: false, streaming: false, reason: 'a task is already running' };
   configure(settings);
-  try { return (lastVoiceCapability = transcribeCapability(voiceSpecFor(settings.voiceProvider))); }
+  try { return (lastVoiceCapability = transcribeCapability(voiceSpecFor(settings))); }
   finally { clearConfig(); }
 }
 // Set once a session has already triggered a run (eager mid-utterance, or prewarm/eager at speech
@@ -379,6 +385,19 @@ async function askForAccess(prompt) {
   const reply = await chrome.runtime.sendMessage({ type: 'permission', prompt }).catch(() => undefined);
   return reply?.allow === true;
 }
+// Is the every-site grant Chrome is holding really there? The stored settings say what the user
+// chose (see settings.js siteAccessMode), not what Chrome has: revoking it in chrome://extensions
+// leaves that stored 'all' behind. So the mode is only worth acting on next to this read, and a read
+// that fails answers "no" -- an unreadable grant is never treated as a granted one.
+const everySiteGranted = () => chrome.permissions.contains({ origins: ALL_SITES }).catch(() => false);
+// The site-access gate the run passes before it touches a page. Mode 'all' with the grant really in
+// hand is the one case with nothing to ask: the user already answered the every-site question from
+// settings, so a second, narrower card would be a question Chrome has already settled. Everything
+// else -- mode 'ask', or 'all' with the grant gone -- keeps the per-site path exactly as it was.
+async function ensureSiteAccess(url, settings) {
+  if (settings?.siteAccessMode === 'all' && await everySiteGranted()) return true;
+  return ensureOriginAccess(url, askForAccess);
+}
 // A turn that ends "blocked" and one that ends "needs_input" are the same thing to the tab
 // contract: the user has to act on that very tab next, so it is handed over rather than closed.
 const waitingOnUser = status => status === 'blocked' || status === 'needs_input';
@@ -475,7 +494,7 @@ async function execute(run, message) {
     const tab = await chrome.tabs.get(id);
     if (!supportedUrl(tab.url)) throw new Error('Chrome does not allow control of this tab. choose a website tab.');
     // Nothing happens on a site before the user has allowed it, so the gate comes before the claim.
-    await ensureOriginAccess(tab.url, askForAccess);
+    await ensureSiteAccess(tab.url, settings);
     // The user handed this tab over, so it is never grouped and never closed when the run ends.
     lease.claim(id, { sessionId: run.sessionId, turnId: run.turnId, openedByUs: false });
     let page = pages.find(p => p.tabId === id);
@@ -500,7 +519,7 @@ async function execute(run, message) {
 
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
-    const work = ensureOriginAccess(tab.url, askForAccess).then(() => page.attach()).then(async () => {
+    const work = ensureSiteAccess(tab.url, settings).then(() => page.attach()).then(async () => {
       controller.signal.throwIfAborted();
       state.tabId = tab.id; state.tabTitle = tab.title || tab.url;
       void setFeedback(tab.id, { badge: BadgeState.WORKING });
@@ -581,11 +600,17 @@ async function execute(run, message) {
       if (run.popupError) throw run.popupError;
       const blocking = outcome?.status === 'needs_input' ? pickBlocking(outcome.requests || []) : undefined;
       const isApproval = blocking && (blocking.type === RequestType.APPROVAL || blocking.type === RequestType.PERMISSION_REQUEST);
-      if (!isApproval || !isGranted(blocking) || ++autoApprovals > MAX_AUTO_APPROVALS) break;
+      // Two kinds of approval never reach the panel: one a stored grant already covers, and any at
+      // all when the user chose "never ask" (approvalMode 'none'). Nothing is stored for the second
+      // case -- the setting is the permission, so there is nothing per-action to remember.
+      const autoAnswer = !!blocking && (isGranted(blocking) || settings.approvalMode === 'none');
+      if (!isApproval || !autoAnswer || ++autoApprovals > MAX_AUTO_APPROVALS) break;
       // The stored grant covers the action, but only on the site it was given for: the run can have
       // switched tabs since the ask was raised, and the same wording on another site is not the
       // control the user allowed. Refusing to auto-resume here leaves the card up for a real answer.
-      if (!(await pageStillHolds(page.tabId, blocking.origin))) break;
+      // "never ask" is not site-scoped -- that setting is the permission itself -- so the site check
+      // only guards the stored grant.
+      if (isGranted(blocking) && !(await pageStillHolds(page.tabId, blocking.origin))) break;
       const denials = { ...(state.denials || {}) };
       delete denials[denialKey(blocking)];
       state.denials = denials;

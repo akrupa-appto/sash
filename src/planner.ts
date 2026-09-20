@@ -10,7 +10,7 @@ export type Plan = {
   question?: string; // status "ask": what the user is being asked
   options?: string[]; // status "ask": the choices, when the question is a choice
   action?: string; // status "approve": the action permission is being asked for
-  origin?: string; // status "approve": the site the permission covers, "*" for every site
+  origin?: string; // status "approve": accepted but ignored — a grant is always scoped to the page the action runs on
   sign_in_options?: string[]; // status "credential": named alternatives ("continue with Google")
   next?: string; // one single action, e.g. "click the last story link in the list"
   completes_task?: boolean; // true when this action, if it works, finishes the task
@@ -60,7 +60,7 @@ Rules:
 - When the page itself stopped the run rather than the task running out of road, say blocked and add "blocked_reason": one of "captcha_failed", "access_denied", "challenge_loop", "unexpected_bot_error". Use no other value.
 - Instead of blocked, hand the turn back to the user when a human can unstick it:
   {"status":"ask","question":"one question","options":["choice a","choice b"],"why":"…"} when the task is ambiguous and you need a decision ("options" only when it really is a choice; leave it out for an open question).
-  {"status":"approve","action":"what you are about to do","origin":"https://site.example","why":"…"} before something the user would want to authorise (an action that moves money, sends or posts something, deletes data or an account, submits an order or application, or changes an irreversible setting); use "*" as origin only when the action needs every site.
+  {"status":"approve","action":"what you are about to do","why":"…"} before something the user would want to authorise (an action that moves money, sends or posts something, deletes data or an account, submits an order or application, or changes an irreversible setting). The card names the page the action runs on and a saved grant covers only that page, so never send an origin to widen it: every-site access is the user's own setting, not something you can ask for here.
   {"status":"credential","why":"…","sign_in_options":["continue with Google"]} at a sign-in wall. The user fills the form in the panel; never type a password yourself and never read one off the page.`;
 
 // Take the first complete top-level {...} object, ignoring anything the model appends after it.
@@ -87,6 +87,23 @@ export function plannerModel() {
   return env.PLANNER_MODEL ?? "anthropic/claude-sonnet-5";
 }
 
+/**
+ * The user's approval setting, expressed as a prompt instruction.
+ *
+ * The planner is what raises an approval (see the "approve" status above), so "ask before every
+ * action" has to live here: there is no per-op gate in the executor, and a second one would be a
+ * second source of truth for the same decision. `env.APPROVAL_MODE` is set by the extension from
+ * settings (extension/config.js); unset means the server's original behaviour, which is the middle
+ * setting.
+ */
+export function approvalInstruction(mode: string | undefined): string {
+  if (mode === "every")
+    return '\nThe user chose "ask before every action": before every action that changes the page or sends anything (clicking a control, typing, submitting, choosing an option, deleting, uploading), reply with {"status":"approve","action":"what you are about to do","why":"one short sentence"} and take no other action in that step. The card names the page the action runs on and a saved permission covers only that page, so never send an origin to widen it. Reading, scrolling, waiting, and switching tabs need no approval. Ask again for each new action unless the user already allowed this exact action for this conversation or always; a longer step is cheaper than an unasked-for click. The only exception is a history line of the form "paused → approved <action> (<scope>)": the user has already answered for that one action, so when the action you are about to take is the one named there, answer {"status":"continue"} and do it — asking again would throw the user\'s answer away, whatever the scope. Any other action still needs its own approval, including the next one after this.';
+  if (mode === "none")
+    return '\nThe user chose "never ask": never reply with status "approve" and never with "ask". Decide from the page and act.';
+  return "";
+}
+
 export type ReasoningLevel = "auto" | Effort;
 
 // Output budget per effort level; reasoning tokens share it on most providers.
@@ -109,7 +126,10 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
   const t0 = performance.now();
   const reply = await chat({
     spec: model,
-    system: SYSTEM + (ctx.tabs ? '\nYou can also switch to an existing browser tab. open_tabs lists every available website tab across windows. To switch, return {"status":"continue","tabId":<numeric id>,"why":"reason"}; this uses one step and performs no page action. Read each relevant tab before comparing or summarizing multiple tabs. Tab references in the task identify exact IDs. Remember observed facts in your history when switching tabs. Never claim you read an unvisited tab.' : ''),
+    system:
+      SYSTEM +
+      (ctx.tabs ? '\nYou can also switch to an existing browser tab. open_tabs lists every available website tab across windows. To switch, return {"status":"continue","tabId":<numeric id>,"why":"reason"}; this uses one step and performs no page action. Read each relevant tab before comparing or summarizing multiple tabs. Tab references in the task identify exact IDs. Remember observed facts in your history when switching tabs. Never claim you read an unvisited tab.' : '') +
+      approvalInstruction(env.APPROVAL_MODE),
     user,
     effort: reasoning,
     maxTokens: (effort) => Math.min(32768, BUDGET[effort] * (recovery ? 2 : 1)),
@@ -129,17 +149,26 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
     p = extractJson(content) as Plan;
     if (!p || !["continue", "done", "blocked", "ask", "approve", "credential"].includes(p.status)) throw new Error('invalid plan status');
     if (p.status === 'ask' && !(typeof p.question === 'string' && p.question.trim()) && !(typeof p.why === 'string' && p.why.trim())) throw new Error('missing question');
+    // "never ask — just do it" covers the planner's own questions too, not only the approval card: a
+    // run that stops for an answer is exactly the wait the user turned off. The instruction above
+    // already asks the model not to, so this is the floor under it — refused, retried once by the
+    // recovery path below, and if the model asks again the run reports it rather than pausing.
+    if (p.status === 'ask' && env.APPROVAL_MODE === 'none') throw new Error('questions are turned off');
     if (p.options !== undefined && !(Array.isArray(p.options) && p.options.every(o => typeof o === 'string'))) throw new Error('invalid options');
     if (p.tabId == null) delete p.tabId;
     if (p.tabId != null && !Number.isInteger(p.tabId)) throw new Error('invalid tab ID');
     if (p.tabId !== undefined && !ctx.tabs?.some(tab => tab.id === p.tabId)) throw new Error('tab ID is not in the open tabs');
     if (p.tabId !== undefined && p.tabId === ctx.currentTabId) throw new Error('already on the requested tab');
     if (p.status === 'continue' && !(typeof p.next === 'string' && p.next.trim()) && !(ctx.tabs && Number.isInteger(p.tabId))) throw new Error('missing next action');
-  } catch {
+  } catch (err) {
     if (!recovery) {
       const retry = await plan(ctx, signal, model, reasoning, 1);
       return { ...retry, ms: retry.ms + ms, cost_usd: retry.cost_usd + reply.cost_usd };
     }
+    // Asking a question twice under "never ask — just do it" is not a broken model, it is the setting
+    // working as asked, so say that instead of sending the user off to change their planner model.
+    if (err instanceof Error && err.message === 'questions are turned off')
+      throw new Error('this task needs an answer, and questions are turned off in settings ("never ask — just do it"). turn approvals back on to be asked, or reword the task so it needs no answer.');
     throw new Error(`the planner (${model}) returned ${reply.finish === 'length' ? 'an incomplete reply after reaching its output limit' : content.trim() ? 'an invalid reply' : 'an empty reply'} twice. no further action was taken. try again or choose another planner model in settings.`);
   }
   return { ...p, ms, cost_usd: reply.cost_usd };

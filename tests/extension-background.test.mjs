@@ -94,9 +94,11 @@ globalThis.chrome = {
 // tests/transcribe.test.mjs.
 mock.module('../src/transcribe.ts', { namedExports: {
   defaultTranscriptionSpec: provider => ({
-    openrouter: 'openai/whisper-1',
-    openai: 'openai:whisper-1',
-    gemini: 'gemini:gemini-2.5-flash',
+    // Mirrors src/transcribe.ts's own defaults so this stand-in cannot drift into offering a model
+    // the build no longer uses; those real values are asserted in tests/transcribe.test.mjs.
+    openrouter: 'openai/gpt-transcribe',
+    openai: 'openai:gpt-transcribe',
+    gemini: 'gemini:gemini-3.5-transcribe',
     custom: 'custom:whisper-1',
   })[provider],
   transcribeCapability: spec => {
@@ -291,6 +293,41 @@ test('a new run is refused while a request is pending, and the request survives 
     await until(() => data.runState?.status === 'done');
     assert.deepEqual(data.runState.requests, []);
   } finally { pendingRequest = undefined; }
+});
+
+test('approval mode "none" answers an approval in place, without ever showing a card', async () => {
+  await send({ type: 'clear' });
+  data.settings.approvalMode = 'none';
+  const before = taskStarted;
+  const request = { id: 'req-none', type: 'approval', action: 'send the message', origin: 'https://example.test' };
+  nextOutcome = { status: 'needs_input', message: 'needs approval', requests: [request], request };
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'careful' });
+    // The run resumes on its own: the fixture is called a second time with no answer from the panel.
+    await until(() => taskStarted === before + 2);
+    finishTask();
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'done');
+    assert.deepEqual(data.runState.requests, [], 'the approval never became a pending card');
+    // No synthetic "go on" goal: the resume keeps the task's own goal and the run's own mode.
+    assert.equal(lastInput.goal, 'send it');
+    assert.equal(data.runState.denials?.['approval:https://example.test:send the message'], undefined, 'allowing is not a denial');
+  } finally {
+    nextOutcome = undefined; pendingRequest = undefined;
+    data.settings.approvalMode = 'every';
+  }
+});
+
+test('the same approval still waits for the user at the default setting', async () => {
+  await send({ type: 'clear' });
+  const request = { id: 'req-every', type: 'approval', action: 'send the message', origin: 'https://example.test' };
+  nextOutcome = { status: 'needs_input', message: 'needs approval', requests: [request], request };
+  try {
+    await send({ type: 'run', tabId: 12, goal: 'send it', mode: 'careful' });
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.deepEqual(data.runState.requests.map(r => r.id), ['req-every']);
+  } finally { nextOutcome = undefined; }
 });
 
 test('a paused request carries the coverage/failure guards back in when the answer resumes the run', async () => {
@@ -622,7 +659,7 @@ test('only the chosen voice provider key crosses to the offscreen document, neve
   try {
     await send({ type: 'dictation:start' });
     const start = messages.filter(m => m.type === 'offscreen:start').at(-1);
-    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'voiceProvider'],
+    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'transcriptionModel', 'voiceProvider'],
       'the payload carries the chosen provider key, the model that resolves the provider, and nothing else');
     assert.equal(start.settings.openaiKey, 'voice-key');
     assert.equal(start.settings.openrouterKey, undefined, 'the planner key does not travel');
@@ -899,6 +936,62 @@ test('the global shortcut opens the mic once voice is on and a mode is actually 
     chrome.commands.onCommand.fire('toggle-dictation'); // a second press, past the double-tap window, stops it
     await until(() => offscreenDocs === 0);
   });
+});
+
+// --- the stored "every site" access mode, enforced here -----------------------------------------
+// settings.js's `siteAccessMode: 'all'` is what the user said they wanted; chrome.permissions.contains
+// is what Chrome actually holds. Both tests below run the worker with allowAccess = false on purpose:
+// the panel's stub can then never hand out access behind the test's back, so a run that finishes is a
+// run that was never asked -- not a card the fixture quietly answered yes to.
+test('site access mode "all" skips the per-site card while Chrome really holds the grant', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const beforeSettings = { ...data.settings };
+  const before = taskStarted;
+  try {
+    data.settings.siteAccessMode = 'all';
+    // What a grant made from the settings page leaves behind: the every-site permissions, held.
+    grantedOrigins.push('https://*/*', 'http://*/*');
+    nextOutcome = { status: 'done', message: 'finished' };
+    await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+    await until(() => data.runState?.running === false);
+    assert.deepEqual(accessPrompts, [], 'every-site access is already granted, so no per-site card is shown');
+    assert.equal(taskStarted, before + 1, 'the run starts without waiting on an access card');
+    assert.equal(data.runState.status, 'done');
+  } finally {
+    nextOutcome = undefined;
+    data.settings = beforeSettings;
+    grantedOrigins.length = 0;
+    accessPrompts.length = 0;
+  }
+});
+
+// The other half, and the one the mode must never get wrong: the setting is stored, Chrome holds
+// nothing, so the per-site ask is exactly what happens today. A worker that trusted the stored mode
+// alone would run here on a site Chrome never granted it.
+test('site access mode "all" without the grant still asks one site at a time', async () => {
+  await send({ type: 'clear' });
+  grantedOrigins.length = 0;
+  accessPrompts.length = 0;
+  allowAccess = false;
+  const beforeSettings = { ...data.settings };
+  const before = taskStarted;
+  try {
+    data.settings.siteAccessMode = 'all';
+    await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
+    await until(() => data.runState?.running === false);
+    assert.equal(accessPrompts.length, 1, 'the stored mode alone must never skip the card');
+    assert.equal(accessPrompts.at(-1).scope, 'origin');
+    assert.equal(accessPrompts.at(-1).title, 'allow checkto to access https://example.test?');
+    assert.equal(taskStarted, before, 'no task may run before access is granted');
+    assert.match(data.runState.messages.at(-1).text, /needs your permission to use https:\/\/example\.test/);
+  } finally {
+    data.settings = beforeSettings;
+    grantedOrigins.length = 0;
+    accessPrompts.length = 0;
+  }
 });
 
 // --- host access is asked for before a site is touched -----------------------------------------

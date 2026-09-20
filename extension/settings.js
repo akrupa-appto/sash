@@ -8,14 +8,30 @@ export const defaults = {
   // planner model (BYOK, same as transcribe.ts's own default); set to one of PROVIDER_KEYS' keys to
   // use a different configured provider for audio than for planning.
   voiceEnabled: false, voiceMode: 'prewarm', voiceProvider: '',
+  // Speech-to-text is a different job from chat, so it gets its own model choice. Empty means "the
+  // provider backing the planner model, that provider's own default transcription model"; anything
+  // else is a provider spec like "openai:gpt-transcribe" or a bare OpenRouter id like
+  // "openai/gpt-transcribe" (see providers.ts parseModel: no prefix means OpenRouter).
+  transcriptionModel: '',
+  // approvals: 'every' asks before every action that changes the page, 'risky' only for what the
+  // planner judges worth authorising (the original behaviour), 'none' never asks.
+  approvalMode: 'every',
+  // site access: 'ask' shows Chrome's per-site card the first time; 'all' is stored only after the
+  // settings page asked Chrome for the optional every-site permission from the save gesture and
+  // Chrome granted it, so the worker can skip the per-site card. A denied or unanswered prompt leaves
+  // this at 'ask' (see options.js).
+  siteAccessMode: 'ask',
 };
 export function normalizeSettings(input = {}) {
   const out = { ...defaults };
   for (const key of ['openrouterKey', 'typesafeKey', 'openaiKey', 'geminiKey', 'customKey', 'customBaseUrl', 'model', 'jevModel', 'textModel']) {
     if (typeof input[key] === 'string') out[key] = input[key].trim();
   }
+  if (typeof input.transcriptionModel === 'string') out.transcriptionModel = input.transcriptionModel.trim();
   out.customBaseUrl = out.customBaseUrl.replace(/\/+$/, '');
   out.provider = input.provider === 'typesafe' ? 'typesafe' : 'openrouter';
+  out.approvalMode = ['every', 'risky', 'none'].includes(input.approvalMode) ? input.approvalMode : 'every';
+  out.siteAccessMode = input.siteAccessMode === 'all' ? 'all' : 'ask';
   out.mode = input.mode === 'fast' ? 'fast' : 'careful';
   out.reasoning = ['auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(input.reasoning) ? input.reasoning : 'auto';
   out.maxSteps = Math.min(60, Math.max(1, Number(input.maxSteps) || 30));
