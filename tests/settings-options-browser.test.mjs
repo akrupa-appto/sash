@@ -62,7 +62,10 @@ const served = (models, delay = 0) => async route => {
 // A server that answers with an error: not offline, but still nothing to list.
 const refused = status => route => route.fulfill({ status, contentType: 'text/plain', body: 'nope' });
 
-async function settingsPage({ transcription = offline } = {}) {
+async function settingsPage({ transcription = offline, saved = undefined } = {}) {
+  // `saved` seeds chrome.storage.local the way a previous session left it, before the page reads it —
+  // the only way to reach the settings a build does not offer (see the saved-choice test below).
+  if (saved) await worker.evaluate(value => chrome.storage.local.set({ settings: value }), saved);
   const page = await context.newPage();
   const errors = [];
   // Every catalog request the page made, headers included. The route is the only place the request
@@ -264,5 +267,34 @@ test('the new controls do not break the narrow layout', { skip }, async () => {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.equal(await page.locator('#transcriptionModel').isVisible(), true);
   assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('a saved speech model this build does not offer survives typing a key, and still falls back when its own provider\'s key is removed', { skip }, async () => {
+  // The saved id is from an earlier build: not in this build's fallback list and not in the live
+  // catalog. A bare spec resolves to OpenRouter (parseModel), so OpenRouter is its provider, and it is
+  // that key the page has — the other two are what makes this more than a one-provider page.
+  const savedModel = 'cohere/transcribe-legacy';
+  const { page, errors } = await settingsPage({ saved: { openrouterKey: 'openrouter-test-key', openaiKey: 'openai-test-key', transcriptionModel: savedModel } });
+  // The first paint keeps it — that is what the "your saved choice" row is for.
+  assert.equal(await page.locator('#transcriptionModel').inputValue(), savedModel);
+  assert.ok((await optionValues(page)).includes(savedModel), 'a saved model this build does not offer is on screen, not silently swapped');
+
+  // Typing a key anywhere on the page recomputes the list. This saved model's provider is still
+  // connected, so the row and the selection both survive the re-render: no error, no visible reason,
+  // no dropped model.
+  await page.locator('#geminiKey').fill('gemini-test-key');
+  assert.equal(await page.locator('#transcriptionModel').inputValue(), savedModel, 'typing a key must not silently drop the saved speech model');
+  assert.ok((await optionValues(page)).includes(savedModel), 'the saved row is still in the select');
+
+  // Its own provider's key removed is the opposite case: the model is no longer reachable, so the
+  // selection goes back to the first option instead of sitting on a row nothing can serve.
+  await page.locator('#openrouterKey').fill('');
+  const remaining = await optionValues(page);
+  assert.equal(await page.locator('#transcriptionModel').inputValue(), '');
+  assert.equal(remaining.includes(savedModel), false, 'an unreachable saved model does not stay selected');
+  assert.ok(remaining.includes('openai:gpt-transcribe'), 'the providers still connected are still offered');
+  assert.deepEqual(errors, []);
+  await worker.evaluate(() => chrome.storage.local.remove('settings'));
   await page.close();
 });

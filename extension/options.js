@@ -301,7 +301,17 @@ form.elements.provider.addEventListener('change', () => { document.querySelector
 // A key typed (or removed) above, or a different speech model chosen, changes which providers and
 // modes are honestly offerable right now — recomputed live, the same way the model picker's own
 // list is. A changed OpenRouter key also refetches the speech catalog it lists.
-['openrouterKey', 'openaiKey', 'geminiKey', 'customKey', 'customBaseUrl'].forEach(id => form.elements[id].addEventListener('input', () => { refreshTranscriptionModels(); renderTranscriptionOptions(); renderVoiceModes(); }));
+['openrouterKey', 'openaiKey', 'geminiKey', 'customKey', 'customBaseUrl'].forEach(id => form.elements[id].addEventListener('input', () => {
+  refreshTranscriptionModels();
+  // This re-render has to keep the same rule the first paint does (renderTranscriptionOptions's own
+  // keepUnlisted): a saved speech model this build does not offer stays selected while its own
+  // provider is still connected, and falls back once that provider's key is removed. Deriving it from
+  // the form's current selection is what keeps the two in step — an unlisted model, removed key or
+  // not, must never be dropped silently.
+  const chosenProvider = providerOfSpec(form.elements.transcriptionModel.value.trim());
+  renderTranscriptionOptions({ keepUnlisted: Boolean(chosenProvider) && connected().some(provider => provider.id === chosenProvider) });
+  renderVoiceModes();
+}));
 form.elements.transcriptionModel.addEventListener('change', () => { syncVoiceProvider(); renderTranscriptionDetail(); renderVoiceModes(); });
 form.addEventListener('submit', async event => {
   event.preventDefault();
