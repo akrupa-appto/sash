@@ -29,6 +29,21 @@ test('a single site is asked for with "allow checkto to access {origin}?"', asyn
   assert.deepEqual(requested, [['https://example.test/*']]);
 });
 
+test('a site on a non-default port requests Chrome-valid host access while naming the exact origin', async () => {
+  reset();
+  const asked = [];
+  const ok = await ensureOriginAccess('http://127.0.0.1:8799/settings', grant(asked));
+  assert.equal(ok, true);
+  assert.equal(asked[0].title, 'allow checkto to access http://127.0.0.1:8799?');
+  assert.match(asked[0].detail, /Chrome grants access to every port on this host\./);
+  assert.deepEqual(asked[0].origins, ['http://127.0.0.1/*']);
+  assert.deepEqual(requested, [['http://127.0.0.1/*']]);
+
+  const crossPort = await ensureOriginAccess('http://127.0.0.1:8800/other', () => assert.fail('host access should cover another port'));
+  assert.equal(crossPort, true);
+  assert.deepEqual(requested, [['http://127.0.0.1/*']], 'another port must reuse the host-wide grant');
+});
+
 test('all-sites access is asked for with distinctly scarier wording than one site', async () => {
   reset();
   const asked = [];

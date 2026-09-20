@@ -12,6 +12,7 @@ export type El = {
   contentEditable?: boolean;
   inViewport: boolean;
   pos?: "above" | "below"; // when not in viewport: which way to scroll to reach it
+  rect: { x: number; y: number; width: number; height: number }; // viewport-relative, rounded; drives the agent cursor, never sent to the planner
 };
 
 export type Snapshot = {
