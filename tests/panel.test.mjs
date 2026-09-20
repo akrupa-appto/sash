@@ -43,8 +43,8 @@ const finished = {
   ],
 };
 
-async function panel(state) {
-  const page = await browser.newPage();
+async function panel(state, { width } = {}) {
+  const page = await browser.newPage(width ? { viewport: { width, height: 720 } } : undefined);
   await page.addInitScript(() => {
     const ev = () => ({ addListener() {}, removeListener() {} });
     window.chrome = {
@@ -76,8 +76,13 @@ test('a finished run shows its answer after its own actions and their duration, 
   const order = await page.evaluate(() => [...document.querySelector('.message.agent').children].map(el => el.className || el.tagName.toLowerCase()));
   assert.deepEqual(order, ['message-label', 'steps', 'duration', 'div']);
   assert.equal(await page.locator('.message.agent > div').last().innerText(), 'uploaded it; the file URL opens.');
-  // The collapsed summary reads as one lowercase-joined sentence, not a step count or a stack trace.
+  // The collapsed summary reads as one lowercase-joined sentence, not a step count or a stack trace:
+  // it uses the same sans typeface as the rest of the transcript, not the monospace step log font.
   assert.equal(await page.locator('.message.agent .steps summary').innerText(), 'Opened tab: ~/upload, clicked the "upload" button');
+  assert.doesNotMatch(
+    await page.locator('.message.agent .steps summary').evaluate(el => getComputedStyle(el).fontFamily),
+    /mono/i,
+  );
   assert.equal(await page.locator('.message.agent .duration').innerText(), 'Worked for 2m');
   // The answer is the last thing in the transcript, so autoscroll lands on it; the live steps/duration
   // elements stay in the DOM but hidden, since no run is in flight.
@@ -134,6 +139,22 @@ test('a page that blocked the run says in the panel which check stopped it', { s
   assert.equal(await page.locator('#blocked').isVisible(), true);
   assert.match(await page.locator('#blocked').innerText(), /captcha/);
   assert.equal(await page.locator('#status-text').innerText(), 'needs your attention');
+  // It gets the same bordered-card treatment as its sibling "needs you" states (ask, approval,
+  // credential), not bare caption text: same background and radius as a request card.
+  const [blockedBg, blockedRadius] = await page.locator('#blocked').evaluate(el => {
+    const style = getComputedStyle(el);
+    return [style.backgroundColor, style.borderRadius];
+  });
+  const cardStyle = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.className = 'notice request-card';
+    document.body.append(probe);
+    const style = getComputedStyle(probe);
+    const result = [style.backgroundColor, style.borderRadius];
+    probe.remove();
+    return result;
+  });
+  assert.deepEqual([blockedBg, blockedRadius], cardStyle);
   // A run that ended cleanly says nothing about being blocked.
   await page.evaluate(s => window.onState({ type: 'state', state: s }), finished);
   assert.equal(await page.locator('#blocked').isHidden(), true);
@@ -240,6 +261,14 @@ test('the widest approval scope is confirmed a second time with the warning spel
   await captureSent(page);
   await page.locator('button[data-scope=always]').click();
   assert.deepEqual(await page.evaluate(() => window.sent), [{ type: 'answer', id: oneSite.id, outcome: 'submitted', scope: 'always' }]);
+  await page.close();
+});
+
+test('the approval scope buttons form an even grid at narrow width, not a ragged wrap', { skip }, async () => {
+  const page = await panel(waiting([approvalRequest({ action: 'submit the $89.00 order', origin: 'https://example.test' })]), { width: 320 });
+  const widths = await page.locator('.request-actions button').evaluateAll(els => els.map(e => e.getBoundingClientRect().width));
+  assert.equal(widths.length, 4);
+  for (const w of widths) assert.ok(Math.abs(w - widths[0]) <= 1, `every scope button should share one column width, got ${widths}`);
   await page.close();
 });
 
@@ -394,5 +423,17 @@ test('the @ and send buttons sit at the bottom of a tall compose box, next to th
   for (const button of [mentionBox, sendBox]) {
     assert.ok(Math.abs((button.y + button.height) - (goalBox.y + goalBox.height)) <= 4, 'button bottom should align with the textarea bottom, not float in the middle');
   }
+  await page.close();
+});
+
+test('the @ button stays centered next to a wrapped placeholder, not pinned under it, when the composer is disabled', { skip }, async () => {
+  const page = await panel(waiting([{ id: 'ask-1', type: 'user_input', question: 'which README do you mean?' }]), { width: 320 });
+  const goal = page.locator('#goal');
+  assert.equal(await goal.isDisabled(), true);
+  const [goalBox, mentionBox] = await Promise.all([goal.boundingBox(), page.locator('#mention-tabs').boundingBox()]);
+  assert.ok(goalBox.height > 30, 'the disabled placeholder should have wrapped to more than one line');
+  const goalCenter = goalBox.y + goalBox.height / 2;
+  const mentionCenter = mentionBox.y + mentionBox.height / 2;
+  assert.ok(Math.abs(goalCenter - mentionCenter) <= 4, '@ should sit centered beside the wrapped placeholder, not next to only its last line');
   await page.close();
 });
