@@ -1239,23 +1239,13 @@
     1: {
       name: "Design 1 — Quiet Ledger",
       body: "Archivo for interface text, IBM Plex Mono reserved for genuine tool output — a deliberate technical pairing, not Inter and not a serif default. " +
-        "Palette: near-black neutral with a single gold accent for anything interactive. Signature move: the run collapses fully behind a plain “Worked for Ns” line, exactly the Codex structure, transposed into checkto's own type and gold.",
+        "Structure is frozen from the design pass; only the palette below varies. Signature move: the run collapses fully behind a plain “Worked for Ns” line, exactly the Codex structure, transposed into checkto's own type.",
       axis: "Axis choices: trace collapsed at rest · state lives inline in the transcript · plain status rows · answer separated by the lightest background lift."
-    },
-    2: {
-      name: "Design 2 — Status Strip",
-      body: "Same Archivo/Plex Mono pairing and gold-on-near-black palette as the rest of the family. Signature move: a persistent strip docked under the topbar tracks the run independent of scroll, with a segmented progress track instead of prose.",
-      axis: "Axis choices: last two steps peek, older ones collapse behind a count · run state lives in a strip, not inline · actions render as tool chips · answer gets the family's one deliberate rule."
-    },
-    3: {
-      name: "Design 3 — Composer-Docked",
-      body: "Same family type and palette. Signature move: the live phase and elapsed time dock directly above the composer, so watching the agent work and telling it what to do next share one spot.",
-      axis: "Axis choices: trace stays fully open while live, then condenses to a one-line ledger · state lives on the composer, not the transcript · actions are task rows with their own elapsed time · answer separates only by stepping up in type weight."
     },
     4: {
       name: "Design 4 — Marked Rows",
-      body: "Same family type and palette. Signature move: a segmented tick track fills in as each step lands — the literal checking-off checkto is named for — sitting inside the same collapsed header structure as design 1 but reading completely differently while it runs.",
-      axis: "Axis choices: trace collapsed at rest, but the header carries live tick progress · state lives inline · plain rows resolve to checkto's gold tick · answer gets the deepest background lift, marking it as the confirmed output."
+      body: "Same family type as design 1; structure frozen from the design pass, only the palette below varies. Signature move: a segmented tick track fills in as each step lands — the literal checking-off checkto is named for — sitting inside the same collapsed header structure as design 1 but reading completely differently while it runs.",
+      axis: "Axis choices: trace collapsed at rest, but the header carries live tick progress · state lives inline · plain rows resolve to checkto's tick colour · answer gets the deepest background lift, marking it as the confirmed output."
     }
   };
 
@@ -1292,7 +1282,7 @@
   /* ------------------------------------------------------------------ */
   /* render / state                                                       */
   /* ------------------------------------------------------------------ */
-  var RENDERERS = { 1: design1, 2: design2, 3: design3, 4: design4 };
+  var RENDERERS = { 1: design1, 4: design4 };
   var liveTimer = null;
   var tickTimer = null;
 
@@ -1307,7 +1297,7 @@
     var s = parseInt(p.get("state"), 10);
     var w = p.get("width");
     var pal = parseInt(p.get("palette"), 10);
-    if (!(d >= 1 && d <= 4)) d = 1;
+    if (d !== 1 && d !== 4) d = 1;
     if (!(s >= 1 && s <= 6)) s = 3;
     if (w !== "320") w = "400";
     if (!(pal >= 1 && pal <= 4)) pal = 3;
@@ -1409,9 +1399,9 @@
     var st = params();
     var html = "";
     html += '<div class="dock-row"><span class="dock-label">design</span>';
-    for (var d = 1; d <= 4; d++){
+    [1, 4].forEach(function(d){
       html += '<button class="dock-btn' + (st.design === d ? ' is-active' : '') + '" data-design="' + d + '">' + d + '</button>';
-    }
+    });
     html += '</div>';
     html += '<div class="dock-row"><span class="dock-label">state</span>';
     for (var s = 1; s <= 6; s++){
