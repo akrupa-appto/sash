@@ -449,6 +449,26 @@ test('an opaque page keeps its own grant key instead of the shared "null" origin
   } finally { snapFn = orig; }
 });
 
+// The fallback key has two failure modes of its own: a url that will not parse at all (an empty
+// string) would reach the card as an empty origin, which the request builder reads as "every site",
+// and a data: url is megabytes of text that must not be persisted verbatim as a grant key.
+test('an unusable page url still yields a grant key of its own, capped', async () => {
+  const orig = snapFn;
+  try {
+    snapFn = () => ({ ...snap(), url: '', fingerprint: 'opaque-fingerprint' });
+    plans = [{ status: 'approve', action: 'send the message', origin: '' }];
+    decisions = [];
+    const unnamed = await run(true);
+    assert.equal(unnamed.status, 'needs_input');
+    assert.equal(unnamed.request.origin, 'opaque-fingerprint', 'an empty url must not become the every-site scope');
+
+    snapFn = () => ({ ...snap(), url: `data:text/html,${'x'.repeat(2000)}` });
+    plans = [{ status: 'approve', action: 'send the message', origin: 'data:text/html,x' }];
+    const dataUrl = await run(true);
+    assert.equal(dataUrl.request.origin.length, 512, 'a data: url is capped before it becomes a stored grant key');
+  } finally { snapFn = orig; }
+});
+
 test('after repeated denials the turn ends saying so instead of asking a fourth time', async () => {
   const request = { status: 'approve', action: 'send the message', origin: 'https://example.test' };
   plans = [request]; decisions = [];
