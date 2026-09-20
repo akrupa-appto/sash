@@ -75,3 +75,30 @@ test('plan() sends the approval instruction to the model it actually calls', asy
     if (oldMode === undefined) delete process.env.APPROVAL_MODE; else process.env.APPROVAL_MODE = oldMode;
   }
 });
+
+// The setting says nothing waits for the user, and the planner's own question ("which folder?") is
+// exactly such a wait. The instruction already forbids it; this is the floor under the instruction.
+test('"never ask" refuses the planner\'s own question instead of pausing the run', async () => {
+  const oldMode = process.env.APPROVAL_MODE;
+  const oldKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  const answer = content => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }], usage: { cost: 0 } }));
+  const mocks = [];
+  const stubFetch = fn => { const m = mock.method(globalThis, 'fetch', fn); mocks.push(m); return m; };
+  try {
+    process.env.APPROVAL_MODE = 'none';
+    let calls = 0;
+    stubFetch(async () => { calls++; return answer({ status: 'ask', question: 'which folder?' }); });
+    await assert.rejects(() => plan(ctx, undefined, 'provider/custom-model'), /questions are turned off in settings/, 'the message names the setting, not a broken planner model');
+    assert.equal(calls, 2, 'it retries once, then reports instead of waiting for an answer');
+    mocks.pop()?.mock.restore();
+
+    process.env.APPROVAL_MODE = 'risky';
+    stubFetch(async () => answer({ status: 'ask', question: 'which folder?' }));
+    assert.equal((await plan(ctx, undefined, 'provider/custom-model')).status, 'ask', 'the other modes still get to ask');
+  } finally {
+    for (const m of mocks) { try { m.mock.restore(); } catch { /* already restored */ } }
+    if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = oldKey;
+    if (oldMode === undefined) delete process.env.APPROVAL_MODE; else process.env.APPROVAL_MODE = oldMode;
+  }
+});

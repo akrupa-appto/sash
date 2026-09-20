@@ -149,17 +149,26 @@ export async function plan(ctx: PlanContext, signal?: AbortSignal, model = plann
     p = extractJson(content) as Plan;
     if (!p || !["continue", "done", "blocked", "ask", "approve", "credential"].includes(p.status)) throw new Error('invalid plan status');
     if (p.status === 'ask' && !(typeof p.question === 'string' && p.question.trim()) && !(typeof p.why === 'string' && p.why.trim())) throw new Error('missing question');
+    // "never ask — just do it" covers the planner's own questions too, not only the approval card: a
+    // run that stops for an answer is exactly the wait the user turned off. The instruction above
+    // already asks the model not to, so this is the floor under it — refused, retried once by the
+    // recovery path below, and if the model asks again the run reports it rather than pausing.
+    if (p.status === 'ask' && env.APPROVAL_MODE === 'none') throw new Error('questions are turned off');
     if (p.options !== undefined && !(Array.isArray(p.options) && p.options.every(o => typeof o === 'string'))) throw new Error('invalid options');
     if (p.tabId == null) delete p.tabId;
     if (p.tabId != null && !Number.isInteger(p.tabId)) throw new Error('invalid tab ID');
     if (p.tabId !== undefined && !ctx.tabs?.some(tab => tab.id === p.tabId)) throw new Error('tab ID is not in the open tabs');
     if (p.tabId !== undefined && p.tabId === ctx.currentTabId) throw new Error('already on the requested tab');
     if (p.status === 'continue' && !(typeof p.next === 'string' && p.next.trim()) && !(ctx.tabs && Number.isInteger(p.tabId))) throw new Error('missing next action');
-  } catch {
+  } catch (err) {
     if (!recovery) {
       const retry = await plan(ctx, signal, model, reasoning, 1);
       return { ...retry, ms: retry.ms + ms, cost_usd: retry.cost_usd + reply.cost_usd };
     }
+    // Asking a question twice under "never ask — just do it" is not a broken model, it is the setting
+    // working as asked, so say that instead of sending the user off to change their planner model.
+    if (err instanceof Error && err.message === 'questions are turned off')
+      throw new Error('this task needs an answer, and questions are turned off in settings ("never ask — just do it"). turn approvals back on to be asked, or reword the task so it needs no answer.');
     throw new Error(`the planner (${model}) returned ${reply.finish === 'length' ? 'an incomplete reply after reaching its output limit' : content.trim() ? 'an invalid reply' : 'an empty reply'} twice. no further action was taken. try again or choose another planner model in settings.`);
   }
   return { ...p, ms, cost_usd: reply.cost_usd };
