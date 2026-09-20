@@ -4,6 +4,10 @@ export const defaults = {
   provider: 'openrouter', openrouterKey: '', typesafeKey: '', openaiKey: '', geminiKey: '', customKey: '', customBaseUrl: '',
   model: 'deepseek/deepseek-v4.1-flash', jevModel: '',
   textModel: 'anthropic/claude-haiku-4.5', reasoning: 'auto', mode: 'careful', maxSteps: 30,
+  // Voice dictation (stage 2). voiceProvider empty = dictate with whatever provider backs the
+  // planner model (BYOK, same as transcribe.ts's own default); set to one of PROVIDER_KEYS' keys to
+  // use a different configured provider for audio than for planning.
+  voiceEnabled: false, voiceMode: 'prewarm', voiceProvider: '',
 };
 export function normalizeSettings(input = {}) {
   const out = { ...defaults };
@@ -15,6 +19,9 @@ export function normalizeSettings(input = {}) {
   out.mode = input.mode === 'fast' ? 'fast' : 'careful';
   out.reasoning = ['auto', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(input.reasoning) ? input.reasoning : 'auto';
   out.maxSteps = Math.min(60, Math.max(1, Number(input.maxSteps) || 30));
+  out.voiceEnabled = input.voiceEnabled === true || input.voiceEnabled === 'on' || input.voiceEnabled === 'true';
+  out.voiceMode = ['dictate', 'prewarm', 'eager'].includes(input.voiceMode) ? input.voiceMode : 'prewarm';
+  out.voiceProvider = ['openrouter', 'openai', 'gemini', 'custom'].includes(input.voiceProvider) ? input.voiceProvider : '';
   return out;
 }
 // Jev runs through OpenRouter or TypeSafe. The planner runs on the provider its model names
