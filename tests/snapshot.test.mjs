@@ -4,7 +4,7 @@ import { collectSnapshot } from '../src/snapshot.js';
 
 // Minimal DOM stand-in: collectSnapshot only needs querySelectorAll, computed
 // styles, rects and a couple of document/window globals.
-function el({ tag, type, name, value }) {
+function el({ tag, type, name, value, rect }) {
   const attrs = { type, name };
   return {
     tagName: tag.toUpperCase(),
@@ -21,7 +21,7 @@ function el({ tag, type, name, value }) {
     removeAttribute: () => {},
     querySelector: () => null,
     getClientRects: () => [],
-    getBoundingClientRect: () => ({ top: 10, bottom: 40, left: 10, right: 200, width: 190, height: 30 }),
+    getBoundingClientRect: () => rect || ({ top: 10, bottom: 40, left: 10, right: 200, width: 190, height: 30 }),
   };
 }
 
@@ -57,4 +57,22 @@ test('password field values are never put in the snapshot sent to the planner', 
   assert.ok(!JSON.stringify(snap).includes('hunter2'), 'no snapshot field may carry the secret');
 
   assert.equal(snap.elements.find(e => e.name === 'username').value, 'adam');
+});
+
+test('every element carries its viewport box, which follows the scroll position', () => {
+  const box = (top, left = 10) => ({ top, bottom: top + 30, left, right: left + 190, width: 190, height: 30 });
+  // At rest: one control on screen, one 1400px down a page in a 600px-tall viewport.
+  const before = withDom([el({ tag: 'button', name: 'top', rect: box(10) }), el({ tag: 'button', name: 'far', rect: box(1400) })], () => collectSnapshot(20));
+  assert.deepEqual(before.elements.find(e => e.name === 'top').rect, { x: 10, y: 10, width: 190, height: 30 });
+  assert.deepEqual(before.elements.find(e => e.name === 'far').rect, { x: 10, y: 1400, width: 190, height: 30 });
+  assert.equal(before.elements.find(e => e.name === 'far').pos, 'below');
+  // Scrolled 1000px: getBoundingClientRect is viewport-relative, so both boxes move up by exactly that.
+  const after = withDom([el({ tag: 'button', name: 'top', rect: box(-990) }), el({ tag: 'button', name: 'far', rect: box(400) })], () => collectSnapshot(20));
+  assert.equal(after.elements.find(e => e.name === 'top').rect.y, -990);
+  assert.equal(after.elements.find(e => e.name === 'top').pos, 'above');
+  assert.equal(after.elements.find(e => e.name === 'far').rect.y, 400);
+  assert.equal(after.elements.find(e => e.name === 'far').inViewport, true);
+  // Rounded to whole pixels: a target for drawing and hit-testing, not a layout measurement.
+  const fractional = withDom([el({ tag: 'button', name: 'f', rect: { top: 10.4, bottom: 40.6, left: 9.6, right: 200.2, width: 190.6, height: 30.2 } })], () => collectSnapshot(20));
+  assert.deepEqual(fractional.elements[0].rect, { x: 10, y: 10, width: 191, height: 30 });
 });

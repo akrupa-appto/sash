@@ -118,6 +118,58 @@ test('the cursor overlay only renders while the tab is the observed one', { skip
   await page.close();
 });
 
+// The rendered position is read off the computed transform: an inline `transform` is the target,
+// the computed one is where the pointer is drawn this frame.
+const drawnAt = page => page.evaluate(() => {
+  const el = document.querySelector('[data-checkto-cursor]');
+  if (!el) return null;
+  const m = new DOMMatrixReadOnly(getComputedStyle(el).transform);
+  return { x: m.e, y: m.f };
+});
+
+test('a second position slides the cursor from the first; the first appears in place', { skip }, async () => {
+  const page = await inject();
+  await badged(page, { badge: 'working', observed: true, cursor: { x: 100, y: 100 } });
+  // No slide in from the corner: a cursor that was not on screen is drawn where it is.
+  assert.deepEqual(await drawnAt(page), { x: 100, y: 100 });
+  assert.equal(await page.evaluate(() => document.querySelector('[data-checkto-cursor]').style.transition), 'none');
+
+  await badged(page, { badge: 'working', observed: true, cursor: { x: 400, y: 300 } });
+  // Sampled during the tween: the pointer is somewhere between the two points, on the way.
+  const midway = [];
+  for (let i = 0; i < 5; i++) { await page.waitForTimeout(30); midway.push(await drawnAt(page)); }
+  const between = midway.filter(p => p.x > 100 && p.x < 400 && p.y > 100 && p.y < 300);
+  assert.ok(between.length, `expected intermediate frames, saw ${JSON.stringify(midway)}`);
+  // Motion touches transform only, at the design's relaxed duration and ease-out curve.
+  assert.equal(await page.evaluate(() => document.querySelector('[data-checkto-cursor]').style.transition), 'transform 280ms cubic-bezier(0, 0, 0.2, 1)');
+  await page.waitForFunction(() => new DOMMatrixReadOnly(getComputedStyle(document.querySelector('[data-checkto-cursor]')).transform).e === 400);
+  assert.deepEqual(await drawnAt(page), { x: 400, y: 300 });
+  await page.close();
+});
+
+test('prefers-reduced-motion snaps the cursor instead of sliding it', { skip }, async () => {
+  const page = await inject();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await badged(page, { badge: 'working', observed: true, cursor: { x: 100, y: 100 } });
+  await badged(page, { badge: 'working', observed: true, cursor: { x: 400, y: 300 } });
+  assert.deepEqual(await drawnAt(page), { x: 400, y: 300 });
+  assert.equal(await page.evaluate(() => document.querySelector('[data-checkto-cursor]').style.transition), 'none');
+  await page.close();
+});
+
+test('the cursor does not outlive the page it was aimed at', { skip }, async () => {
+  const page = await inject();
+  await badged(page, { badge: 'working', observed: true, cursor: { x: 40, y: 60 } });
+  assert.notEqual(await drawnAt(page), null);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+  assert.equal(await drawnAt(page), null);
+  // Dropping the position (what the worker does at end/stop/new chat) removes the overlay too.
+  await badged(page, { badge: 'working', observed: true, cursor: { x: 40, y: 60 } });
+  await badged(page, { badge: 'deliverable', observed: true, cursor: undefined });
+  assert.equal(await drawnAt(page), null);
+  await page.close();
+});
+
 test('the script answers the liveness ping and pulls its own state on load and on pageshow', { skip }, async () => {
   const page = await inject('/', { badge: 'handoff', observed: true, cursor: { x: 10, y: 10 } });
   assert.deepEqual(await send(page, { type: 'CONTENT_PING' }), { ok: true });

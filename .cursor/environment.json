@@ -1,0 +1,8 @@
+{
+  "name": "checkto",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "chromeExecutablePath": "/usr/bin/google-chrome-stable",
+  "ports": [8791, 9223]
+}

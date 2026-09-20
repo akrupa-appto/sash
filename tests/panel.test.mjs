@@ -35,6 +35,9 @@ const steps = [
   },
 ];
 const started = Date.parse('2026-09-19T12:00:00Z');
+// The header label joins its segments on a non-breaking " · " so the dot can never be orphaned at a
+// line end when the label wraps at 320px (see SEP in panel.js).
+const SEP = '\u00a0·\u00a0';
 const finished = {
   running: false, status: 'done', cost: 0.0002, steps,
   messages: [
@@ -121,7 +124,7 @@ test('the live trace header shows while the run is in flight, carries the join-s
   assert.equal(await page.locator('#steps-wrap').isVisible(), true);
   // Folded from the old #status-text/#cost strip: the trace header is the one place a live run
   // reports on itself now, so it carries the live ticker text and the running cost.
-  assert.equal(await page.locator('#steps-label .trace-label').innerText(), 'Clicking the "upload" button · $0.0002');
+  assert.equal(await page.locator('#steps-label .trace-label').innerText(), `Clicking the "upload" button${SEP}$0.0002`);
   assert.equal(await page.locator('#steps-label').getAttribute('aria-label'), 'Opened tab: ~/upload, clicked the "upload" button');
   assert.equal(await page.locator('.message.agent').count(), 0);
   assert.equal(await page.locator('#live-duration').innerText(), 'Working');
@@ -168,6 +171,116 @@ test('the segmented tick track is neutral (--accent), not the status-success gre
   }, [accent]);
   assert.equal(tickColor, probe, 'the tick fill should resolve to --accent');
   assert.notEqual(accent, statusSuccess);
+  await page.close();
+});
+
+// Real tasks run 20-40+ actions. The unbounded track (one 8px tick per step, flex:none) overran the
+// header at that count and crushed "Worked for 3m" into a one-character-per-line column down the
+// panel's right edge. The track is now capped: past 8 steps it stays 8 ticks wide, each tick standing
+// for a contiguous run of steps, and the label states the exact count instead.
+function manySteps(n, failAt = []) {
+  return Array.from({ length: n }, (_, i) => ({
+    step: i + 1, plan: `click "next" (${i + 1})`, action: `CLICK [${i}] link "next"`,
+    log: { ticker: `Clicking "next" (${i + 1})`, expanded: `Clicked "next" (${i + 1})`, fragment: `clicked "next" (${i + 1})`, fragmentCapitalized: `Clicked "next" (${i + 1})` },
+    ...(failAt.includes(i + 1) ? { note: 'action failed: Error: the control is covered or not visible' } : {}),
+  }));
+}
+const longRun = (n, failAt) => {
+  const s = manySteps(n, failAt);
+  // The reply carries the run's cost, as background.js's terminal message does, so the label is the
+  // full three-segment one ("80 steps · Worked for 2m · $0.0002") that actually has to wrap at 320px.
+  return { ...finished, steps: s, messages: [finished.messages[0], { ...finished.messages[1], steps: s, cost: finished.cost }] };
+};
+
+test('the tick track is bounded at 8 ticks and the label carries the exact step count past that, so the duration stays legible at 320px for 20, 40 and 80 steps', { skip }, async () => {
+  for (const n of [20, 40, 80]) {
+    const page = await panel(longRun(n), { width: 320 });
+    const header = page.locator('.message.agent .trace-header');
+    assert.equal(await header.locator('.tick').count(), 8, `${n} steps should render exactly 8 ticks`);
+    assert.equal(await header.locator('.trace-label').innerText(), `${n} steps${SEP}Worked for 2m${SEP}$0.0002`);
+    const { labelW, headerW, docOverflow } = await page.evaluate(() => ({
+      labelW: document.querySelector('.message.agent .trace-label').getBoundingClientRect().width,
+      headerW: document.querySelector('.message.agent .trace-header').getBoundingClientRect().width,
+      docOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    }));
+    assert.ok(labelW > headerW / 2, `the label must keep most of the header's width at 320px (got ${labelW}px of ${headerW}px)`);
+    assert.equal(docOverflow, false, 'no horizontal overflow');
+    // The label wraps at this width; no rendered line may start or end on the separator dot.
+    const lines = await page.evaluate(() => {
+      const label = document.querySelector('.message.agent .trace-label');
+      const range = document.createRange(); const out = []; let last = -Infinity; let line = '';
+      for (const node of label.childNodes) for (let i = 0; i < node.textContent.length; i++) {
+        range.setStart(node, i); range.setEnd(node, i + 1);
+        const { top } = range.getBoundingClientRect();
+        if (top > last + 1 && line) { out.push(line); line = ''; }
+        last = Math.max(last, top); line += node.textContent[i];
+      }
+      if (line) out.push(line);
+      return out;
+    });
+    assert.ok(lines.length >= 1 && lines.every(l => !/^\s*·|·\s*$/.test(l)), `no line may open or close on the separator (got ${JSON.stringify(lines)})`);
+    assert.ok(lines.join('').includes('$0.0002'), 'the cost is still shown');
+    // Past the cap the accessible name is a summary, not an 80-clause sentence.
+    assert.equal(await header.getAttribute('aria-label'), `${n} steps: Clicked "next" (1), … clicked "next" (${n})`);
+    await page.close();
+  }
+});
+
+test('at or under 8 steps the track is the approved comp exactly: one tick per step, no count prefix', { skip }, async () => {
+  const page = await panel(longRun(8));
+  const header = page.locator('.message.agent .trace-header');
+  assert.equal(await header.locator('.tick').count(), 8);
+  assert.equal(await header.locator('.trace-label').innerText(), `Worked for 2m${SEP}$0.0002`);
+  await page.close();
+});
+
+test('a failed action is the one thing the track colours: its tick (or, past the cap, the tick covering its run of steps) reads --status-danger', { skip }, async () => {
+  // Under the cap: step 3 of 4 failed, so exactly the third tick is red.
+  let page = await panel(longRun(4, [3]));
+  let flags = await page.evaluate(() => [...document.querySelectorAll('.message.agent .trace-header .tick')].map(t => t.classList.contains('is-failed')));
+  assert.deepEqual(flags, [false, false, true, false]);
+  // Hollow, not filled: the ring is the danger hue and the fill is gone, so the failed tick is the one
+  // unfilled square in the row even without colour.
+  const [ring, fill, danger] = await page.evaluate(() => {
+    const el = document.createElement('div'); el.style.color = getComputedStyle(document.documentElement).getPropertyValue('--status-danger').trim(); document.body.append(el);
+    const rgb = getComputedStyle(el).color; el.remove();
+    const cs = getComputedStyle(document.querySelector('.tick.is-failed'));
+    return [cs.boxShadow, cs.backgroundColor, rgb];
+  });
+  assert.ok(ring.includes(danger) && ring.includes('inset'), `failed tick ring should be an inset --status-danger ring (got ${ring})`);
+  assert.equal(fill, 'rgba(0, 0, 0, 0)');
+  // The failed step's own row says so too: a danger-coloured cross, not the success check.
+  await page.locator('.message.agent .trace-header').click();
+  const rows = page.locator('.message.agent .step');
+  assert.deepEqual(await rows.evaluateAll(els => els.map(e => e.classList.contains('is-failed'))), [false, false, true, false]);
+  const [crossColor, checkColor] = await page.evaluate(() => [
+    getComputedStyle(document.querySelector('.message.agent .step.is-failed .status-glyph')).color,
+    getComputedStyle(document.querySelector('.message.agent .step:not(.is-failed) .status-glyph')).color,
+  ]);
+  assert.equal(crossColor, danger);
+  assert.notEqual(checkColor, danger);
+  assert.notEqual(await rows.nth(2).locator('.status-glyph').innerHTML(), await rows.nth(0).locator('.status-glyph').innerHTML(), 'the failed row uses a different glyph, not just a different colour');
+  // And the accessible name of the collapsed trace names the failure in words.
+  assert.equal(await page.locator('.message.agent .trace-header').getAttribute('aria-label'), 'Clicked "next" (1), clicked "next" (2), clicked "next" (3), clicked "next" (4); 1 failed (step 3)');
+  await page.close();
+  // Past the cap: 40 steps in 8 ticks of 5; step 27 sits in the sixth tick (steps 26-30) and nowhere else.
+  page = await panel(longRun(40, [27]));
+  flags = await page.evaluate(() => [...document.querySelectorAll('.message.agent .trace-header .tick')].map(t => t.classList.contains('is-failed')));
+  assert.deepEqual(flags, [false, false, false, false, false, true, false, false]);
+  await page.close();
+  // A retry the loop recovered is not a failure and must not colour the track.
+  const recovered = manySteps(4).map((s, i) => (i === 1 ? { ...s, note: 'element vanished before the action; re-tagged the page and retried by name' } : s));
+  page = await panel({ ...finished, steps: recovered, messages: [finished.messages[0], { ...finished.messages[1], steps: recovered }] });
+  assert.equal(await page.locator('.message.agent .trace-header .tick.is-failed').count(), 0);
+  await page.close();
+});
+
+test('the live trace header is bounded the same way and prefixes the step count to the ticker', { skip }, async () => {
+  const page = await panel({ ...finished, running: true, status: 'working', startedAgoMs: 2000, steps: manySteps(21, [9]), messages: finished.messages.slice(0, 1) }, { width: 320 });
+  assert.equal(await page.locator('#steps-label .tick').count(), 8);
+  assert.equal(await page.locator('#steps-label .tick.is-failed').count(), 1);
+  assert.equal(await page.locator('#steps-label .trace-label').innerText(), `21 steps${SEP}Clicking "next" (21)${SEP}$0.0002`);
+  assert.equal(await page.locator('#steps-label').getAttribute('aria-label'), '21 steps; 1 failed (step 9): Clicked "next" (1), … clicked "next" (21)');
   await page.close();
 });
 

@@ -22,16 +22,23 @@ const sidePanelOpens = [];
 const menuCreated = [];
 let pendingRequest; // set to make the fixture run end waiting on the user
 let nextOutcome; // set to make the fake run end straight away with that outcome
+let stepsToEmit; // set to make the fake run report these steps instead of its one default step
 let lastInput;
 // Voice dictation: stands in for the offscreen document's own lifecycle and message replies.
 let offscreenDocs = 0;
 let offscreenStartResult = { ok: true };
 let offscreenStopResult = { text: 'hello from the mic' };
+let storageFails = false; // proves a failed settings read can never strand a hot mic
 const tabsCreated = [];
+let cursorSink; // background.js installs this into browser.js; tests drive it the way point() does
 
 globalThis.chrome = {
   storage: { local: {
-    setAccessLevel: async () => {}, get: async key => ({ [key]: structuredClone(data[key]) }),
+    setAccessLevel: async () => {},
+    get: async key => {
+      if (storageFails) throw new Error('storage read failed');
+      return { [key]: structuredClone(data[key]) };
+    },
     set: async values => Object.assign(data, structuredClone(values)),
   } },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
@@ -85,6 +92,12 @@ globalThis.chrome = {
 // environment variables; transcribeCapability's own provider-resolution logic has its coverage in
 // tests/transcribe.test.mjs.
 mock.module('../src/transcribe.ts', { namedExports: {
+  defaultTranscriptionSpec: provider => ({
+    openrouter: 'openai/whisper-1',
+    openai: 'openai:whisper-1',
+    gemini: 'gemini:gemini-2.5-flash',
+    custom: 'custom:whisper-1',
+  })[provider],
   transcribeCapability: spec => {
     const provider = spec?.startsWith('openai:') ? 'openai' : spec?.startsWith('gemini:') ? 'gemini' : spec?.startsWith('custom:') ? 'custom' : 'openrouter';
     const key = { openrouter: data.settings.openrouterKey, openai: data.settings.openaiKey, gemini: data.settings.geminiKey, custom: data.settings.customKey }[provider];
@@ -93,6 +106,7 @@ mock.module('../src/transcribe.ts', { namedExports: {
 } });
 mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
+  setCursorSink: fn => { cursorSink = fn; },
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; pages.push(this); }
     async attach() { if (this.tabId === 99) throw new Error('popup attach refused'); if (attachGate) await attachGate; this.attached = true; this.signal.throwIfAborted(); }
@@ -103,7 +117,8 @@ mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, e
   taskStarted++;
   activeSignal = signal;
   lastInput = input;
-  emit({ type: 'step', step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload', costUsd: 0 });
+  for (const s of stepsToEmit ?? [{ step: 1, action: 'CLICK [5] button "upload"', plan: 'click upload' }]) emit({ type: 'step', costUsd: 0, ...s });
+  stepsToEmit = undefined;
   if (nextOutcome) { const outcome = nextOutcome; nextOutcome = undefined; emit({ type: 'end', totalCostUsd: 0, ...outcome }); return; }
   await new Promise(resolve => {
     finishTask = resolve;
@@ -311,6 +326,29 @@ test('a finished run keeps its actions on the reply it produced', async () => {
   assert.deepEqual(reply.steps.map(s => s.action), ['CLICK [5] button "upload"']);
 });
 
+// The reply used to keep only the last 60 steps. The panel's trace header reports the run's step count
+// off that array and marks where an action failed, so an 80-step run read "60 steps" and a failure on
+// step 1 vanished from both the track and the row list once the run ended.
+test('a long run keeps every step on its reply, including an early failure, so the finished trace counts and marks the run truthfully', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  stepsToEmit = Array.from({ length: 80 }, (_, i) => ({
+    step: i + 1, action: `CLICK [${i}] link "next"`, plan: `click next (${i + 1})`,
+    ...(i === 0 ? { note: 'action failed: Error: the control is covered or not visible' } : {}),
+  }));
+  assert.equal((await send({ type: 'run', tabId: 12, goal: 'sweep the archive', mode: 'fast' })).ok, true);
+  await until(() => taskStarted === before + 1);
+  // Live state already holds all 80; the terminal reply must carry the same, not a tail.
+  assert.equal(data.runState.steps.length, 80);
+  finishTask();
+  await until(() => data.runState?.running === false);
+  const reply = data.runState.messages.at(-1);
+  assert.equal(reply.steps.length, 80);
+  assert.equal(reply.steps[0].step, 1);
+  assert.match(reply.steps[0].note, /^action failed/);
+  assert.equal(reply.steps.at(-1).step, 80);
+});
+
 // --- the favicon badge as an unread marker -----------------------------------------------------
 const untilBadge = async (tabId, badge) => {
   for (let i = 0; i < 100; i++) {
@@ -385,6 +423,81 @@ test('a content script asks the worker for its own tab state instead of being as
   let answered = false;
   chrome.runtime.onMessage.fire({ type: 'CONTENT_STATE_REQUEST' }, { id: chrome.runtime.id, url: 'https://example.test/page' }, () => { answered = true; });
   assert.equal(answered, false);
+});
+
+// --- the agent cursor: from an action's coordinates to the page, and back off it ---------------
+const contentStates = tabId => sentToTabs.filter(s => s.tabId === tabId && s.message.type === 'CONTENT_STATE').map(s => s.message.state);
+
+test('an action moving the cursor reaches the page as a position, gated by whether the tab is observed', async () => {
+  assert.equal(typeof cursorSink, 'function', 'background.js installs the sender into browser.js');
+  sentToTabs.length = 0;
+  // A tab nobody is looking at: the worker keeps the position and tells the page not to paint it.
+  const held = await cursorSink(31, { x: 120, y: 340 });
+  assert.deepEqual(held, { badge: 'none', cursor: { x: 120, y: 340 }, observed: false });
+  assert.deepEqual(contentStates(31), [{ badge: 'none', cursor: { x: 120, y: 340 }, observed: false }]);
+  // The user switches to it: the same position is now painted, and the next move reports observed.
+  chrome.tabs.onActivated.fire({ tabId: 31 });
+  await until(() => contentStates(31).some(s => s.observed));
+  assert.deepEqual(contentStates(31).at(-1), { badge: 'none', cursor: { x: 120, y: 340 }, observed: true });
+  const next = await cursorSink(31, { x: 400, y: 80 });
+  assert.equal(next.observed, true);
+  assert.deepEqual(contentStates(31).at(-1).cursor, { x: 400, y: 80 });
+});
+
+test('a navigation drops the cursor: the new document is not told where the old one was clicked', async () => {
+  sentToTabs.length = 0;
+  await cursorSink(32, { x: 50, y: 50 });
+  chrome.tabs.onUpdated.fire(32, { status: 'loading' }, { id: 32 });
+  // The leaving page is not written to; the arriving copy of content.js pulls state and gets no cursor.
+  assert.equal(contentStates(32).length, 1);
+  const ask = () => new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'CONTENT_STATE_REQUEST' }, { id: chrome.runtime.id, url: 'https://example.test/next', tab: { id: 32 } }, resolve));
+  assert.deepEqual((await ask()).state.cursor, undefined);
+  chrome.tabs.onUpdated.fire(32, { status: 'complete' }, { id: 32 });
+  await until(() => contentStates(32).length === 2);
+  assert.equal(contentStates(32).at(-1).cursor, undefined);
+});
+
+test('a same-document URL change (pushState, hash route) drops the cursor and tells the surviving content script', async () => {
+  sentToTabs.length = 0;
+  await cursorSink(33, { x: 50, y: 50 });
+  assert.deepEqual(contentStates(33).at(-1).cursor, { x: 50, y: 50 });
+  // No status change: the document did not reload, so the content script that drew the pointer is still there.
+  chrome.tabs.onUpdated.fire(33, { url: 'https://example.test/#/step-2' }, { id: 33, url: 'https://example.test/#/step-2' });
+  await until(() => contentStates(33).length === 2);
+  assert.equal(contentStates(33).at(-1).cursor, undefined, 'the live page is told to take the pointer down');
+  assert.equal(contentStates(33).at(-1).badge, 'none', 'only the cursor goes; the badge is untouched');
+  await until(() => data.feedbackByTab?.some(([id, held]) => id === 33 && held.cursor === undefined));
+  // The same change with no cursor held is a no-op: nothing to persist, nothing to push.
+  chrome.tabs.onUpdated.fire(33, { url: 'https://example.test/#/step-3' }, { id: 33 });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(contentStates(33).length, 2);
+});
+
+test('the cursor is cleared from every tab when the run ends, is stopped, or the chat is cleared', async () => {
+  await send({ type: 'clear' });
+  // Ended: the end-of-turn sweep leaves the badge but never the cursor.
+  let before = taskStarted;
+  await send({ type: 'run', tabId: 12, goal: 'buy it', mode: 'fast' });
+  await until(() => taskStarted === before + 1);
+  await cursorSink(12, { x: 10, y: 20 });
+  assert.deepEqual(contentStates(12).at(-1).cursor, { x: 10, y: 20 });
+  finishTask();
+  await until(() => data.runState?.running === false);
+  assert.deepEqual(contentStates(12).at(-1), { badge: 'deliverable', cursor: undefined, observed: false });
+  // Stopped: same sweep, on the user's stop.
+  await send({ type: 'clear' });
+  before = taskStarted;
+  await send({ type: 'run', tabId: 13, goal: 'buy it', mode: 'fast' });
+  await until(() => taskStarted === before + 1);
+  await cursorSink(13, { x: 10, y: 20 });
+  await send({ type: 'stop' });
+  await until(() => data.runState?.running === false);
+  assert.equal(contentStates(13).at(-1).cursor, undefined);
+  // New chat: a position left on a tab from an earlier turn goes with it.
+  await cursorSink(14, { x: 1, y: 2 });
+  await send({ type: 'clear' });
+  assert.equal(contentStates(14).at(-1).cursor, undefined);
+  assert.equal((await send({ type: 'getBadge', tabId: 14 })).badge, 'none');
 });
 
 // --- the keyboard shortcut and the right-click entry -------------------------------------------
@@ -470,6 +583,41 @@ test('stopping dictation tears the offscreen document down and returns the trans
   assert.equal(offscreenDocs, 0, 'the offscreen document is closed once the session ends');
   assert.equal(data.runState.dictation.status, 'idle');
   assert.equal(data.runState.dictation.text, 'buy oat milk');
+});
+
+test('only the chosen voice provider key crosses to the offscreen document, never the rest', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  Object.assign(data.settings, { openaiKey: 'voice-key', geminiKey: 'gemini-key', voiceProvider: 'openai' });
+  try {
+    await send({ type: 'dictation:start' });
+    const start = messages.filter(m => m.type === 'offscreen:start').at(-1);
+    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'voiceProvider'],
+      'the payload carries the chosen provider key, the model that resolves the provider, and nothing else');
+    assert.equal(start.settings.openaiKey, 'voice-key');
+    assert.equal(start.settings.openrouterKey, undefined, 'the planner key does not travel');
+    assert.equal(start.settings.geminiKey, undefined, 'an unused provider key does not travel');
+  } finally {
+    delete data.settings.openaiKey;
+    delete data.settings.geminiKey;
+    data.settings.voiceProvider = '';
+  }
+});
+
+test('a failed settings read cannot skip the teardown: stopping dictation always releases the mic', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  offscreenStopResult = { text: 'buy oat milk' };
+  await send({ type: 'dictation:start' });
+  assert.equal(offscreenDocs, 1);
+  storageFails = true;
+  try {
+    const reply = await send({ type: 'dictation:stop' });
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    assert.equal(offscreenDocs, 0, 'the offscreen document is closed even when settings could not be read');
+  } finally {
+    storageFails = false;
+  }
 });
 
 test('a mic permission failure on start opens the one-time full-tab grant page and tears the document down', async () => {
@@ -649,6 +797,24 @@ test('a dictation:partial with no session behind it (voice disabled, or never st
   const reply = await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:partial', text: 'buy oat milk now' }, offscreenSender, resolve));
   assert.equal(reply.ok, true);
   assert.equal(taskStarted, before, 'voice is off by default in this fixture, so this must never start a run');
+});
+
+test('voice errors are redacted before replies, broadcasts, and persisted state', async () => {
+  await withVoiceSettings({ openaiKey: 'voice-session-secret', voiceProvider: 'openai' }, async () => {
+    offscreenDocs = 0;
+    offscreenStartResult = { ok: true };
+    try {
+      offscreenStopResult = { error: 'upstream echoed voice-session-secret' };
+      await send({ type: 'dictation:start' });
+      const reply = await send({ type: 'dictation:stop' });
+      assert.equal(reply.error, 'upstream echoed [redacted]');
+      assert.equal(data.runState.dictation.error, 'upstream echoed [redacted]');
+      assert.doesNotMatch(JSON.stringify(data.runState), /voice-session-secret/);
+      assert.equal(messages.filter(message => message.type === 'state').at(-1).state.dictation.error, 'upstream echoed [redacted]');
+    } finally {
+      offscreenStopResult = { text: 'hello from the mic' };
+    }
+  });
 });
 
 // --- voice: the global "toggle-dictation" shortcut ----------------------------------------------

@@ -52,6 +52,7 @@ globalThis.chrome = {
 };
 mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
+  setCursorSink: () => {},
   ChromePage: class {
     constructor(tab, signal, pages) { this.tabId = tab.id; this.signal = signal; this.pages = pages; }
     async attach() { this.attached = true; }

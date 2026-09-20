@@ -63,6 +63,7 @@ let switchToTabId; // if set, the next runTask call switches tabs via browserTab
 
 mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
+  setCursorSink: () => {},
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; }
     async attach() { this.attached = true; }

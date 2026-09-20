@@ -26,4 +26,18 @@
 <div class="field"><span class="label">how eager it acts</span><div id="voice-modes" class="voice-modes" role="radiogroup" aria-label="how eager checkto acts on your voice"></div><input type="hidden" id="voiceMode" name="voiceMode"><small id="voice-capability" class="muted"></small></div>
 </section>
 <div class="save-row"><div class="row"><button type="submit">save settings</button><button id="clear-keys" class="secondary" type="button">remove saved keys</button></div><div id="status" class="status" role="status" aria-live="polite"></div></div>
-</form></main><script type="module" src="options.js"></script></body></html>
+</form>
+<section id="access-settings" aria-labelledby="access-heading">
+<h2 id="access-heading">approvals and site access</h2>
+<p class="muted">changes here take effect immediately, without saving settings. revoking access does not undo actions already taken.</p>
+<h3>saved approvals</h3>
+<p class="muted">actions allowed for this conversation or always. revoking asks you again next time; it does not cancel an action already approved.</p>
+<div id="approval-list"></div>
+<h3>site access</h3>
+<p class="muted">every site Chrome currently lets checkto reach. access marked required comes with the extension itself: Chrome only lets you narrow it (to specific sites, or on click) from checkto's page in chrome://extensions, not from here. anything else can be revoked below; that stops the current task first, and removing a custom provider's site disconnects that provider until you allow it again.</p>
+<div id="site-access-list"></div>
+<p class="muted">removing site access does not remove a saved approval, or vice versa.</p>
+<div class="row access-actions"><button type="button" class="secondary" id="refresh-access">refresh access</button><button type="button" class="secondary" id="manage-site-access">open Chrome site access</button></div>
+<div id="access-status" class="status" role="status" aria-live="polite"></div>
+</section>
+</main><script type="module" src="options.js"></script></body></html>
