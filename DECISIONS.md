@@ -122,6 +122,63 @@ Rules learned this session that are not yet in AGENTS.md: retarget stacked PRs t
   - What #23 had and this branch did not, preserved: the exploratory-task coverage floor (`realActions`/`pagesSeen`/`coverageRefusals`), the unconfirmed-failed-step guard (`pendingFailure`), and the stale-element retag retry. These are independent of *why* a turn pauses, so they now live on a small `PausedRun`-shaped `resume` field carried on the `needs_input` `EndEvent` (`resumeState`) and threaded back into `RunInput.resume` by `extension/background.js` on every kind of answer (ask, approve, credential) — not only #23's original question/risk pauses. A pause for a credential handoff or an approval no longer loses track of an unconfirmed failed step from earlier in the same run.
   - `panel.test.mjs`'s stale "the live action list only shows while the run is in flight" test (asserting the old "2 actions" step-count label) is deleted; #24's own log-ticker replacement test a few lines later already supersedes it.
 
+## Panel redesign, voice, and approval scopes (2026-09-20)
+
+Handoff. Four PRs are open and none are merged. Read this before touching any of them.
+
+### The design is a file, not a description
+
+Adam picked **design 4, palette 4** from a comp. The comp is the spec:
+
+    git show origin/prototype/panel-directions:public/panel-prototype.html
+    # serve it, open ?design=4&palette=4&state=1..6
+
+Two implementation attempts failed the same way and both were rejected. Attempt one changed 2 lines of `panel.html` and 335 of `style.css`: a reskin. Attempt two converted more surfaces but still applied the comp's *tokens* onto checkto's *existing composition*. Adam: "it's not even fucking close."
+
+The rule that came out of it: **do not implement this design from prose, including prose in this file.** Render the comp, render the build, put them side by side, list the differences, fix, repeat. Anyone working from a description will produce a third reskin.
+
+Known deltas still being closed on `adam/panel-match-comp`: no framed panel or logo topbar; tick track rendered green when palette 4 specifies neutral ticks (green is reserved for the per-step done check); composer is checkto's old `@` pill plus three chrome rows the comp does not have (model/mode row, run-status strip, tab-context caption) instead of the comp's "Do anything" + `+` + model chip + circular send; tool-output block unlabelled and cramped; type and spacing smaller than the comp.
+
+Open decision that the comp does not answer: mode, cost, run status and tab-context have no home in it. They are live functionality. They must not be dropped and must not remain as extra rows.
+
+### Approval scopes were decorative (fixed, PR #36)
+
+`state.grants` was written at `background.js:472` and read nowhere. `grep -c` returned 1. All three scopes permitted exactly one action, so "always allow" asked again next time. A control that misreports its own scope, where scope means authorising irreversible actions, is worse than not offering the choice.
+
+It shipped past a cloud review, CodeRabbit, and 175 tests because every check verified the button rendered and resolved the request. None asserted the scope changed future behaviour. **Test the consequence, not the render.**
+
+`grantKey` is deliberately not `denialKey`: the latter folds origin into the subject only when action text is absent, which is right for a refusal tally and wrong for authorising a repeat, since two identically-worded approvals on different origins would collide into one grant.
+
+Settings UI should consume `grants:list` and `grants:revoke`.
+
+### Voice (PR #37)
+
+Three modes, all distinct: `dictate`, `prewarm` (default), `eager`. `eager` cannot be word-by-word here because true mid-sentence streaming needs OpenAI Realtime or Gemini Live, neither implemented. It is built on chunk partials and every surface says so. **Do not silently downgrade it to `prewarm`** — that repeats the approval-scopes lie.
+
+A registered `chrome.commands` shortcut is intercepted before keydown reaches the page, so true hold-then-release is impossible for a global key. `M` is handled in the panel document; the global `Ctrl+Shift+Comma` toggles, with a fast second press latching hands-free.
+
+Nothing mic-related is verified. This VM cannot load an unpacked extension (`--load-extension` is inert; driving "Load unpacked" through the GTK picker closes cleanly without registering). The permission prompt, `getUserMedia` from the offscreen document, and live audio reaching a provider all need a real machine.
+
+### The cursor is a receiver with no sender (NOT built)
+
+PR #22 shipped the drawing half only. `background.js` handles a `setCursor` message that **nothing sends**; every other write sets `cursor: undefined`. `content.js` contains no motion code at all — no transition, no rAF, no tween. `snapshot.js` exposes no x/y, only `above`/`below` for offscreen elements and `top`.
+
+So building the Codex-style cursor needs three things that do not exist: coordinates out of the snapshot, a sender driving `setCursor` per action from the agent loop, and interpolated motion in the content script. Adam deferred this and stage-2 polish on 2026-09-20.
+
+### Still open
+
+- Settings surface for grants, per-origin access, voice, and the tab-group/badge/cursor toggles. Settings currently stores seven keys: four provider keys plus `mode`, `model`, `reasoning`.
+- The four `verify` items in `todo.md`, which need real keys or a real browser.
+
+### The tick track does not survive a real multi-step workflow (found 2026-09-20, not fixed)
+
+Adam sent four real screenshots of the currently-installed extension running actual multi-step tasks (an X/Twitter archive workflow, ~20 actions; a search/bookmark/pagination workflow, ~40 actions). The tick track — the signature move of design 4, a row of small squares that fills in per step — was designed and only ever tested against the 2-4 step demo task used throughout this whole redesign effort ("upload the quarterly report..."). It does not degrade gracefully:
+
+- At ~40 steps the dot row is one unbroken flex row with no wrap and no cap, so it overflows its container width. In the captured screenshots this pushes the sibling "Worked for 3m" duration text into a squeezed vertical single-character-per-line stack down the right edge of the panel — Adam's words, "it moves the whole dome around and breaks it."
+- At ~20 steps (narrower panel) the row wraps onto a second line instead, which reads better but the dots are still individually meaningless at that count — nobody is going to count 20 identical green squares to know which step failed.
+- Every real screenshot Adam sent was a genuine multi-step browser workflow: multiple tabs, retries, an explicit `action failed: Error: the control is covered or not visible` recovering mid-run. This is not an edge case; ordinary tasks on real sites regularly run 15-40+ actions. The demo task the whole design process was built and screenshotted against only ever had 2-3.
+
+Not fixed. Adam explicitly said not to fix it now — capture it for later. Whoever picks this up needs a real design pass, not a patch: the tick track needs either a cap with an overflow affordance (a count past N, e.g. "12 more"), a different visual unit at high counts (a progress bar/percentage instead of discrete dots), or grouping (collapse consecutive same-kind actions). Screenshots referenced above are not preserved in the repo; ask Adam to resend if needed when this is picked up.
 ## Panel-match-comp (2026-09-20, branch adam/panel-match-comp, stacked on adam/panel-surfaces / PR #35)
 
 - Two prior passes at matching `public/panel-prototype.html` design 4 / palette 4 failed the same way: they retokened checkto's *existing* composition instead of adopting the comp's own composition (topbar, composer, tick track). This pass method was comparison-driven: render the comp and the built extension side by side at the same states/width, diff visually, fix, re-render, repeat — not implement-from-a-checklist-and-declare-done.

@@ -4,7 +4,7 @@ import { configure, clearConfig } from './config.js';
 import { ensureOriginAccess } from './permissions.js';
 import { readSettings, validateSettings } from './settings.js';
 import { BadgeState, RequestType } from './types.js';
-import { declineAll, denialKey, pickBlocking, RequestOutcome } from './requests.js';
+import { ApprovalScope, declineAll, denialKey, grantKey, pickBlocking, RequestOutcome } from './requests.js';
 import * as lease from './lease.js';
 import { Disposition, endRun, groupTab, markTab, releaseAll, resumeHandoffIfPresent, setFaviconRestorer } from './tabs.js';
 
@@ -121,14 +121,71 @@ let saving = Promise.resolve();
 // Broadcasts can race (a stale in-flight 'run' broadcast landing after a later 'clear'),
 // so panel.js uses this to drop any broadcast older than the last one it applied.
 let seq = 0;
+
+// --- approval grants: the "conversation" and "always" scopes -----------------------------------
+// "once" authorizes exactly the single action it was asked about and stores nothing.
+// "conversation" lives on `state.grants` (keyed by grantKey), so it rides with runState and is
+// wiped by 'clear' the same way the rest of the chat is, and never needs its own persistence path.
+// "always" cannot live in runState — 'clear' replaces state wholesale and a fresh chat must not
+// erase it — so it is its own top-level entry in chrome.storage.local, loaded into this in-memory
+// copy at startup (surviving a service-worker restart the same way seq/feedbackByTab do) and
+// written straight through on every change.
+let persistentGrants = {};
+// A concurrent "always" grant and a revoke can both fire before either's chrome.storage.local.set
+// resolves; those writes are not guaranteed to land in the order they were issued, so the later
+// logical write could be overwritten in storage by an earlier one finishing last. Chained the same
+// way `saving`/`persist()` already serializes runState writes: each write reads persistentGrants only
+// once its predecessor has actually completed, so storage always ends up matching the last call.
+let savingGrants = Promise.resolve();
+function persistGrants() {
+  savingGrants = savingGrants.catch(() => {}).then(() => chrome.storage.local.set({ grants: persistentGrants }));
+  return savingGrants;
+}
+const MAX_AUTO_APPROVALS = 20; // caps the grant-covered auto-resume loop in execute(); see its comment
+function grantRecord(request, scope) {
+  return { scope, type: request.type, action: request.action, origin: request.origin, question: request.question, grantedAt: Date.now() };
+}
+/** Does an existing grant (either scope) already cover this exact request? */
+function isGranted(request) {
+  const key = grantKey(request);
+  if (!key) return false;
+  return Boolean(state.grants?.[key] || persistentGrants[key]);
+}
+/** For a settings surface: every stored grant, always-scope first, each carrying its own key. */
+function listGrants() {
+  const always = Object.entries(persistentGrants).map(([key, grant]) => ({ key, ...grant }));
+  const conversation = Object.entries(state.grants || {}).map(([key, grant]) => ({ key, ...grant }));
+  return [...always, ...conversation];
+}
+async function revokeGrant(key) {
+  if (!key) return false;
+  let changed = false;
+  if (Object.prototype.hasOwnProperty.call(persistentGrants, key)) {
+    const next = { ...persistentGrants };
+    delete next[key];
+    persistentGrants = next;
+    await persistGrants();
+    changed = true;
+  }
+  if (state.grants && Object.prototype.hasOwnProperty.call(state.grants, key)) {
+    const next = { ...state.grants };
+    delete next[key];
+    state.grants = next;
+    await persist();
+    changed = true;
+  }
+  return changed;
+}
+
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  const saved = await chrome.storage.local.get(['runState', 'seq', 'feedbackByTab']);
+  const saved = await chrome.storage.local.get(['runState', 'seq', 'feedbackByTab', 'grants']);
   // The service worker gets killed and restarted on idle while the panel stays open, so an
   // in-memory-only seq would reset to 0 and the panel's lastSeq guard would then drop every
   // broadcast (and the next getState reply) as "stale" forever. Restore it across restarts.
   if (typeof saved.seq === 'number') seq = saved.seq;
   if (Array.isArray(saved.feedbackByTab)) for (const [tabId, entry] of saved.feedbackByTab) feedbackByTab.set(tabId, entry);
+  if (saved.grants && typeof saved.grants === 'object') persistentGrants = saved.grants;
   if (saved.runState) state = { ...saved.runState, running: false };
   // Anything the old session was waiting on cannot be answered any more: say so rather than
   // leaving a card on screen that resolves to nothing.
@@ -328,30 +385,55 @@ async function execute(run, message) {
     configure(settings);
     // Pick the tabs the last turn handed back up where they stand, rather than starting cold.
     await resumeHandoffIfPresent(run.sessionId, run.turnId);
-    const page = await selectTab(message.tabId);
+    let page = await selectTab(message.tabId);
     state.status = 'working';
     await persist();
     const previousTasks = state.messages.slice(0, -1).map(m => `${m.role}: ${m.text}`).slice(-12);
     const mentioned = await Promise.all((message.tabIds || []).map(id => chrome.tabs.get(id)));
     const references = mentioned.map(t => `tab ${t.id}: ${t.title || ''} (${t.url})`).join('\n');
-    await runTask(page, {
-      goal: message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : ''), resume: message.resume, supervisor: mode === 'careful', model: settings.model,
-      reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true, denials: state.denials,
-      browserTabs: {
-        list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
-        select: selectTab, currentId: page => page.tabId,
-      },
-    }, event => {
-      // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
-      if (event.type === 'mark') { markTab(event.tabId, event.disposition); return; }
-      if (event.type === 'step') {
-        state.steps.push({ step: event.step, action: event.action, log: event.log, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
-        state.cost = (state.cost || 0) + event.costUsd;
-      }
-      if (event.type === 'end') { outcome = event; return; }
-      void persist().catch(() => {});
-    }, controller.signal);
-    if (run.popupError) throw run.popupError;
+    // A turn that pauses on an approval already covered by a stored grant (see "approval grants"
+    // above) never shows the card: it is answered the same way a manual "conversation"/"always"
+    // click would, and the run carries straight on. Looping here (rather than ending this call and
+    // letting the panel re-drive a new 'run') keeps that invisible to the user and to the tab
+    // contract below, which only runs once per execute(). Bounded: a resumed "needs_input" carries
+    // the paused step count, but a step that only asks and pauses never advances it, so a planner
+    // that re-raised the identical grantable approval every step without otherwise progressing would
+    // spin forever without MAX_AUTO_APPROVALS -- the same idea as DENIAL_LIMIT, for grants.
+    let goal = message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : '');
+    let resume = message.resume;
+    let autoApprovals = 0;
+    for (;;) {
+      outcome = undefined;
+      await runTask(page, {
+        goal, resume, supervisor: mode === 'careful', model: settings.model,
+        reasoning: settings.reasoning, maxSteps: settings.maxSteps, previousTasks, liveView: true, denials: state.denials,
+        browserTabs: {
+          list: async () => (await chrome.tabs.query({})).filter(t => supportedUrl(t.url)).map(t => ({ id: t.id, title: t.title || '', url: t.url })),
+          // The agent can switch tabs mid-run; `page` has to track that so a grant-covered resume
+          // (below) restarts runTask on wherever the run actually left off, not the tab it opened on.
+          select: async id => { page = await selectTab(id); return page; },
+          currentId: p => p.tabId,
+        },
+      }, event => {
+        // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
+        if (event.type === 'mark') { markTab(event.tabId, event.disposition); return; }
+        if (event.type === 'step') {
+          state.steps.push({ step: event.step, action: event.action, log: event.log, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
+          state.cost = (state.cost || 0) + event.costUsd;
+        }
+        if (event.type === 'end') { outcome = event; return; }
+        void persist().catch(() => {});
+      }, controller.signal);
+      if (run.popupError) throw run.popupError;
+      const blocking = outcome?.status === 'needs_input' ? pickBlocking(outcome.requests || []) : undefined;
+      const isApproval = blocking && (blocking.type === RequestType.APPROVAL || blocking.type === RequestType.PERMISSION_REQUEST);
+      if (!isApproval || !isGranted(blocking) || ++autoApprovals > MAX_AUTO_APPROVALS) break;
+      const denials = { ...(state.denials || {}) };
+      delete denials[denialKey(blocking)];
+      state.denials = denials;
+      goal = 'go on';
+      resume = outcome.resumeState;
+    }
   } catch (err) {
     outcome = { status: controller.signal.aborted && !run.popupError ? 'stopped' : 'error', message: controller.signal.aborted && !run.popupError ? 'stopped' : safeError(err, settings) };
   } finally {
@@ -425,6 +507,11 @@ async function handle(message) {
     if (declinePending('stopped').length || hadDictation) await persist();
     return { ok: true };
   }
+  // A settings surface's read/write API onto stored approval grants (not built here, see AGENTS.md
+  // for this PR's scope): 'grants:list' returns every stored grant (always-scope first, then
+  // conversation-scope), each carrying the `key` 'grants:revoke' takes back to remove it.
+  if (message.type === 'grants:list') return { ok: true, grants: listGrants() };
+  if (message.type === 'grants:revoke') return { ok: await revokeGrant(message.key) };
   if (message.type === 'getBadge') return { badge: feedback(message.tabId).badge };
   if (message.type === 'setBadge') { await setFeedback(message.tabId, { badge: message.badge }); return { ok: true }; }
   if (message.type === 'setCursor') { await setFeedback(message.tabId, { cursor: message.cursor }); return { ok: true }; }
@@ -472,7 +559,17 @@ async function handle(message) {
       if (outcome !== RequestOutcome.SUBMITTED) { state.status = 'ready'; await persist(); return { ok: true, outcome }; }
       resume = 'check whether the sign-in worked and carry on with the task';
     } else if (request.type === RequestType.APPROVAL || request.type === RequestType.PERMISSION_REQUEST) {
-      state.grants = { ...(state.grants || {}), [denialKey(request)]: message.scope || 'once' };
+      // "once" authorizes only this single click and stores nothing; a repeat asks again. The other
+      // two scopes are stored under grantKey (never denialKey: see requests.js) so the auto-skip
+      // loop in execute() can find them for a materially identical future request, and nothing
+      // broader than that.
+      const scope = message.scope === ApprovalScope.ALWAYS || message.scope === ApprovalScope.CONVERSATION ? message.scope : ApprovalScope.ONCE;
+      if (scope === ApprovalScope.CONVERSATION) {
+        state.grants = { ...(state.grants || {}), [grantKey(request)]: grantRecord(request, scope) };
+      } else if (scope === ApprovalScope.ALWAYS) {
+        persistentGrants = { ...persistentGrants, [grantKey(request)]: grantRecord(request, scope) };
+        await persistGrants();
+      }
       state.requests = [];
     } else {
       resume = String(message.text || message.choice || '').trim() || 'go on';
