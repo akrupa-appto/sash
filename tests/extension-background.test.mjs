@@ -477,6 +477,25 @@ test('stopping dictation tears the offscreen document down and returns the trans
   assert.equal(data.runState.dictation.text, 'buy oat milk');
 });
 
+test('only the chosen voice provider key crosses to the offscreen document, never the rest', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  Object.assign(data.settings, { openaiKey: 'voice-key', geminiKey: 'gemini-key', voiceProvider: 'openai' });
+  try {
+    await send({ type: 'dictation:start' });
+    const start = messages.filter(m => m.type === 'offscreen:start').at(-1);
+    assert.deepEqual(Object.keys(start.settings).sort(), ['model', 'openaiKey', 'voiceProvider'],
+      'the payload carries the chosen provider key, the model that resolves the provider, and nothing else');
+    assert.equal(start.settings.openaiKey, 'voice-key');
+    assert.equal(start.settings.openrouterKey, undefined, 'the planner key does not travel');
+    assert.equal(start.settings.geminiKey, undefined, 'an unused provider key does not travel');
+  } finally {
+    delete data.settings.openaiKey;
+    delete data.settings.geminiKey;
+    data.settings.voiceProvider = '';
+  }
+});
+
 test('a failed settings read cannot skip the teardown: stopping dictation always releases the mic', async () => {
   offscreenDocs = 0;
   offscreenStartResult = { ok: true };

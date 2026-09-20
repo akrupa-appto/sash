@@ -1,5 +1,6 @@
 import { runTask } from '../src/agent.ts';
 import { defaultTranscriptionSpec, transcribeCapability } from '../src/transcribe.ts';
+import { parseModel, PROVIDERS } from '../src/providers.ts';
 import { ChromePage, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { ensureOriginAccess } from './permissions.js';
@@ -133,6 +134,21 @@ let seq = 0;
 // `active` check up front instead of bracketing every caller with its own guard.
 function voiceSpecFor(provider) {
   return provider ? defaultTranscriptionSpec(provider) : undefined;
+}
+// Offscreen documents only expose chrome.runtime, so the settings transcription needs have to
+// travel with the command. Send only those: the key of the provider that will actually make the
+// request, the custom endpoint when that is the provider, and the planner model that decides the
+// provider when no voice provider is chosen. Fanning the whole settings object across leaves every
+// other configured key — including the planner's — sitting in a second context for no reason.
+function voiceSettingsFor(settings) {
+  const chosen = PROVIDERS[settings.voiceProvider] ? settings.voiceProvider : '';
+  const provider = chosen || parseModel(settings.model || '').provider;
+  const keyField = { openrouter: 'openrouterKey', typesafe: 'typesafeKey', openai: 'openaiKey', gemini: 'geminiKey', custom: 'customKey' }[provider];
+  const narrowed = { voiceProvider: chosen, model: settings.model };
+  if (provider === 'typesafe') { narrowed.provider = 'typesafe'; narrowed.typesafeKey = settings.typesafeKey; }
+  else if (keyField) narrowed[keyField] = settings[keyField];
+  if (provider === 'custom') narrowed.customBaseUrl = settings.customBaseUrl;
+  return narrowed;
 }
 // The last real capability this settings shape computed, so getState/the panel can keep showing an
 // accurate "what can voice do" while a run is active instead of a blanket "not available right now"
@@ -691,16 +707,16 @@ async function handle(message) {
   // Voice dictation: start capture (creates the offscreen document if needed), forward the command,
   // and translate a permission failure into opening the one-time full-tab grant page.
   if (message.type === 'dictation:start') {
+    // Read settings before creating anything: opening the offscreen document is a side effect, and a
+    // failed read after it leaves a document with no session behind it.
+    const settings = await readSettings().catch(() => ({}));
     try {
       await ensureOffscreen();
     } catch (err) {
-      return { ok: false, error: safeError(err, await readSettings()) };
+      return { ok: false, error: safeError(err, settings) };
     }
-    // Offscreen documents only expose chrome.runtime, not chrome.storage. Pass the already-local
-    // settings into that extension context so it can configure transcription without trying to read
-    // storage itself; raw audio still never crosses a runtime message.
-    const settings = await readSettings();
-    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:start', chunkMs: message.chunkMs, settings }).catch(err => ({ error: safeError(err, settings) }));
+    // Raw audio still never crosses a runtime message; only the transcript text comes back.
+    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:start', chunkMs: message.chunkMs, settings: voiceSettingsFor(settings) }).catch(err => ({ error: safeError(err, settings) }));
     if (reply?.error) {
       await closeOffscreen();
       const error = safeError(reply.error, settings);
