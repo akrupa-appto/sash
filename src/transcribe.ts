@@ -211,8 +211,20 @@ async function geminiUpload(key: string, bytes: Uint8Array, mimeType: string): P
     cancel();
     throw new Error(`Gemini transcription failed (${upload.status}): ${(await upload.text()).slice(0, 300)}`);
   }
-  const json: any = await upload.json();
-  if (!json?.file?.uri) throw new Error("Gemini accepted the audio but returned no file uri for it");
+  // The bytes have landed, so the file now exists whether or not its reply is readable: a truncation
+  // here would otherwise leave the clip in Google's store for its full 48 hours with nothing pointing
+  // at it. Cancel the session on an unreadable reply, and delete a file whose name the reply did give.
+  let json: any;
+  try {
+    json = await upload.json();
+  } catch (err) {
+    cancel();
+    throw err;
+  }
+  if (!json?.file?.uri) {
+    if (json?.file?.name) await fetch(`${GEMINI_API}/${json.file.name}`, { method: "DELETE", headers: { "x-goog-api-key": key } }).catch(() => {});
+    throw new Error("Gemini accepted the audio but returned no file uri for it");
+  }
   return { uri: json.file.uri, name: json.file.name ?? "" };
 }
 
