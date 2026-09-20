@@ -185,6 +185,23 @@ export function denialKey(request) {
   return `${request.type}:${subject.toLowerCase().slice(0, 120)}`;
 }
 
+/**
+ * Identity for a *grant*, not a denial tally: deliberately narrower than `denialKey`.
+ * `denialKey` folds origin into the subject only when there is no action text, which is fine for
+ * counting refusals of "the same ask" but wrong for authorizing one — two approvals with identical
+ * free-text action wording on two different sites must not share a grant. This always keys on
+ * type + origin + action/question as three separate parts, so a grant never reaches past the exact
+ * origin and exact action it was given for. A planner's action text names its specifics (an amount,
+ * an item, a recipient), so a materially different action also produces a different key here and is
+ * asked about again — the intended, conservative failure mode for anything that authorizes a repeat.
+ */
+export function grantKey(request) {
+  if (!request?.type) return '';
+  const origin = text(request.origin) || '*';
+  const subject = text(request.action) || text(request.question) || '';
+  return `${request.type}:${origin}:${subject.toLowerCase().slice(0, 200)}`;
+}
+
 /** True once the user has turned the same request down DENIAL_LIMIT times. */
 export function denialsExhausted(request, denials = {}) {
   return (denials?.[denialKey(request)] ?? 0) >= DENIAL_LIMIT;
