@@ -1,7 +1,7 @@
 import { runTask } from '../src/agent.ts';
 import { defaultTranscriptionSpec, transcribeCapability } from '../src/transcribe.ts';
 import { parseModel, PROVIDERS } from '../src/providers.ts';
-import { ChromePage, supportedUrl } from './browser.js';
+import { ChromePage, setCursorSink, supportedUrl } from './browser.js';
 import { configure, clearConfig } from './config.js';
 import { ensureOriginAccess } from './permissions.js';
 import { readSettings, validateSettings } from './settings.js';
@@ -78,12 +78,32 @@ chrome.windows.onFocusChanged.addListener(windowId => {
     await viewed(tab.id);
   })();
 });
-// A finished navigation means a fresh content script with no badge on it.
-chrome.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'complete' && feedbackByTab.has(tabId)) void pushFeedback(tabId); });
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  const held = feedbackByTab.get(tabId);
+  if (!held) return;
+  // A navigation takes the page out from under the cursor: its coordinates meant the old document,
+  // and re-pushing them would paint a pointer over whatever the new page put there. The next
+  // action's own `point()` moves it again. On a document load there is no push: the copy of
+  // content.js on the leaving page is about to die anyway, and the one Chrome injects next pulls
+  // this state itself. A URL change without a load (pushState, a hash route: `change.url` alone)
+  // is a single-page app swapping its view under the same content script, so that copy survives
+  // and has to be told to take the pointer down.
+  if (held.cursor && (change.status === 'loading' || change.url)) {
+    feedbackByTab.set(tabId, { ...held, cursor: undefined });
+    void persistFeedback();
+    if (change.status !== 'loading') void pushFeedback(tabId);
+  }
+  // A finished navigation means a fresh content script with no badge on it.
+  if (change.status === 'complete') void pushFeedback(tabId);
+});
 chrome.tabs.onRemoved.addListener(tabId => { if (feedbackByTab.delete(tabId)) void persistFeedback(); });
 // The tab contract closes a tab it opened; the page's own favicon has to come back before it does,
 // which is exactly what clearing this tab's feedback tells the content script to do.
 setFaviconRestorer(tabId => setFeedback(tabId, { badge: BadgeState.NONE, cursor: undefined }));
+// browser.js's point() drives this once per action with the viewport point the click is about to
+// use; the record it gets back says whether the tab is observed, i.e. whether waiting for the
+// tween is worth anything. It is the only sender of a cursor position.
+setCursorSink((tabId, cursor) => setFeedback(tabId, { cursor }));
 
 // --- voice dictation: offscreen document lifecycle --------------------------------------------
 // getUserMedia does not reliably prompt from the side panel (Chrome cannot anchor the permission
@@ -287,7 +307,17 @@ const ready = (async () => {
   // in-memory-only seq would reset to 0 and the panel's lastSeq guard would then drop every
   // broadcast (and the next getState reply) as "stale" forever. Restore it across restarts.
   if (typeof saved.seq === 'number') seq = saved.seq;
-  if (Array.isArray(saved.feedbackByTab)) for (const [tabId, entry] of saved.feedbackByTab) feedbackByTab.set(tabId, entry);
+  // Badges survive a restart (they are unread markers), the cursor does not: it pointed at what a
+  // run that died with the old worker was about to press. The content scripts on those tabs did
+  // not restart with the worker, so the ones still drawing it are told to take it down.
+  const stillPointing = [];
+  if (Array.isArray(saved.feedbackByTab)) {
+    for (const [tabId, entry] of saved.feedbackByTab) {
+      if (entry?.cursor) stillPointing.push(tabId);
+      feedbackByTab.set(tabId, { ...entry, cursor: undefined });
+    }
+  }
+  if (stillPointing.length) { void persistFeedback(); for (const tabId of stillPointing) void pushFeedback(tabId); }
   if (saved.grants && typeof saved.grants === 'object') persistentGrants = saved.grants;
   if (saved.runState) state = { ...saved.runState, running: false };
   // Anything the old session was waiting on cannot be answered any more: say so rather than
@@ -402,6 +432,8 @@ async function submitCredentials(request, values) {
     return RequestOutcome.SUBMISSION_FAILED;
   } finally {
     await page.detach();
+    // No run's end-of-turn sweep follows this, so the cursor the form actions moved is cleared here.
+    await setFeedback(page.tabId, { cursor: undefined });
   }
 }
 async function stop() {
@@ -627,7 +659,6 @@ async function handle(message) {
   if (message.type === 'grants:revoke') return { ok: await revokeGrant(message.key) };
   if (message.type === 'getBadge') return { badge: feedback(message.tabId).badge };
   if (message.type === 'setBadge') { await setFeedback(message.tabId, { badge: message.badge }); return { ok: true }; }
-  if (message.type === 'setCursor') { await setFeedback(message.tabId, { cursor: message.cursor }); return { ok: true }; }
   if (message.type === 'clear') {
     if (active) throw new Error('stop the current task before starting a new chat');
     declinePending('cancelled');

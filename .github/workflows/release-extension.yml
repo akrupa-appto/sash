@@ -45,6 +45,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # tests/extension-voice-browser.test.mjs and the other browser suites load the built extension
+      # in a real Chromium, so the release job needs the browser installed exactly like ci.yml does.
+      # Without this the job failed on every merge that touched the extension: no version bump, no release.
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - id: bump
         # Keep bumping until the tag is free, so a retried or raced run never collides with an existing tag.

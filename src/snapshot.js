@@ -59,7 +59,11 @@ export const collectSnapshot = (maxEls) => {
     if (role === 'checkbox' || role === 'radio' || role === 'switch') value = (el.checked || el.getAttribute('aria-checked') === 'true') ? 'checked' : 'unchecked';
     const inViewport = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
     const options = kind === 'select' ? Array.from(el.options).slice(0, 40).map(o => clean(o.text)) : undefined;
-    out.push({ el, role, name, value, kind, options, contentEditable: el.isContentEditable || undefined, inViewport, pos: inViewport ? undefined : (r.bottom <= 0 ? 'above' : 'below'), top: r.top });
+    // Viewport-relative box, the same frame `position:fixed` and CDP Input events use, so the
+    // agent cursor and the click it precedes land on the same pixel. Rounded: it is a target for
+    // drawing and hit-testing, never part of the planner payload (see describe()).
+    const rect = { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+    out.push({ el, role, name, value, kind, options, contentEditable: el.isContentEditable || undefined, inViewport, pos: inViewport ? undefined : (r.bottom <= 0 ? 'above' : 'below'), top: r.top, rect });
   }
   // document order, so "the last item in the list" is the last element listed
   const kept = out.slice(0, maxEls);
@@ -72,6 +76,6 @@ export const collectSnapshot = (maxEls) => {
     title: document.title,
     text,
     scroll: { y: Math.round(se.scrollTop), max: Math.max(0, Math.round(se.scrollHeight - innerHeight)) },
-    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, contentEditable: o.contentEditable, inViewport: o.inViewport, pos: o.pos })),
+    elements: kept.map((o, i) => ({ id: i + 1, role: o.role, name: o.name, value: o.value, kind: o.kind, options: o.options, contentEditable: o.contentEditable, inViewport: o.inViewport, pos: o.pos, rect: o.rect })),
   };
 };
