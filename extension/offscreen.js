@@ -65,8 +65,13 @@ async function start(options = {}) {
   chunkMs = Number.isFinite(options.chunkMs) && options.chunkMs > 0 ? options.chunkMs : undefined;
   recorder = new MediaRecorder(stream, { mimeType });
   recorder.addEventListener('dataavailable', event => { void handleChunk(event.data, mimeType); });
+  // A MediaRecorder error is terminal: the recorder stops itself. Release the mic immediately
+  // rather than leaving a dead stream held open, and flag it fatal so background closes this
+  // document too — unlike a single failed chunk transcription, which is not fatal to the session.
   recorder.addEventListener('error', event => {
-    void chrome.runtime.sendMessage({ type: 'dictation:error', error: String(event.error?.message || event.error || 'recording error') }).catch(() => {});
+    const message = String(event.error?.message || event.error || 'recording error');
+    teardown();
+    void chrome.runtime.sendMessage({ type: 'dictation:error', error: message, fatal: true }).catch(() => {});
   });
   recorder.start(chunkMs);
   return { ok: true };

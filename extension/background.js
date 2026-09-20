@@ -529,6 +529,9 @@ async function handle(message) {
   if (message.type === 'dictation:error') {
     state.dictation = { ...(state.dictation || {}), status: 'error', error: safeError(message.error) };
     await persist();
+    // A single failed partial transcription is not fatal to the session; a MediaRecorder error is —
+    // it has already stopped itself and released the mic in offscreen.js, so close the document too.
+    if (message.fatal) await closeOffscreen();
     return { ok: true };
   }
   // Acknowledgement from the one-time full-tab permission page; nothing to do but confirm receipt.

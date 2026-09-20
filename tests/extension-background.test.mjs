@@ -467,6 +467,20 @@ test('partial and error events from the offscreen document update dictation stat
   await send({ type: 'dictation:stop' });
 });
 
+test('a fatal offscreen error (the recorder itself failing) closes the offscreen document; a non-fatal one does not', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  await send({ type: 'dictation:start' });
+  const offscreenSender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+  // A failed chunk transcription (fatal not set) must not tear the session down.
+  await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:error', error: 'chunk transcription failed' }, offscreenSender, resolve));
+  assert.equal(offscreenDocs, 1, 'a non-fatal error leaves the offscreen document open');
+  // The recorder itself dying is fatal: offscreen.js already released the mic, so background closes the document too.
+  await new Promise(resolve => chrome.runtime.onMessage.fire({ type: 'dictation:error', error: 'recording error', fatal: true }, offscreenSender, resolve));
+  assert.equal(offscreenDocs, 0, 'a fatal error closes the offscreen document');
+  assert.equal(data.runState.dictation.status, 'error');
+});
+
 // --- host access is asked for before a site is touched -----------------------------------------
 // Last in the file: it empties the granted origins, so anything after it would have to re-grant.
 test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {

@@ -81,12 +81,18 @@ async function toBase64(bytes: Uint8Array): Promise<string> {
   return btoa(binary);
 }
 
-// OpenRouter's whole-file endpoint (shipped 2026-05-01), multipart like OpenAI's. 60s upstream timeout.
+// OpenRouter documents this endpoint's own upstream timeout at 60s; a client-side timeout on top of
+// that keeps a stalled request from leaving dictation:stop (and a hot mic) hanging indefinitely.
+const REQUEST_TIMEOUT_MS = 60_000;
+const requestTimeout = () => AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+
+// OpenRouter's whole-file endpoint (shipped 2026-05-01). Accepts multipart or base64 JSON; multipart
+// is used here since it needs no client-side base64 expansion for what's usually the larger payload.
 async function openrouterTranscribe(model: string, key: string, bytes: Uint8Array, mimeType: string, filename: string): Promise<string> {
   const form = new FormData();
   form.append("model", model);
   form.append("file", new Blob([bytes], { type: mimeType }), filename);
-  const res = await fetch("https://openrouter.ai/api/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
+  const res = await fetch("https://openrouter.ai/api/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form, signal: requestTimeout() });
   if (!res.ok) throw new Error(`OpenRouter transcription failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
   const json: any = await res.json();
   return String(json.text ?? "");
@@ -101,7 +107,7 @@ async function openaiStyleTranscribe(provider: ProviderId, model: string, key: s
   form.append("file", new Blob([bytes], { type: mimeType }), filename);
   let res: Response;
   try {
-    res = await fetch(`${base}/audio/transcriptions`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form });
+    res = await fetch(`${base}/audio/transcriptions`, { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form, signal: requestTimeout() });
   } catch (err: any) {
     if (provider === "custom") throw new TranscribeUnsupportedError(provider, `could not reach ${base}/audio/transcriptions: ${err?.message || err}`);
     throw err;
@@ -120,7 +126,6 @@ async function openaiStyleTranscribe(provider: ProviderId, model: string, key: s
 // Gemini has no dedicated transcription endpoint; audio goes inline (base64) in a normal
 // generateContent call, same as the chat path in providers.ts. 20MB inline cap.
 async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, mimeType: string): Promise<string> {
-  if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("audio clip is too large for Gemini's inline 20MB limit; use OpenRouter or OpenAI instead");
   const data = await toBase64(bytes);
   const body = {
     contents: [{
@@ -131,10 +136,15 @@ async function geminiTranscribe(model: string, key: string, bytes: Uint8Array, m
       ],
     }],
   };
+  // The 20MB inline cap is on the serialized request, not the raw audio: base64 alone inflates the
+  // clip by ~4/3, on top of the JSON wrapper. Check the actual encoded payload, not the raw bytes.
+  const encodedSize = new TextEncoder().encode(JSON.stringify(body)).byteLength;
+  if (encodedSize > 20 * 1024 * 1024) throw new Error("audio clip is too large for Gemini's inline 20MB limit; use OpenRouter or OpenAI instead");
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: requestTimeout(),
   });
   if (!res.ok) throw new Error(`Gemini transcription failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
   const json: any = await res.json();

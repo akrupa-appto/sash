@@ -2,9 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { transcribe, transcribeCapability, TranscribeUnsupportedError } from '../src/transcribe.ts';
 
+// Always starts from every provider key cleared, then applies the overrides given, so a test that
+// only names the keys it cares about is not at the mercy of whatever else happens to be in the
+// ambient environment (e.g. a real .env) — configuredProviders() only ever sees what was asked for.
+const PROVIDER_ENV_KEYS = ['OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'CUSTOM_API_KEY', 'CUSTOM_API_BASE'];
 const withKeys = async (keys, fn) => {
+  const merged = { ...Object.fromEntries(PROVIDER_ENV_KEYS.map(k => [k, undefined])), ...keys };
   const saved = {};
-  for (const [k, v] of Object.entries(keys)) { saved[k] = process.env[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  for (const [k, v] of Object.entries(merged)) { saved[k] = process.env[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   try { return await fn(); } finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 };
 const clip = { audio: new Uint8Array([1, 2, 3, 4]), mimeType: 'audio/webm;codecs=opus' };
