@@ -165,7 +165,7 @@ async function maybeAutoRunFromDictation({ text, isFinal }) {
   if (!tab || !Number.isInteger(tab.id)) return;
   dictationTriggered = true;
   try {
-    const reply = await handle({ type: 'run', tabId: tab.id, goal, mode: settings.mode });
+    const reply = await handle({ type: 'run', tabId: tab.id, goal, mode: state.mode || settings.mode });
     if (!reply?.ok) { dictationTriggered = false; return; }
     // The run starting ends hands-free listening, per the owner's spec, and the mic itself: nothing
     // is left recording while a task is under way. teardownDictation() only stops an actually-live
@@ -460,7 +460,7 @@ async function execute(run, message) {
   chrome.debugger.onDetach.addListener(detached);
   try {
     settings = await readSettings();
-    const mode = message.mode === 'fast' ? 'fast' : 'careful';
+    const mode = (message.mode || state.mode) === 'fast' ? 'fast' : 'careful';
     validateSettings(settings, mode);
     configure(settings);
     // Pick the tabs the last turn handed back up where they stand, rather than starting cold.
@@ -479,7 +479,7 @@ async function execute(run, message) {
     // the paused step count, but a step that only asks and pauses never advances it, so a planner
     // that re-raised the identical grantable approval every step without otherwise progressing would
     // spin forever without MAX_AUTO_APPROVALS -- the same idea as DENIAL_LIMIT, for grants.
-    let goal = message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : '');
+    const goal = message.goal + (references ? `\n\nTabs explicitly referenced by the user:\n${references}` : '');
     let resume = message.resume;
     let autoApprovals = 0;
     for (;;) {
@@ -495,8 +495,6 @@ async function execute(run, message) {
           currentId: p => p.tabId,
         },
       }, event => {
-        // The agent says how it is leaving a tab; the contract below acts on it when the run ends.
-        if (event.type === 'mark') { markTab(event.tabId, event.disposition); return; }
         if (event.type === 'step') {
           state.steps.push({ step: event.step, action: event.action, log: event.log, plan: event.plan, note: event.note, cost: event.costUsd, title: event.title });
           state.cost = (state.cost || 0) + event.costUsd;
@@ -511,8 +509,11 @@ async function execute(run, message) {
       const denials = { ...(state.denials || {}) };
       delete denials[denialKey(blocking)];
       state.denials = denials;
-      goal = 'go on';
-      resume = outcome.resumeState;
+      const grant = state.grants?.[grantKey(blocking)] || persistentGrants[grantKey(blocking)];
+      resume = {
+        ...(outcome.resumeState || {}),
+        resolution: { kind: 'approved', action: String(blocking.action || ''), scope: grant?.scope || ApprovalScope.CONVERSATION },
+      };
     }
   } catch (err) {
     outcome = { status: controller.signal.aborted && !run.popupError ? 'stopped' : 'error', message: controller.signal.aborted && !run.popupError ? 'stopped' : safeError(err, settings) };
@@ -523,6 +524,15 @@ async function execute(run, message) {
     chrome.debugger.onDetach.removeListener(detached);
     // Any attach that was already in flight must finish before the final detach.
     await Promise.allSettled([...attachments]);
+    // A finished run's still-attached tabs that we opened are the result, including popups that
+    // followed off the original tab. Mark before the final detach so "still attached" means the
+    // run still had the page, not that teardown hasn't run yet. A popup the run already detached
+    // from stays unmarked and may close.
+    if (outcome?.status === 'done') {
+      for (const p of pages) {
+        if (p.attached && lease.get(p.tabId)?.openedByUs) markTab(p.tabId, Disposition.DELIVERABLE);
+      }
+    }
     await Promise.allSettled(pages.map(p => p.detach()));
     // Unmuting reads the lease, so it has to happen before the contract below releases them.
     await Promise.allSettled(pages.map(p => unmuteIfOurs(p.tabId)));
@@ -623,10 +633,10 @@ async function handle(message) {
       await persist();
       return { ok: true };
     }
-    let resume = 'go on';
+    let resolution;
     if (request.kind === 'credential' && message.outcome === RequestOutcome.USER_TOOK_OVER) {
       state.requests = [];
-      resume = 'check whether the sign-in worked and carry on with the task';
+      resolution = { kind: 'signed_in' };
     } else if (request.kind === 'credential') {
       // `values` is used here and nowhere else: it is not stored, persisted, or passed to the agent.
       const outcome = await submitCredentials(request, message.values || {});
@@ -639,7 +649,7 @@ async function handle(message) {
       }[outcome] ?? 'the sign-in form would not accept that, so nothing was submitted.' });
       state.requests = [];
       if (outcome !== RequestOutcome.SUBMITTED) { state.status = 'ready'; await persist(); return { ok: true, outcome }; }
-      resume = 'check whether the sign-in worked and carry on with the task';
+      resolution = { kind: 'signed_in' };
     } else if (request.type === RequestType.APPROVAL || request.type === RequestType.PERMISSION_REQUEST) {
       // "once" authorizes only this single click and stores nothing; a repeat asks again. The other
       // two scopes are stored under grantKey (never denialKey: see requests.js) so the auto-skip
@@ -653,17 +663,25 @@ async function handle(message) {
         await persistGrants();
       }
       state.requests = [];
+      resolution = { kind: 'approved', action: String(request.action || ''), scope };
     } else {
-      resume = String(message.text || message.choice || '').trim() || 'go on';
+      const text = String(message.text || message.choice || '').trim();
       state.requests = [];
+      resolution = { kind: 'answer', text };
     }
     const denials = { ...(state.denials || {}) };
     delete denials[denialKey(request)];
     state.denials = denials;
     await persist();
-    // Whatever kind of request this answered, the run resumes with the coverage/failure guards it
-    // paused with — a pause must never reset those just because a different kind of request raised it.
-    return handle({ type: 'run', tabId: state.tabId, goal: resume, mode: (await readSettings()).mode, resume: state.resumeState });
+    // Same pause, plus the sanitized resolution. Original task stays on resumeState.goal; the run's
+    // own mode stays on state.mode. Never a synthetic "go on" goal or settings-default mode.
+    return handle({
+      type: 'run',
+      tabId: state.tabId,
+      goal: state.resumeState?.goal || state.messages.find(m => m.role === 'user')?.text || 'continue',
+      mode: state.mode,
+      resume: { ...(state.resumeState || {}), resolution },
+    });
   }
   if (message.type === 'run') {
     if (active) throw new Error('a task is already running');
@@ -677,10 +695,19 @@ async function handle(message) {
     const sessionId = state.sessionId || crypto.randomUUID();
     const run = { controller: new AbortController(), pages: [], attaching: new Set(), sessionId, turnId: crypto.randomUUID() };
     active = run; // Reserve before any storage, attachment, or API awaits.
-    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined, requests: [], blockedReason: undefined, resumeState: undefined };
-    state.messages.push({ role: 'user', text: message.goal.trim() });
+    const mode = message.mode === 'fast' ? 'fast' : 'careful';
+    state = { ...state, sessionId, tabId: message.tabId, running: true, status: 'connecting', steps: [], cost: 0, startedAt: Date.now(), endedAt: undefined, requests: [], blockedReason: undefined, resumeState: undefined, mode };
+    if (message.resume) {
+      const r = message.resume.resolution;
+      if (r?.kind === 'answer') {
+        const text = String(r.text || '').trim();
+        if (text && text !== 'go on') state.messages.push({ role: 'user', text });
+      }
+    } else {
+      state.messages.push({ role: 'user', text: message.goal.trim() });
+    }
     void persist().catch(() => {});
-    void execute(run, { ...message, goal: message.goal.trim() });
+    void execute(run, { ...message, goal: message.goal.trim(), mode });
     return { ok: true };
   }
   // Voice dictation: start capture (creates the offscreen document if needed), forward the command,

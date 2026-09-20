@@ -58,6 +58,7 @@ let taskStarted = 0;
 let nextOutcome; // a single 'end' event for the next runTask call
 let nextOutcomes = []; // a queue of 'end' events, for a chain of runTask calls inside one execute()
 let capturedPages = []; // tabId the `page` argument carried into each runTask call, in order
+let capturedInputs = [];
 let switchToTabId; // if set, the next runTask call switches tabs via browserTabs.select first
 
 mock.module('../extension/browser.js', { namedExports: {
@@ -71,6 +72,7 @@ mock.module('../extension/browser.js', { namedExports: {
 mock.module('../src/agent.ts', { namedExports: { runTask: async (page, input, emit) => {
   taskStarted++;
   capturedPages.push(page.tabId);
+  capturedInputs.push(input);
   if (switchToTabId !== undefined) { const target = switchToTabId; switchToTabId = undefined; await input.browserTabs.select(target); }
   emit({ type: 'step', step: 1, action: 'CLICK [5] button "submit"', plan: 'submit', costUsd: 0 });
   const outcome = nextOutcomes.length ? nextOutcomes.shift() : nextOutcome;
@@ -130,6 +132,12 @@ test('conversation: repeating the same action does not prompt, and clear makes i
   await until(() => data.runState?.status === 'done' && taskStarted === before + 2);
   assert.deepEqual(data.runState.requests, [], 'the stored grant covered the repeat: no card was shown');
   assert.equal(data.runState.messages.at(-1).text, 'done again');
+  const auto = capturedInputs.at(-1);
+  assert.equal(auto.goal.startsWith('submit the order once more'), true);
+  assert.notEqual(auto.goal, 'go on');
+  assert.equal(auto.resume?.resolution?.kind, 'approved');
+  assert.equal(auto.resume?.resolution?.action, 'submit the $89.00 order');
+  assert.equal(auto.resume?.resolution?.scope, 'conversation');
 
   await send({ type: 'clear' });
   assert.deepEqual(data.runState.grants ?? {}, {}, 'clear wipes conversation-scoped grants');

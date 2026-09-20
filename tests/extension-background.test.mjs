@@ -262,9 +262,40 @@ test('a paused request carries the coverage/failure guards back in when the answ
   nextOutcome = { status: 'done', message: 'finished', answer: 'opened the root readme' };
   await send({ type: 'answer', id: 'ask-1', text: 'the root one' });
   await until(() => data.runState?.status === 'done');
-  assert.deepEqual(lastInput.resume, resumeState, "the answer carries the paused run's guards back into the agent");
-  assert.equal(lastInput.goal, 'the root one');
+  assert.equal(lastInput.resume.goal, resumeState.goal);
+  assert.deepEqual(lastInput.resume.history, resumeState.history);
+  assert.equal(lastInput.resume.step, resumeState.step);
+  assert.equal(lastInput.resume.resolution?.kind, 'answer');
+  assert.equal(lastInput.resume.resolution?.text, 'the root one');
+  assert.equal(lastInput.goal, 'open the readme');
   assert.equal(data.runState.resumeState, undefined);
+  assert.deepEqual(data.runState.messages.filter(m => m.role === 'user').map(m => m.text), ['open the readme', 'the root one']);
+});
+
+test('a careful run that pauses on approval resumes in careful mode without a fake "go on"', async () => {
+  await send({ type: 'clear' });
+  const previousMode = data.settings.mode;
+  data.settings = { ...data.settings, mode: 'fast' };
+  try {
+    const resumeState = { goal: 'delete the account', history: ['step 1: opened settings'], step: 1 };
+    const request = { id: 'appr-1', type: 'approval', action: 'click the "Delete account" button' };
+    nextOutcome = { status: 'needs_input', message: 'approve deleting the account?', requests: [request], request, resumeState };
+    await send({ type: 'run', tabId: 12, goal: 'delete the account', mode: 'careful' });
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'needs_input');
+    assert.equal(data.runState.mode, 'careful');
+
+    nextOutcome = { status: 'done', message: 'deleted' };
+    await send({ type: 'answer', id: 'appr-1', outcome: 'submitted', scope: 'once' });
+    await until(() => data.runState?.status === 'done');
+    assert.equal(lastInput.supervisor, true, 'settings are fast; the paused run was careful and must stay careful');
+    assert.equal(lastInput.resume.resolution?.kind, 'approved');
+    assert.equal(lastInput.resume.resolution?.action, 'click the "Delete account" button');
+    assert.equal(lastInput.resume.resolution?.scope, 'once');
+    assert.equal(lastInput.goal, 'delete the account');
+    assert.equal(data.runState.messages.some(m => m.role === 'user' && m.text === 'go on'), false);
+    assert.deepEqual(data.runState.messages.filter(m => m.role === 'user').map(m => m.text), ['delete the account']);
+  } finally { data.settings = { ...data.settings, mode: previousMode }; }
 });
 
 test('a finished run keeps its actions on the reply it produced', async () => {

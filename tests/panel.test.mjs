@@ -43,14 +43,14 @@ const finished = {
   ],
 };
 
-async function panel(state, { width, configured = true } = {}) {
+async function panel(state, { width, configured = true, voice } = {}) {
   const page = await browser.newPage(width ? { viewport: { width, height: 720 } } : undefined);
   await page.addInitScript(cfg => {
     const ev = () => ({ addListener() {}, removeListener() {} });
     window.chrome = {
       runtime: {
         sendMessage: async message => (message.type === 'getState'
-          ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: cfg.configured, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0 }
+          ? { state: { running: false, status: 'ready', messages: [], steps: [] }, configured: cfg.configured, mode: 'careful', model: 'glm-5.3-flash', reasoning: 'low', seq: 0, voice: cfg.voice }
           : message.type === 'clear'
             ? { ok: true, state: { running: false, messages: [], steps: [], status: 'ready' }, seq: 999 }
             : { ok: true }),
@@ -59,7 +59,7 @@ async function panel(state, { width, configured = true } = {}) {
       tabs: { query: async () => [{ id: 1, url: 'https://example.test/', title: 'Example', active: true, windowId: 1, index: 0 }], onCreated: ev(), onRemoved: ev(), onUpdated: ev(), onActivated: ev() },
       storage: { onChanged: ev() },
     };
-  }, { configured });
+  }, { configured, voice });
   await page.goto(`${base}/panel.html`);
   await page.waitForFunction(() => window.onState);
   // A live run's age is measured against the page's own clock at the moment it renders, so a test
@@ -533,5 +533,24 @@ test('an unconfigured first run shows the connect-a-model notice as a real card,
   // actually be in view on load, not scrolled off above a hero taller than the viewport.
   const box = await setup.boundingBox();
   assert.ok(box.y >= 0, `#setup should be visible at the top of the panel on load, got y=${box.y}`);
+  await page.close();
+});
+
+test('a voice partial does not overwrite the composer after the user starts typing', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  await page.locator('#mic').click();
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk' } },
+  }));
+  assert.equal(await page.locator('#goal').inputValue(), 'buy milk');
+  await page.locator('#goal').fill('I typed this myself');
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk now please' } },
+  }));
+  assert.equal(await page.locator('#goal').inputValue(), 'I typed this myself');
   await page.close();
 });

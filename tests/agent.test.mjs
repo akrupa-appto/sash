@@ -484,27 +484,27 @@ test('an element that vanishes between snapshot and click is retried by name ins
   } finally { snapFn = origSnap; clickFn = origClick; }
 });
 
-test('an "ask" pauses the run unexecuted, and the next message continues that run', async () => {
+test('an "ask" with options resumes the original task and puts the chosen answer in history once', async () => {
   plans = [
     { status: 'continue', next: 'open README.md' },
-    { status: 'ask', question: 'which README do you mean, the root one or docs/README.md?', why: 'two files match' },
+    { status: 'ask', question: 'which README do you mean?', options: ['A', 'B', 'C'], why: 'two files match' },
   ];
   decisions = [choice('CLICK')];
   const asked = await run(true);
   assert.equal(asked.status, 'needs_input');
-  assert.equal(asked.request.type, 'user_input');
-  assert.equal(asked.request.question, 'which README do you mean, the root one or docs/README.md?');
+  assert.equal(asked.request.type, 'option_picker');
+  assert.equal(asked.request.question, 'which README do you mean?');
   assert.equal(executed, 1, 'the question must not carry out another action');
   assert.equal(planCalls.length, 2);
 
   plans = [{ status: 'done', answer: 'opened the root readme' }];
   decisions = [];
-  const resumed = await run(true, 3, { goal: 'the root one', resume: asked.resumeState });
+  const resumed = await run(true, 3, { resume: { ...asked.resumeState, resolution: { kind: 'answer', text: 'B' } } });
   assert.equal(resumed.status, 'done');
-  // The resumed run is the same task with everything it had already read, plus the user's answer.
   assert.equal(planCalls[0].task, 'open the raw README.md');
   assert.match(planCalls[0].history[0], /supervisor said "open README.md"/);
-  assert.match(planCalls[0].history.at(-1), /paused → resumed/);
+  assert.match(planCalls[0].history.at(-1), /paused → user answered: "B"/);
+  assert.equal((planCalls[0].history.join('\n').match(/B/g) || []).length, 1);
   assert.equal(planCalls[0].step, 3);
 });
 
@@ -521,8 +521,10 @@ test('an "approve" status waits for the user before the action runs', async () =
 
   plans = [{ status: 'done', answer: 'deleted' }];
   decisions = [];
-  const resumed = await run(true, 3, { goal: 'go on', resume: paused.resumeState });
+  const resumed = await run(true, 3, { resume: { ...paused.resumeState, resolution: { kind: 'approved', action: paused.request.action, scope: 'once' } } });
   assert.equal(resumed.status, 'done');
+  assert.match(planCalls[0].history.at(-1), /paused → approved click the "Delete account" button \(once\)/);
+  assert.doesNotMatch(planCalls[0].history.join('\n'), /\bgo on\b/);
 });
 
 test('an unconfirmed failed step still blocks "done" after the run pauses on a request and resumes', async () => {
@@ -549,9 +551,63 @@ test('an unconfirmed failed step still blocks "done" after the run pauses on a r
       { status: 'done', answer: 'the catch-all filter was updated' },
     ];
     decisions = [];
-    const resumed = await run(true, 6, { goal: 'gmail.com', resume: paused.resumeState });
+    const resumed = await run(true, 6, { resume: { ...paused.resumeState, resolution: { kind: 'answer', text: 'gmail.com' } } });
     assert.equal(resumed.status, 'blocked', 'the pending failure must survive the pause, not reset on resume');
   } finally { snapFn = origSnap; clickFn = origClick; typeTextFn = origType; }
+});
+
+test('a type that failed is accepted as done once the snapshot shows the intended value on that control', async () => {
+  const [origSnap, origType] = [snapFn, typeTextFn];
+  let present = '';
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'Search', kind: 'type', inViewport: true, value: present },
+  ] });
+  typeTextFn = async () => { present = 'hello'; throw new Error('the control is covered or not visible'); };
+  try {
+    plans = [
+      { status: 'continue', next: 'type hello into search' },
+      { status: 'done', answer: 'typed hello' },
+    ];
+    decisions = [{ operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' }, type_value: { choice: 'text_0' } }];
+    const result = await run(true, 6, { values: ['hello'] });
+    assert.equal(result.status, 'done');
+  } finally { snapFn = origSnap; typeTextFn = origType; }
+});
+
+test('a click that failed still blocks done even if a later snapshot shows the page changed', async () => {
+  const [origSnap, origClick] = [snapFn, clickFn];
+  let clicks = 0;
+  snapFn = () => ({ ...snap(), fingerprint: clicks ? 'changed' : 'repository', text: clicks ? 'page changed' : 'repository' });
+  clickFn = async () => { clicks++; throw new Error('the control is covered or not visible'); };
+  try {
+    plans = [
+      { status: 'continue', next: 'open README.md' },
+      { status: 'done', answer: 'opened' },
+      { status: 'done', answer: 'opened' },
+    ];
+    decisions = [choice('CLICK')];
+    const result = await run(true, 6);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.message, /could not confirm/);
+  } finally { snapFn = origSnap; clickFn = origClick; }
+});
+
+test('jev DONE refuses an unconfirmed failure before the coverage floor', async () => {
+  const [origSnap, origType] = [snapFn, typeTextFn];
+  snapFn = () => ({ ...snap(), elements: [
+    { id: 1, role: 'textbox', name: 'q', kind: 'type', inViewport: true },
+  ] });
+  typeTextFn = async () => { throw new Error('the control is covered or not visible'); };
+  try {
+    decisions = [
+      { operation: { choice: 'TYPE_TEXT' }, type_target: { choice: 'el_1' }, type_value: { choice: 'text_0' } },
+      { operation: { choice: 'DONE' } },
+    ];
+    const result = await run(false, 6, { goal: 'test the app', values: ['hello'] });
+    assert.equal(result.status, 'blocked');
+    assert.match(result.message, /could not confirm/);
+    assert.doesNotMatch(result.message, /you asked me to test the app/);
+  } finally { snapFn = origSnap; typeTextFn = origType; }
 });
 
 // A run's terminal message is the supervisor's own words, never a status label bolted onto them: the

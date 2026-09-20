@@ -21,6 +21,23 @@ import {
 // how it was answered) — it only carries the guards that must survive a pause regardless of *why* the
 // turn paused: an unconfirmed failed step must still block "done" after resuming, and an exploratory
 // task must not get a fresh, easier coverage floor just because it stopped to ask, approve, or sign in.
+// `resolution` is the sanitized human answer on the same pause, not a second protocol: answer text,
+// an approved action+scope, or a credential outcome without values.
+export type ResumeResolution =
+  | { kind: "answer"; text: string }
+  | { kind: "approved"; action: string; scope: string }
+  | { kind: "signed_in" }
+  | { kind: "credential_declined" };
+
+export type PendingFailure = {
+  step: number;
+  action: string;
+  note: string;
+  elementKey?: string;
+  op?: string;
+  intended?: string; // type/select only: the text or option the failed action meant to apply
+};
+
 export type PausedRun = {
   goal: string; // the original task, not the reply that resumes it
   history: string[];
@@ -28,12 +45,13 @@ export type PausedRun = {
   realActions?: number;
   pagesSeen?: string[];
   coverageRefusals?: number;
-  pendingFailure?: { step: number; action: string; note: string; elementKey?: string; op?: string };
+  pendingFailure?: PendingFailure;
+  resolution?: ResumeResolution;
 };
 
 export type RunInput = {
   url?: string; // omit to continue on the page the browser is already on
-  goal: string; // a new task, or — with `resume` — the reply that answered the request that paused it
+  goal: string; // the task; on resume the original task is `resume.goal` and this may repeat it
   resume?: PausedRun; // continue a run that paused on a request rather than starting a fresh one
   values?: string[]; // texts the user says may need typing
   maxSteps?: number;
@@ -204,6 +222,39 @@ function quotedStrings(goal: string): string[] {
   return out;
 }
 
+// Same normalisation snapshot.js uses on control values, so a later read can be compared exactly.
+function snapshotClean(s: string): string {
+  return (s || "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+function resolutionHistoryLine(step: number, resolution: ResumeResolution | undefined): string {
+  if (!resolution) return `step ${step}: paused → resumed`;
+  switch (resolution.kind) {
+    case "answer":
+      return `step ${step}: paused → user answered: ${JSON.stringify(resolution.text)}`;
+    case "approved":
+      return `step ${step}: paused → approved ${resolution.action} (${resolution.scope})`;
+    case "signed_in":
+      return `step ${step}: paused → signed in`;
+    case "credential_declined":
+      return `step ${step}: paused → credential declined`;
+    default: {
+      const _never: never = resolution;
+      void _never;
+      return `step ${step}: paused → resumed`;
+    }
+  }
+}
+
+// A type/select that threw is still confirmed if a later snapshot shows that same control holding
+// the intended value. Clicks stay conservative: a later page change is not proof the click landed.
+function evidenceClearsFailure(failure: PendingFailure, elements: { role: string; name: string; value?: string }[]): boolean {
+  if (failure.op !== "TYPE_TEXT" && failure.op !== "TYPE_AND_ENTER" && failure.op !== "SELECT") return false;
+  if (failure.elementKey === undefined || failure.intended === undefined) return false;
+  const match = elements.find((e) => elementKey(e) === failure.elementKey);
+  return match !== undefined && snapshotClean(match.value ?? "") === snapshotClean(failure.intended);
+}
+
 // A final "done" answer that names something the run never actually saw (a PR/run/file number, a quoted
 // title) is a prediction dressed as a fact, not proof. Pull out the answer's specific claims and check each
 // one shows up somewhere in what the run actually did or read; anything that doesn't is unsupported.
@@ -222,18 +273,18 @@ function unsupportedClaims(answer: string, corpus: string): string[] {
 export async function runTask(page: Page, input: RunInput, emit: (e: Event) => void, signal: AbortSignal) {
   const maxSteps = Math.min(Math.max(input.maxSteps ?? 60, 1), 60);
   const useSupervisor = input.supervisor !== false;
-  // On a resume the task stays the one the run was started with; input.goal is only the reply that
-  // answered the request which paused it.
+  // On a resume the task stays the one the run was started with; the human answer lives on
+  // `resume.resolution`, never as a replacement goal.
   const goal = input.resume?.goal ?? input.goal;
   const history: string[] = [...(input.resume?.history ?? [])];
   const typedSoFar: string[] = [];
-  const baseCandidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(goal), ...(input.resume ? quotedStrings(input.goal) : [])].map((s) => s.trim()).filter(Boolean)));
+  const answerText = input.resume?.resolution?.kind === "answer" ? input.resume.resolution.text : "";
+  const baseCandidates = Array.from(new Set([...(input.values ?? []), ...quotedStrings(goal), ...quotedStrings(answerText)].map((s) => s.trim()).filter(Boolean)));
   let totalCost = 0;
   let step = input.resume?.step ?? 0;
-  if (input.resume) history.push(`step ${step}: paused → resumed`);
+  if (input.resume) history.push(resolutionHistoryLine(step, input.resume.resolution));
   const actionCounts = new Map<string, number>();
   let consecutiveWaits = 0;
-  // `goal` is the task even on a resume, where input.goal is only the reply that answered the request.
   const exploratory = isExploratoryTask(goal);
   const pagesSeen = new Set<string>(input.resume?.pagesSeen ?? []);
   let realActions = input.resume?.realActions ?? 0;
@@ -246,7 +297,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
   // An action that threw (covered control, detached node, timeout) did not happen. Until something
   // confirms the change it was meant to make, no "done" may be reported from history text alone.
   // Carried over on resume: a pause must not make an unconfirmed failure disappear.
-  let pendingFailure: { step: number; action: string; note: string; elementKey?: string; op?: string } | undefined = input.resume?.pendingFailure;
+  let pendingFailure: PendingFailure | undefined = input.resume?.pendingFailure;
   let failureRecheckAsked = false;
 
   // Everything this turn is waiting on. One card is shown, but each entry is answered or declined.
@@ -344,6 +395,10 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       lastUrl = snap.url;
       lastText = snap.text;
       pagesSeen.add(snap.fingerprint);
+      if (pendingFailure && evidenceClearsFailure(pendingFailure, snap.elements)) {
+        pendingFailure = undefined;
+        failureRecheckAsked = false;
+      }
       if (!tooShallow()) coverageWarning = undefined;
 
       const scrollPos =
@@ -417,8 +472,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
             continue;
           }
           if (p.answer) {
-            // `goal` is the task even on a resume, where input.goal is only the reply; both count as read.
-            const corpus = [goal, input.goal, ...(input.previousTasks ?? []), ...history, snap.text, snap.title].join("\n");
+            const corpus = [goal, input.goal, answerText, ...(input.previousTasks ?? []), ...history, snap.text, snap.title].join("\n");
             const bad = unsupportedClaims(p.answer, corpus);
             if (bad.length)
               return end(
@@ -575,6 +629,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       // Element ids are handed out per snapshot, so the same number can be a different control one step
       // later. What the failure is tracked by is the control's own identity: its role and name.
       let actionElementKey: string | undefined;
+      let intendedValue: string | undefined;
       let actionFailed = false;
 
       // ---- 3. execute
@@ -648,6 +703,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               note = "text written by text model";
             }
             typedSoFar.push(text);
+            intendedValue = text;
             const target = e ? b.describe(e) : `[${id}]`;
             action = `${chosen} ${JSON.stringify(text)} into ${target}`;
             log = logEntry(`Typing ${JSON.stringify(text)} into ${target}`, `Typed ${JSON.stringify(text)} into ${target}`);
@@ -673,6 +729,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
               idx = Number((option.answers.select_option as ChoiceAnswer)?.choice.match(/^opt_(\d+)$/)?.[1]);
             }
             if (!e || !Number.isInteger(idx) || idx < 0 || idx >= e.options!.length) throw new Error("No matching dropdown option selected");
+            intendedValue = e.options[idx];
             const target = e ? b.describe(e) : `[${id}]`;
             action = `SELECT "${e?.options?.[idx]}" in ${target}`;
             log = logEntry(`Selecting "${e?.options?.[idx]}" in ${target}`, `Selected "${e?.options?.[idx]}" in ${target}`);
@@ -724,7 +781,7 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
         }
       }
       if (actionFailed) {
-        pendingFailure = { step, action, note: note!, elementKey: actionElementKey, op: chosen };
+        pendingFailure = { step, action, note: note!, elementKey: actionElementKey, op: chosen, intended: intendedValue };
         failureRecheckAsked = false;
       } else if (pendingFailure && actionElementKey !== undefined && actionElementKey === pendingFailure.elementKey && chosen === pendingFailure.op) {
         // The same operation on the same control worked this time: the earlier failure is settled. Matching
@@ -759,8 +816,11 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
       });
 
       if (chosen === "DONE") {
-        // Send the run back to work before refusing it outright: a shallow "test the app" run can still
-        // earn its coverage, while an unconfirmed failed step has nothing left to prove.
+        // Same order as the planner's `done`: an unconfirmed failed step before the coverage floor.
+        // Jev has no re-check pass (the planner's path is the one that re-reads); a still-pending
+        // failure ends the run here.
+        if (pendingFailure)
+          return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
         const shallow = tooShallow();
         if (shallow) {
           coverageWarning = shallow;
@@ -768,8 +828,6 @@ export async function runTask(page: Page, input: RunInput, emit: (e: Event) => v
           history[history.length - 1] += " (not accepted: the app has barely been tested yet)";
           continue;
         }
-        if (pendingFailure)
-          return end("blocked", `i could not confirm this worked: step ${pendingFailure.step} failed (${pendingFailure.note}) and nothing on the page since then showed that change applied.`);
         return end("done", `done, now on "${(await page.title().catch(() => "")) || page.url()}"`);
       }
       // A changed page proves an action had an effect, not that the entire task succeeded.

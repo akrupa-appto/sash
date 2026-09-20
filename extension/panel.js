@@ -22,6 +22,8 @@ let voice = { enabled: false, mode: undefined, capability: { canTranscribe: fals
 let dictationSessionActive = false; // between a successful dictation:start and its matching stop
 let micBusy = false; // dictation:stop is in flight: recording has ended, the final transcription hasn't
 let micFilledComposer = false; // #goal's text was last written by dictation, not typed — see render()
+let voiceMayWriteComposer = false; // dictation currently owns the composer; cleared on user input
+let dictationListening = false; // last render saw dictation.status === 'listening'
 const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
 const request = async message => {
@@ -71,6 +73,7 @@ async function startDictation() {
   try {
     const reply = await request({ type: 'dictation:start', chunkMs: chunkMsFor(voice.mode) });
     if (!reply.ok) { dictationSessionActive = false; showError(new Error(reply.error || 'could not start the mic')); }
+    else voiceMayWriteComposer = true;
   } catch (err) { dictationSessionActive = false; showError(err); }
   renderMic();
 }
@@ -396,10 +399,13 @@ function render(state) {
   // the same way, independently, since it can't see this panel's local ptt state).
   if (running) ptt.endLatch();
   // Dictation reaching the composer: "dictate" only fills it once speech ends, so the user can still
-  // edit before pressing send; "prewarm"/"eager" stream the interim transcript live. Never touches
-  // the textarea once a run is under way (running clears anything voice last wrote there) or after
-  // the user has started typing their own message over it (see the #goal 'input' listener below).
-  if (voice.enabled && state.dictation && !running) {
+  // edit before pressing send; "prewarm"/"eager" stream the interim transcript live. Ownership is
+  // `voiceMayWriteComposer` (set when a listening session starts, cleared on a keystroke); provenance
+  // of the current text is `micFilledComposer` and is not the same flag.
+  const nowListening = !!(voice.enabled && state.dictation && state.dictation.status === 'listening');
+  if (nowListening && !dictationListening) voiceMayWriteComposer = true;
+  dictationListening = nowListening;
+  if (voice.enabled && state.dictation && !running && voiceMayWriteComposer) {
     const goal = $('#goal');
     if (voice.mode !== 'dictate' && state.dictation.status === 'listening' && typeof state.dictation.partialText === 'string') {
       goal.value = state.dictation.partialText; micFilledComposer = true; updateMultiline(); controls();
@@ -595,7 +601,11 @@ $('#task-form').addEventListener('submit', async event => {
   } catch (err) { showError(err); }
   finally { submitting = false; controls(); }
 });
-$('#goal').addEventListener('input', () => { updateMention(); updateMultiline(); controls(); });
+$('#goal').addEventListener('input', () => {
+  voiceMayWriteComposer = false;
+  micFilledComposer = false;
+  updateMention(); updateMultiline(); controls();
+});
 $('#goal').addEventListener('click', updateMention);
 $('#goal').addEventListener('keydown', event => {
   if (mention) {

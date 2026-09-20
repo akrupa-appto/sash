@@ -187,3 +187,12 @@ Not fixed. Adam explicitly said not to fix it now — capture it for later. Whoe
 - The pill-to-rounded-rect composer-field radius morph (a deliberate ChatGPT-style decision from an earlier session, `todo.md`) was removed to match the comp's `.composer-field` exactly, which is a fixed rounded rect in every state it renders. If a future session wants that morph back, it is a new decision against the approved comp, not a revert.
 - Mic button (voice-stage-2, parallel branch): goes beside "+" in `.composer-left` as a second `.icon-btn`. Do not restructure the composer to add it; the row is already built for a second icon button there.
 - Tests: 178, up from 177 on `adam/panel-surfaces`. `npm test` runs `node scripts/build-extension.mjs` first (via `pretest`); `panel.test.mjs` serves the built `dist/checkto-extension` over a local HTTP server, never `file://`.
+
+## Resume integrity, done-tab marking, voice ownership, type/select evidence (2026-09-20)
+
+Landed on current main. Do not undo these without a new lab:
+
+- Resume resolution is a field on the existing pause (`PausedRun.resolution` / `RunInput.resume`), not a parallel protocol. History on resume is `paused → user answered: "…"` / `paused → approved <action> (<scope>)` / `paused → signed in` / `paused → credential declined`. Original task stays `task: goal`. Credential values never enter history, previousTasks, or planner/jev context.
+- A done run marks every still-attached `openedByUs` tab deliverable (the run's attached `pages`, not only `state.tabId`) before `endRun`. User-owned tabs stay released, not closed. The agent does not emit `mark`; `renameGroup` is deleted as unused. `Disposition.DELIVERABLE`, `markTab`, and handoff marking on blocked/needs_input stay.
+- Composer ownership is `voiceMayWriteComposer` (set when a listening session starts, cleared on user input). `micFilledComposer` is only provenance of who last wrote the text. Partials and finals must not overwrite after the user types.
+- After a type/select failure, a later snapshot of that same control (`role\0name`) whose `value` equals the intended text/option after snapshot `clean()` (exact equality) clears `pendingFailure`. Clicks stay conservative: page-changed is not proof. Planner `done` and jev `DONE` both check pendingFailure before tooShallow/coverage; the planner path keeps its one re-check (read, do not tell it to re-click).
