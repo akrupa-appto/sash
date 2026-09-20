@@ -26,4 +26,18 @@
 <div class="field"><span class="label">how eager it acts</span><div id="voice-modes" class="voice-modes" role="radiogroup" aria-label="how eager checkto acts on your voice"></div><input type="hidden" id="voiceMode" name="voiceMode"><small id="voice-capability" class="muted"></small></div>
 </section>
 <div class="save-row"><div class="row"><button type="submit">save settings</button><button id="clear-keys" class="secondary" type="button">remove saved keys</button></div><div id="status" class="status" role="status" aria-live="polite"></div></div>
-</form></main><script type="module" src="options.js"></script></body></html>
+</form>
+<section id="access-settings" aria-labelledby="access-heading">
+<h2 id="access-heading">approvals and site access</h2>
+<p class="muted">changes here take effect immediately, without saving settings. revoking access does not undo actions already taken.</p>
+<h3>saved approvals</h3>
+<p class="muted">actions allowed for this conversation or always. revoking asks you again next time; it does not cancel an action already approved.</p>
+<div id="approval-list"></div>
+<h3>site access</h3>
+<p class="muted">sites you allowed Chrome to share with checkto. removing access stops the current task first. removing a custom provider's site also disconnects that provider until you allow it again.</p>
+<div id="site-access-list"></div>
+<p class="muted">built-in model provider connections are required by this extension and are not listed here. removing site access does not remove a saved approval, or vice versa.</p>
+<button type="button" class="secondary" id="refresh-access">refresh access</button>
+<div id="access-status" class="status" role="status" aria-live="polite"></div>
+</section>
+</main><script type="module" src="options.js"></script></body></html>
