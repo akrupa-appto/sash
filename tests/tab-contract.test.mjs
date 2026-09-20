@@ -74,33 +74,25 @@ const until = async predicate => {
 };
 const spawn = id => { openTab(id); chrome.tabs.onCreated.fire({ ...open.get(id), openerTabId: 9 }); };
 
-test('a run ending keeps marked tabs, closes only the ones it opened and left unmarked', async () => {
+test('a run ending keeps openedByUs popups as deliverable without a mark event, and leaves the user tab alone', async () => {
   openTab(9, { active: true }); // the tab the user handed over
-  script = async ({ emit }) => {
+  script = async () => {
     spawn(21); spawn(22); spawn(23);
     await until(() => [21, 22, 23].every(id => lease.get(id)?.openedByUs === true));
-    emit({ type: 'mark', tabId: 21, disposition: 'deliverable' });
-    emit({ type: 'mark', tabId: 22, disposition: 'handoff' });
-    open.get(22).active = true; // the user was left looking at this one
     return { status: 'done', message: 'finished' };
   };
   assert.equal((await send({ type: 'run', tabId: 9, goal: 'book it', mode: 'fast' })).ok, true);
   await until(() => storage.runState?.running === false);
 
-  // deliverable: open, ungrouped, green, no longer leased.
-  assert.equal(open.has(21), true);
-  assert.deepEqual(calls.filter(c => c[0] === 'ungroup'), [['ungroup', [21]]]);
-  assert.deepEqual(calls.find(c => c[0] === 'badgeColor' && c[1].tabId === 21)[1], { tabId: 21, color: '#22c55e' });
-  assert.equal(lease.get(21), undefined);
-  // handoff: open, yellow, lease still held for the next turn.
-  assert.equal(open.has(22), true);
-  assert.deepEqual(calls.find(c => c[0] === 'badgeColor' && c[1].tabId === 22)[1], { tabId: 22, color: '#facc15' });
-  assert.equal(lease.get(22).disposition, 'handoff');
-  // unmarked and opened by us: favicon restored first, then closed.
-  assert.equal(open.has(23), false);
-  const closing = calls.filter(c => (c[0] === 'favicon' || c[0] === 'remove') && c[1] === 23);
-  assert.deepEqual(closing, [['favicon', 23], ['remove', 23]]);
-  assert.equal(lease.get(23), undefined);
+  // opened by us, still attached, run done: open, ungrouped, green, no longer leased. The agent
+  // emitted no mark; execute marked every still-attached openedByUs tab deliverable.
+  for (const id of [21, 22, 23]) {
+    assert.equal(open.has(id), true, `popup ${id} stays open`);
+    assert.equal(lease.get(id), undefined, `popup ${id} is unleased`);
+    assert.deepEqual(calls.find(c => c[0] === 'badgeColor' && c[1].tabId === id)[1], { tabId: id, color: '#22c55e' });
+  }
+  assert.deepEqual(calls.filter(c => c[0] === 'ungroup').map(c => c[1]), [[21], [22], [23]]);
+  assert.equal(calls.some(c => c[0] === 'remove' && [21, 22, 23].includes(c[1])), false, 'no openedByUs popup is closed');
   // the user's own tab is released, never closed and never grouped.
   assert.equal(open.has(9), true);
   assert.equal(lease.get(9), undefined);
@@ -133,33 +125,44 @@ test('the checkto group is created once and a restarted worker rejoins it', asyn
 });
 
 test('the next turn resumes a surviving handoff tab and drops the one the user closed', async () => {
-  const handedOff = lease.get(22);
+  // A waiting run hands the current tab over; that is what the next turn resumes, not a fake mark.
+  script = async () => {
+    spawn(41);
+    await until(() => lease.get(41)?.openedByUs === true);
+    open.get(41).active = true;
+    return { status: 'needs_input', message: 'approve?', requests: [{ id: 'h', type: 'approval', action: 'submit' }] };
+  };
+  await send({ type: 'run', tabId: 9, goal: 'need a sign-off', mode: 'fast' });
+  await until(() => storage.runState?.running === false);
+  const handedOff = lease.get(41);
   assert.equal(handedOff.disposition, 'handoff');
   const previousTurn = handedOff.turnId;
   // A second handed-off tab, which the user closed before the next turn.
-  lease.claim(24, { sessionId: handedOff.sessionId, turnId: previousTurn, openedByUs: true });
-  lease.mark(24, 'handoff');
+  lease.claim(42, { sessionId: handedOff.sessionId, turnId: previousTurn, openedByUs: true });
+  lease.mark(42, 'handoff');
   open.get(9).active = true;
+
+  await send({ type: 'stop' });
+  await until(() => (storage.runState.requests || []).length === 0);
 
   let probe;
   const mark = calls.length;
-  script = async ({ emit }) => {
-    probe = { resumed: structuredClone(lease.get(22)), dropped: lease.get(24) };
-    emit({ type: 'mark', tabId: 22, disposition: 'handoff' });
+  script = async () => {
+    probe = { resumed: structuredClone(lease.get(41)), dropped: lease.get(42), stillOpen: open.has(41) };
     return { status: 'done', message: 'finished again' };
   };
   const before = turns;
   await send({ type: 'run', tabId: 9, goal: 'carry on', mode: 'fast' });
   await until(() => turns === before + 1 && storage.runState?.running === false);
 
-  assert.equal(probe.resumed.tabId, 22, 'the surviving handoff tab is still leased');
+  assert.equal(probe.resumed.tabId, 41, 'the surviving handoff tab is still leased');
   assert.notEqual(probe.resumed.turnId, previousTurn, 'it is resumed under the new turn id');
   assert.equal(probe.resumed.disposition, undefined, 'and is no longer a tab that was left behind');
-  assert.equal(open.has(22), true, 'it is never reloaded or reopened, so origin and viewport survive');
+  assert.equal(probe.stillOpen, true, 'it is never reloaded or reopened, so origin and viewport survive');
   assert.equal(probe.dropped, undefined, 'the tab the user closed is dropped silently');
   const resumeCalls = calls.slice(mark);
-  assert.equal(resumeCalls.some(c => c[0] === 'update' && c[1] === 22 && c[2].active === true), true, 'the active handoff tab is put back in front');
-  assert.equal(resumeCalls.some(c => c[0] === 'remove' && c[1] === 24), false, 'a tab the user already closed is not chased');
+  assert.equal(resumeCalls.some(c => c[0] === 'update' && c[1] === 41 && c[2].active === true), true, 'the active handoff tab is put back in front');
+  assert.equal(resumeCalls.some(c => c[0] === 'remove' && c[1] === 42), false, 'a tab the user already closed is not chased');
   assert.equal(storage.runState.messages.at(-1).text, 'finished again');
 });
 
