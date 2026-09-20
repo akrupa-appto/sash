@@ -60,6 +60,7 @@ globalThis.chrome = {
   },
   tabs: {
     get: async id => ({ id, url: 'https://example.test', title: 'Fixture' }),
+    update: async (id, props) => ({ id, ...props }),
     create: async opts => { tabsCreated.push(opts); return { id: 999, ...opts }; },
     // Window 7's active tab is 12. The keyboard shortcut asks for the current window instead of
     // naming one, and gets the same tab back, so it has a windowId to open the panel on.
@@ -211,6 +212,35 @@ test('a failed popup attachment produces one terminal error message', async () =
   assert.equal(replies.length, 1);
   assert.equal(replies[0].text, 'popup attach refused');
   assert.equal(data.runState.status, 'error');
+});
+
+// The same failure, arriving one await later: the run reports "done" while a popup attach is still in
+// flight, and that attach then fails. The run it belongs to is an error, so the tabs it opened must not
+// be left as green results -- the contract marks them deliverable (kept open, green dot) off the
+// un-normalized outcome, and only converted the popup error after those marks had been made.
+test('an attach that fails after the run reported done is a failed run, not a green result', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  await send({ type: 'run', tabId: 12, goal: 'open a popup', mode: 'fast' });
+  await until(() => taskStarted === before + 1);
+  // One popup the run opens attaches for real: that tab is what the bug would leave behind.
+  chrome.tabs.onCreated.fire({ id: 96, openerTabId: 12, url: 'https://example.test/first' });
+  await until(() => pages.some(p => p.tabId === 96 && p.attached));
+  let failAttach;
+  attachGate = new Promise((_resolve, reject) => { failAttach = reject; });
+  try {
+    // A second popup is held mid-attach while the run finishes.
+    chrome.tabs.onCreated.fire({ id: 97, openerTabId: 12, url: 'https://example.test/second' });
+    finishTask();
+    failAttach(new Error('popup attach refused'));
+    await until(() => data.runState?.running === false);
+    assert.equal(data.runState.status, 'error');
+    assert.equal(data.runState.messages.at(-1).text, 'popup attach refused');
+    assert.notEqual((await send({ type: 'getBadge', tabId: 96 })).badge, 'deliverable', 'a tab the failed run opened is not a result');
+    assert.notEqual((await send({ type: 'getBadge', tabId: 12 })).badge, 'deliverable');
+  } finally {
+    attachGate = undefined;
+  }
 });
 
 
@@ -746,6 +776,31 @@ test('voice/prewarm: streams partials without running, then runs once speech end
     assert.equal(taskStarted, before + 1, 'speech ending is what starts the run');
     assert.equal(lastInput.goal, 'summarize this page');
     assert.equal(data.runState.dictation, undefined, 'the run starting tears the mic session down, same as an explicit stop');
+  });
+});
+
+// A dictation run is a new turn, not a resume, so it starts in the mode the user has in settings now.
+// Preferring `state.mode` meant the leftover mode of the last run won: a user who switched back to fast
+// still got a careful run (a planner call, its cost, and an approval card for what fast mode would
+// just do), and vice versa.
+test('voice/prewarm: a dictation run runs in the settings mode, not the mode the last run left behind', async () => {
+  await send({ type: 'clear' });
+  const before = taskStarted;
+  // A careful run first: it leaves state.mode 'careful', which outlives it.
+  nextOutcome = { status: 'done', message: 'finished' };
+  await send({ type: 'run', tabId: 12, goal: 'a careful task', mode: 'careful' });
+  await until(() => data.runState?.status === 'done');
+  assert.equal(data.runState.mode, 'careful');
+
+  await withVoiceSettings({ voiceEnabled: true, voiceMode: 'prewarm', mode: 'fast' }, async () => {
+    offscreenDocs = 0; offscreenStartResult = { ok: true }; offscreenStopResult = { text: 'summarize this page' };
+    nextOutcome = { status: 'done', message: 'summarized' };
+    await send({ type: 'dictation:start' });
+    await send({ type: 'dictation:stop' });
+    await until(() => taskStarted === before + 2);
+    assert.equal(data.runState.mode, 'fast');
+    assert.equal(lastInput.supervisor, false, 'settings say fast, so the new run is fast even though the last run was careful');
+    await until(() => data.runState?.running === false);
   });
 });
 test('voice/eager: a partial with enough words starts the run mid-utterance, and only once', async () => {

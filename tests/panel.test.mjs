@@ -784,3 +784,59 @@ test('a failed panel mic press does not steal the composer from a session the pa
   await page.locator('#mic').dispatchEvent('pointerup');
   await page.close();
 });
+
+// The same flicker, in a session the panel did not start (the global shortcut, or its hands-free
+// latch). That session has no press behind it, so `dictationSessionActive` is false for it: the old
+// listening-transition rule re-claimed the composer on every pass back through 'error', and the next
+// partial landed on top of text the user had typed over the transcript.
+test('a partial after a mid-session error does not overwrite text typed over a session the panel did not start', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  const goal = page.locator('#goal');
+  // No mic press at all: the shortcut's own session, which takes the composer at its first listening
+  // state (asserted here, since that is the ownership the flicker must not give back and re-take).
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk', sessionId: 'session-1' } },
+  }));
+  assert.equal(await goal.inputValue(), 'buy milk');
+  await goal.fill('I typed this myself');
+  // One chunk fails to transcribe; the mic stays on, so the next partial belongs to the same session.
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'error', error: 'that chunk did not transcribe', partialText: 'buy milk', sessionId: 'session-1' } },
+  }));
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 4,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'buy milk now please', sessionId: 'session-1' } },
+  }));
+  assert.equal(await goal.inputValue(), 'I typed this myself');
+  await page.close();
+});
+
+// The guard above must not cost dictation the composer for the rest of the panel's life: a genuinely
+// new session (its own id, see background.js dictation:start) takes it again.
+test('a new dictation session takes the composer again after the previous one ended', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'prewarm', capability: { canTranscribe: true } },
+  });
+  const goal = page.locator('#goal');
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 2,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'first session', sessionId: 'session-1' } },
+  }));
+  assert.equal(await goal.inputValue(), 'first session');
+  await goal.fill('I typed this myself');
+  // That session ends, then the shortcut opens a new one with its own id.
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 3,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'idle', text: 'first session', sessionId: 'session-1' } },
+  }));
+  await page.evaluate(() => window.onState({
+    type: 'state', seq: 4,
+    state: { running: false, status: 'ready', messages: [], steps: [], dictation: { status: 'listening', partialText: 'second session', sessionId: 'session-2' } },
+  }));
+  assert.equal(await goal.inputValue(), 'second session');
+  await page.close();
+});
