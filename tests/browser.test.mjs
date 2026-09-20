@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { runInNewContext } from 'node:vm';
-import { click, settle, snapshot, typeText } from './browser.ts';
+import { click, settle, snapshot, typeText } from '../src/browser.ts';
 
 test('a slow navigation gets enough time without repeating the click', async () => {
   let attempts = 0;

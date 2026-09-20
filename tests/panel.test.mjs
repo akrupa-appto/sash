@@ -4,11 +4,11 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { chromium } from 'playwright';
-import { approvalRequest, credentialRequest } from './extension/requests.js';
+import { approvalRequest, credentialRequest } from '../extension/requests.js';
 
 // The panel is rendered in a real browser: the bug this guards against was DOM order, not logic.
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2' };
-const root = join(import.meta.dirname, 'dist/checkto-extension');
+const root = join(import.meta.dirname, '..', 'dist/checkto-extension');
 const server = createServer(async (req, res) => {
   try {
     const path = join(root, new URL(req.url, 'http://x').pathname);

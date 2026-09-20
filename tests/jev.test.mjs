@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { textModel } from './jev.ts';
+import { textModel } from '../src/jev.ts';
 
 const withEnv = (vars, fn) => {
   const saved = {};

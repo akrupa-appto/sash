@@ -62,7 +62,7 @@ globalThis.chrome = {
   commands: { onCommand: events() },
   contextMenus: { create: (opts, cb) => { menuCreated.push(opts); cb?.(); }, removeAll: cb => cb(), onClicked: events() },
 };
-mock.module('./extension/browser.js', { namedExports: {
+mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; pages.push(this); }
@@ -70,7 +70,7 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
+mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   taskStarted++;
   activeSignal = signal;
   lastInput = input;
@@ -88,7 +88,7 @@ mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, 
     ...(!signal.aborted && pendingRequest ? { requests: [pendingRequest], request: pendingRequest } : {}),
   });
 } } });
-await import('./extension/background.js');
+await import('../extension/background.js');
 const send = message => new Promise(resolve => chrome.runtime.onMessage.fire(message, { id: chrome.runtime.id, url: chrome.runtime.getURL('panel.html') }, resolve));
 const until = async predicate => {
   for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); }

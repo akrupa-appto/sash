@@ -7,7 +7,7 @@ import { chromium } from 'playwright';
 
 // The content script is all DOM: a canvas favicon swap and a closed shadow root. It is run in a
 // real browser against a real page, the same way panel.test.mjs runs the panel.
-const bundle = await readFile(join(import.meta.dirname, 'dist/checkto-extension/content.js'), 'utf8');
+const bundle = await readFile(join(import.meta.dirname, '..', 'dist/checkto-extension/content.js'), 'utf8');
 // A flat green icon, served same-origin so the canvas can read the composite back.
 const icon = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#00ff00"/></svg>';
 const fixture = `<!doctype html><title>Fixture</title><link rel="icon" href="/icon.svg">`;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { claim, release, get } from './extension/lease.js';
+import { claim, release, get } from '../extension/lease.js';
 
 test('claim records the lease shape for a free tab', () => {
   const lease = claim(1, { sessionId: 'session-a', turnId: 'turn-1', instanceId: 'instance-1', openedByUs: true });

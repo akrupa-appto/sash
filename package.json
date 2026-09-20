@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --experimental-test-module-mocks --test *.test.mjs tests/*.test.ts",
-    "start": "node --env-file-if-exists=.env server.ts",
+    "test": "node --experimental-test-module-mocks --test tests/*.test.mjs tests/*.test.ts",
+    "start": "node --env-file-if-exists=.env src/server.ts",
     "build:extension": "node scripts/build-extension.mjs",
     "package:extension": "node scripts/package-extension.mjs",
     "pretest": "npm run build:extension",

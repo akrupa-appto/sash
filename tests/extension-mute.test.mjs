@@ -46,7 +46,7 @@ globalThis.chrome = {
   permissions: { contains: async () => true, request: async () => true },
   debugger: { onDetach: events() }, sidePanel: { setPanelBehavior: async () => {} },
 };
-mock.module('./extension/browser.js', { namedExports: {
+mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
   ChromePage: class {
     constructor(tab, signal) { this.tabId = tab.id; this.signal = signal; }
@@ -54,7 +54,7 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
+mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   capturedSelect = input.browserTabs.select;
   await new Promise(resolve => {
     finishTask = resolve;
@@ -62,7 +62,7 @@ mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, 
   });
   emit({ type: 'end', status: signal.aborted ? 'stopped' : 'done', message: 'done', totalCostUsd: 0 });
 } } });
-await import('./extension/background.js');
+await import('../extension/background.js');
 const send = message => new Promise(resolve => chrome.runtime.onMessage.fire(message, { id: chrome.runtime.id, url: chrome.runtime.getURL('panel.html') }, resolve));
 const until = async predicate => {
   for (let i = 0; i < 200; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); }

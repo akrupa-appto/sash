@@ -11,7 +11,7 @@ mock.module('playwright', { namedExports: { chromium: {
   },
   launch: async () => { throw new Error('must not launch local Chromium'); },
 } } });
-const { launch } = await import('./browser.ts');
+const { launch } = await import('../src/browser.ts');
 
 for (const failure of [false, true]) test(failure ? 'connection failure releases the Anchor session and redacts credentials' : 'Anchor session uses the existing context and closes once', async () => {
   const oldKey = process.env.ANCHOR_API_KEY;

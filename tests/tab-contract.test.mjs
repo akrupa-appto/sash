@@ -1,8 +1,8 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import * as lease from './extension/lease.js';
-import { setFaviconRestorer } from './extension/tabs.js';
+import * as lease from '../extension/lease.js';
+import { setFaviconRestorer } from '../extension/tabs.js';
 
 const events = () => {
   const listeners = new Set();
@@ -50,7 +50,7 @@ globalThis.chrome = {
   debugger: { onDetach: events() },
   sidePanel: { setPanelBehavior: async () => {} },
 };
-mock.module('./extension/browser.js', { namedExports: {
+mock.module('../extension/browser.js', { namedExports: {
   supportedUrl: url => /^https?:/.test(url),
   ChromePage: class {
     constructor(tab, signal, pages) { this.tabId = tab.id; this.signal = signal; this.pages = pages; }
@@ -58,12 +58,12 @@ mock.module('./extension/browser.js', { namedExports: {
     async detach() { this.attached = false; }
   },
 } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, _input, emit, signal) => {
+mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, _input, emit, signal) => {
   turns++;
   const end = await script({ emit, signal });
   emit({ type: 'end', totalCostUsd: 0, ...end });
 } } });
-await import('./extension/background.js');
+await import('../extension/background.js');
 setFaviconRestorer(async tabId => { calls.push(['favicon', tabId]); });
 
 const send = message => new Promise(resolve => chrome.runtime.onMessage.fire(message, { id: chrome.runtime.id, url: chrome.runtime.getURL('panel.html') }, resolve));
@@ -122,7 +122,7 @@ test('the checkto group is created once and a restarted worker rejoins it', asyn
   assert.equal(storage.tabGroup.id, groupId);
 
   // A restarted service worker is a fresh module with nothing in memory but the same storage.
-  const restarted = await import('./extension/tabs.js?restart=1');
+  const restarted = await import('../extension/tabs.js?restart=1');
   openTab(31);
   lease.claim(31, { sessionId: 'restarted-session', turnId: 'turn-r', openedByUs: true });
   await restarted.groupTab(31);

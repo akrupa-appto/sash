@@ -4,20 +4,20 @@ import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 
 const recordings = new Map(); let recordingFailure = false; const recordingCalls = [];
-mock.module('./recordings.ts', { namedExports: {
+mock.module('../src/recordings.ts', { namedExports: {
   readRecording: id => recordings.get(id) && {...recordings.get(id)},
   saveRecording: record => recordings.set(record.id, {...record}),
   anchorRecording: async (id, action) => { recordingCalls.push(action); if(recordingFailure) throw new Error('provider unavailable'); return action ? [] : [{file_link:'https://video.example.test/video.mp4', duration:'5'}]; },
 } });
 let closed = 0, lastInput, taskAborted = false;
-mock.module('./browser.ts', { namedExports: { launch: async () => ({
+mock.module('../src/browser.ts', { namedExports: { launch: async () => ({
   browser: { isConnected: () => true }, context: {route: async () => {}},
   page: { url: () => 'about:blank', title: async () => '' },
   anchorId: 'anchor-private-id', liveViewUrl: 'https://live.example.test/session', close: async () => { closed++; },
 }) } });
-mock.module('./jev.ts', { namedExports: { jevVia: () => 'fixture' } });
-mock.module('./planner.ts', { namedExports: { plannerModel: () => 'default/model' } });
-mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
+mock.module('../src/jev.ts', { namedExports: { jevVia: () => 'fixture' } });
+mock.module('../src/planner.ts', { namedExports: { plannerModel: () => 'default/model' } });
+mock.module('../src/agent.ts', { namedExports: { runTask: async (_page, input, emit, signal) => {
   lastInput = input;
   if (input.goal.includes('wait')) {
     await new Promise(resolve => signal.addEventListener('abort', () => { taskAborted = true; resolve(); }, {once:true}));
@@ -26,7 +26,7 @@ mock.module('./agent.ts', { namedExports: { runTask: async (_page, input, emit, 
 const oldPort = process.env.PORT;
 process.env.PORT = '0';
 process.env.OPENROUTER_API_KEY ??= 'test-key'; // careful-mode tasks need a connected planner provider
-const { server } = await import('./server.ts');
+const { server } = await import('../src/server.ts');
 if (!server.listening) await once(server, 'listening');
 if (oldPort === undefined) delete process.env.PORT; else process.env.PORT = oldPort;
 const base = `http://127.0.0.1:${server.address().port}`;

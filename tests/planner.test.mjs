@@ -1,7 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { plan } from './planner.ts';
+import { plan } from '../src/planner.ts';
 
 const ctx = {
   task: 'read the heading', earlierTasks: [], history: [], step: 1, maxSteps: 20,
@@ -103,7 +103,7 @@ test('prefill retry preserves an explicitly selected custom model', async () => 
   }
 });
 test('system prompt allows a multi-line answer for compare/summarize tasks', () => {
-  const source = readFileSync(new URL('./planner.ts', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/planner.ts', import.meta.url), 'utf8');
   assert.match(source, /one short line per item, newline-separated/);
   assert.match(source, /one sentence for a plain confirmation/);
 });

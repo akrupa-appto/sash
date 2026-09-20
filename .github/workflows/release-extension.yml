@@ -7,10 +7,10 @@ on:
     branches: [main]
     paths:
       - extension/**
-      - agent.ts
-      - planner.ts
-      - providers.ts
-      - jev.ts
+      - src/agent.ts
+      - src/planner.ts
+      - src/providers.ts
+      - src/jev.ts
       - public/model-picker.js
       - scripts/build-extension.mjs
       - scripts/package-extension.mjs
