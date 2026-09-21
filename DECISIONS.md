@@ -10,6 +10,7 @@
 - README is for people installing the extension, not for the lab server. Maintainer-only paths stay in AGENTS.md / this file / extension/README.md.
 - `docs/images/` is captured by `node scripts/capture-readme.mjs`: a real loaded extension in Playwright Chromium, against `docs/fixtures/demo.html`. Provider HTTP is mocked (same contract as `scripts/verify-extension-installed.mjs`); Chrome debugger actions and the panel are real. Do not treat those stills as a live OpenRouter run.
 - Recapture after panel/settings visual changes. Keep the set small: intro, working composite, done composite, settings, one short panel video.
+- Capture at `deviceScaleFactor: 1` and write display-sized PNGs (panel 400×720, composites 1280×720, settings cropped to 640×640). GitHub shows README images at intrinsic pixels (capped only by `max-width: 100%`), so a 2× 800×1440 panel shot fills the page and the blob view. README uses HTML `<img width>` / `<video width>` rather than markdown `![]()`. Do not restore 2× captures to “look sharp on retina”; blob view and unconstrained markdown ignore CSS.
 
 ## Core reliability verification (2026-09-20)
 
