@@ -4,23 +4,30 @@ A Chrome side panel that does the clicking for you.
 
 Type what you want in plain language. Sash reads the tab you already have open, clicks and types through it, and answers from what it actually saw. Your keys stay in this Chrome profile. There is no Sash backend on that path — page text and instructions go straight to the model provider you configured.
 
-![Sash filling a checkout form](docs/images/together-done.png)
+<p align="center">
+  <img src="docs/images/together-done.png" width="640" alt="Sash filling a checkout form">
+</p>
 
-<video src="docs/images/panel-run.mp4" width="400" controls poster="docs/images/panel-done.png"></video>
+<p align="center">
+  <video src="docs/images/panel-run.mp4" width="280" controls poster="docs/images/panel-done.png"></video>
+</p>
 
 ## How it looks
 
-Open the panel on any site. Say the job like you would to a person.
+Open the panel on any site. Say the job like you would to a person. Empty on the left, finished run on the right.
 
-![Empty Sash panel with example tasks](docs/images/panel-intro.png)
+<p align="center">
+  <img src="docs/images/panel-intro.png" width="240" alt="Empty Sash panel with example tasks">
+  <img src="docs/images/panel-done.png" width="240" alt="Finished Sash run with expanded steps">
+</p>
 
 While it works you get a live ticker, a tick per step, and a stop button. You can watch the page change at the same time.
 
-![Sash typing into a live checkout form](docs/images/together-working.png)
+<p align="center">
+  <img src="docs/images/together-working.png" width="640" alt="Sash typing into a live checkout form">
+</p>
 
 When it is done, the answer sits under the steps it took — here, it typed Ada, picked the Team plan, and saved.
-
-![Finished Sash run with expanded steps](docs/images/panel-done.png)
 
 ## Things people actually type
 
@@ -47,7 +54,9 @@ Chrome shows its debugger banner while a task is running. **Stop**, closing the 
 
 ## Your keys, your tabs
 
-![Sash settings: keys stay on this device](docs/images/settings-connections.png)
+<p align="center">
+  <img src="docs/images/settings-connections.png" width="400" alt="Sash settings: keys stay on this device">
+</p>
 
 - Keys live in `chrome.storage.local` on this profile. They are not synced. They are never sent to a Sash server.
 - During a task, instructions, tab titles and URLs, and visible page text go to the provider you picked.

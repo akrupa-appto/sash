@@ -2,7 +2,7 @@
 // Provider replies are mocked; Chrome APIs, the panel, and the page are real.
 import { chromium } from 'playwright';
 import http from 'node:http';
-import { cp, readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { cp, readFile, writeFile, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,23 @@ import './build-extension.mjs';
 const builtExtension = path.resolve('dist/sash-extension');
 const out = path.resolve('docs/images');
 await mkdir(out, { recursive: true });
+
+// GitHub renders README images at intrinsic pixel size (max-width 100%).
+// Capture at 1× CSS pixels and write these display sizes so blob view and
+// the README stay the same scale. Do not bump deviceScaleFactor back to 2.
+const PANEL = { width: 400, height: 720 };
+const PAGE = { width: 880, height: 720 };
+const SETTINGS = { width: 640, height: 640 };
+const TOGETHER = { width: PAGE.width + PANEL.width, height: PAGE.height };
+
+async function fitPng(file, width, height, crop) {
+  const tmp = `${file}.fit.png`;
+  const vf = crop
+    ? `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y},scale=${width}:${height}:flags=lanczos`
+    : `scale=${width}:${height}:flags=lanczos`;
+  execFileSync('ffmpeg', ['-y', '-i', file, '-frames:v', '1', '-update', '1', '-vf', vf, tmp], { stdio: 'pipe' });
+  await rename(tmp, file);
+}
 
 const demo = await readFile(new URL('../docs/fixtures/demo.html', import.meta.url));
 const server = http.createServer((_req, res) => {
@@ -33,16 +50,16 @@ await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 const context = await chromium.launchPersistentContext('', {
   channel: 'chromium',
   headless: true,
-  viewport: { width: 400, height: 720 },
-  deviceScaleFactor: 2,
-  recordVideo: { dir: videoDir, size: { width: 400, height: 720 } },
+  viewport: PANEL,
+  deviceScaleFactor: 1,
+  recordVideo: { dir: videoDir, size: PANEL },
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
 });
 
 async function stack(left, right, dest) {
   execFileSync('ffmpeg', [
     '-y', '-i', left, '-i', right,
-    '-filter_complex', '[0]scale=880:720[a];[1]scale=400:720[b];[a][b]hstack=inputs=2,format=yuv420p',
+    '-filter_complex', `[0]scale=${PAGE.width}:${PAGE.height}[a];[1]scale=${PANEL.width}:${PANEL.height}[b];[a][b]hstack=inputs=2,format=yuv420p`,
     dest,
   ], { stdio: 'pipe' });
 }
@@ -52,19 +69,21 @@ try {
   const extensionId = new URL(worker.url()).host;
 
   const settings = await context.newPage();
-  await settings.setViewportSize({ width: 880, height: 1100 });
+  await settings.setViewportSize({ width: PAGE.width, height: 1100 });
   await settings.goto(`chrome-extension://${extensionId}/settings.html`);
   await settings.waitForLoadState();
   await settings.locator('#openrouterKey').fill('qa-fake-key');
   await settings.getByRole('button', { name: 'save settings', exact: true }).click();
   await settings.waitForFunction(() => document.querySelector('#status').textContent.includes('saved on this device'));
   await settings.evaluate(() => window.scrollTo(0, 0));
-  await settings.screenshot({ path: path.join(out, 'settings-connections.png') });
+  const settingsPng = path.join(out, 'settings-connections.png');
+  await settings.screenshot({ path: settingsPng });
+  await fitPng(settingsPng, SETTINGS.width, SETTINGS.height, { x: 0, y: 0, width: PAGE.width, height: PAGE.width });
   await settings.locator('#access-settings').scrollIntoViewIfNeeded();
   await settings.screenshot({ path: path.join(out, 'settings-access.png') });
 
   const shop = await context.newPage();
-  await shop.setViewportSize({ width: 880, height: 720 });
+  await shop.setViewportSize(PAGE);
   await shop.goto(origin);
   await shop.screenshot({ path: path.join(out, 'demo-page.png') });
 
@@ -100,7 +119,7 @@ try {
   });
 
   const panel = await context.newPage();
-  await panel.setViewportSize({ width: 400, height: 720 });
+  await panel.setViewportSize(PANEL);
   await panel.goto(`chrome-extension://${extensionId}/panel.html`);
   await panel.waitForSelector('#goal');
   await panel.screenshot({ path: path.join(out, 'panel-intro.png') });
@@ -138,7 +157,7 @@ await stack(path.join(out, 'demo-done.png'), path.join(out, 'panel-done.png'), p
 if (!panelWebm) throw new Error('no panel video recorded');
 execFileSync('ffmpeg', [
   '-y', '-i', panelWebm,
-  '-vf', 'scale=400:720,format=yuv420p',
+  '-vf', `scale=${PANEL.width}:${PANEL.height},format=yuv420p`,
   '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
   '-an', path.join(out, 'panel-run.mp4'),
 ], { stdio: 'pipe' });
@@ -146,4 +165,8 @@ await rm(videoDir, { recursive: true, force: true });
 for (const extra of ['demo-page.png', 'demo-working.png', 'demo-done.png', 'panel-ready.png', 'panel-working.png', 'settings-access.png']) {
   await rm(path.join(out, extra), { force: true });
 }
+await fitPng(path.join(out, 'panel-intro.png'), PANEL.width, PANEL.height);
+await fitPng(path.join(out, 'panel-done.png'), PANEL.width, PANEL.height);
+await fitPng(path.join(out, 'together-working.png'), TOGETHER.width, TOGETHER.height);
+await fitPng(path.join(out, 'together-done.png'), TOGETHER.width, TOGETHER.height);
 console.log(`wrote screenshots and panel-run.mp4 to ${out}`);
