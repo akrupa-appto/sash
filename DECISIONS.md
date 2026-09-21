@@ -3,7 +3,13 @@
 ## Product name (2026-09-21)
 
 - The product is **sash**. User-facing copy, the Chrome extension, `package.json`, the dist zip (`sash-extension.zip`), the agent tab group, the context menu, localStorage keys, data-* attributes, and the isolated world name all use sash.
-- The GitHub repository stays `akrupa-appto/checkto` until it is renamed on GitHub. The live systemd unit stays `checkto.service` and the live checkout stays `/home/exedev/checkto` until Adam renames them on the host. Those paths are ops facts, not the brand.
+- The GitHub repository is `akrupa-appto/sash` (renamed from `akrupa-appto/checkto` on 2026-09-21). The live systemd unit stays `checkto.service` and the live checkout stays `/home/exedev/checkto` until Adam renames them on the host. Those paths are ops facts, not the brand.
+
+## Public README screenshots (2026-09-21)
+
+- README is for people installing the extension, not for the lab server. Maintainer-only paths stay in AGENTS.md / this file / extension/README.md.
+- `docs/images/` is captured by `node scripts/capture-readme.mjs`: a real loaded extension in Playwright Chromium, against `docs/fixtures/demo.html`. Provider HTTP is mocked (same contract as `scripts/verify-extension-installed.mjs`); Chrome debugger actions and the panel are real. Do not treat those stills as a live OpenRouter run.
+- Recapture after panel/settings visual changes. Keep the set small: intro, working composite, done composite, settings, one short panel video.
 
 ## Core reliability verification (2026-09-20)
 
