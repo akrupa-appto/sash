@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent Cloud Agent bootstrap for checkto.
+# Idempotent Cloud Agent bootstrap for sash.
 # Runs after the repo is checked out. Safe to run repeatedly.
 set -euo pipefail
 
@@ -18,14 +18,14 @@ export PATH="$NODE24_BIN:$PATH"
 # Make Node 24 the default `node` in the agent's interactive shells too. The
 # base image pins an infra `node` (v22) early on PATH; prepending nvm's Node 24
 # bin from ~/.bashrc beats it for login and interactive shells.
-MARKER="# checkto-node24"
+MARKER="# sash-node24"
 if ! grep -q "$MARKER" "$HOME/.bashrc" 2>/dev/null; then
   cat >> "$HOME/.bashrc" <<'EOF'
 
-# checkto-node24: use Node 24 for direct .ts execution (type stripping)
+# sash-node24: use Node 24 for direct .ts execution (type stripping)
 export NVM_DIR="$HOME/.nvm"
-CHECKTO_NODE24_BIN="$(ls -d "$NVM_DIR"/versions/node/v24*/bin 2>/dev/null | tail -1)"
-[ -n "$CHECKTO_NODE24_BIN" ] && export PATH="$CHECKTO_NODE24_BIN:$PATH"
+SASH_NODE24_BIN="$(ls -d "$NVM_DIR"/versions/node/v24*/bin 2>/dev/null | tail -1)"
+[ -n "$SASH_NODE24_BIN" ] && export PATH="$SASH_NODE24_BIN:$PATH"
 EOF
 fi
 
@@ -40,4 +40,4 @@ npm ci
 # use); this adds Playwright's own Chromium build for `chromium.launch()`.
 npx --yes playwright install chromium
 
-echo "checkto install complete"
+echo "sash install complete"

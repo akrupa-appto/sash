@@ -70,7 +70,7 @@ const until = async predicate => {
   assert.fail('operation did not finish');
 };
 
-test('background agent tabs are muted while not watched, and only checkto-muted tabs get unmuted on reactivation', async () => {
+test('background agent tabs are muted while not watched, and only sash-muted tabs get unmuted on reactivation', async () => {
   // Tab 20 is the tab the run starts on. It becomes the sole watched tab first.
   assert.equal((await send({ type: 'run', tabId: 20, goal: 'test', mode: 'fast' })).ok, true);
   await until(() => capturedSelect !== undefined);
@@ -97,13 +97,13 @@ test('background agent tabs are muted while not watched, and only checkto-muted 
   assert.equal(tabRecord(21).mutedInfo.reason, 'user');
 
   // Reactivating tab 21 (the agent switches its watched tab back) must NOT unmute it:
-  // its lease was never marked mutedByUs, so checkto never touches it.
+  // its lease was never marked mutedByUs, so sash never touches it.
   const updatesBeforeReactivate21 = updateCalls.length;
   await capturedSelect(21);
   assert.equal(updateCalls.slice(updatesBeforeReactivate21).some(c => c.id === 21 && c.changes.muted === false), false);
   assert.equal(tabRecord(21).mutedInfo.muted, true);
 
-  // Reactivating tab 20 (which checkto itself muted) must unmute it.
+  // Reactivating tab 20 (which sash itself muted) must unmute it.
   await capturedSelect(20);
   assert.equal(tabRecord(20).mutedInfo.muted, false);
   assert.equal(updateCalls.some(c => c.id === 20 && c.changes.muted === false), true);

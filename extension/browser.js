@@ -20,8 +20,8 @@ function scrollState() {
     const size = width * height;
     if (size > area) { target = el; area = size; }
   }
-  document.querySelectorAll('[data-checkto-scroll]').forEach(el => el.removeAttribute('data-checkto-scroll'));
-  target.setAttribute('data-checkto-scroll', 'true');
+  document.querySelectorAll('[data-sash-scroll]').forEach(el => el.removeAttribute('data-sash-scroll'));
+  target.setAttribute('data-sash-scroll', 'true');
   return { y: Math.round(target.scrollTop), max: Math.max(0, target.scrollHeight - target.clientHeight) };
 }
 
@@ -77,7 +77,7 @@ export class ChromePage {
     const frame = frameTree.frame;
     if (!supportedUrl(frame.url)) throw new Error('this page cannot be controlled; return to a regular website');
     this.currentUrl = frame.url;
-    const { executionContextId } = await this.command('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'checkto' });
+    const { executionContextId } = await this.command('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'sash' });
     const result = await this.command('Runtime.evaluate', {
       expression: `(${fn.toString()})(${JSON.stringify(arg) ?? ''})`,
       contextId: executionContextId, returnByValue: true, awaitPromise: true,
@@ -183,7 +183,7 @@ async function moveCursor(page, target) {
 }
 /**
  * Serialized into the page by every action, and resolved in the *same* isolated world each time:
- * evaluate() names the world `checkto` for the frame, and Chrome keeps a named world for the
+ * evaluate() names the world `sash` for the frame, and Chrome keeps a named world for the
  * document's frame, so what `bind` parks on this world's global is still there for `recheck`. That
  * is what makes the binding an element rather than a lookup. The snapshot's `data-jev-idx` is only
  * an attribute: a re-render that clones the control copies it, a control repurposed in place keeps
@@ -197,7 +197,7 @@ async function moveCursor(page, target) {
 function cursorControl({ op, token, id, text, index, x, y, keep }) {
   // One live slot at a time: one action is one action. `bind` dropping whatever the last one left
   // behind is what keeps this from retaining a page's nodes between actions.
-  const slots = globalThis.__checktoCursorSlots || (globalThis.__checktoCursorSlots = new Map());
+  const slots = globalThis.__sashCursorSlots || (globalThis.__sashCursorSlots = new Map());
   const clean = s => (s || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   // The snapshot's own naming rules (src/snapshot.js), so "what the control said" and "what it says
   // now" mean the same thing on both sides of the wait.
@@ -327,7 +327,7 @@ export async function selectOption(page, id, index) {
 export async function scroll(page, dir) {
   await page.evaluate(scrollState);
   await page.evaluate(dir => {
-    const target = document.querySelector('[data-checkto-scroll]') || document.scrollingElement;
+    const target = document.querySelector('[data-sash-scroll]') || document.scrollingElement;
     target.scrollBy({ top: dir === 'down' ? 640 : -640, behavior: 'instant' });
   }, dir);
   await page.waitForTimeout(200);

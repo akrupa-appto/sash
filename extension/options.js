@@ -81,10 +81,10 @@ async function renderSiteAccessState() {
   const granted = await grantedEverySite();
   const wantsEverySite = form.elements.siteAccessMode.value === 'all';
   node.textContent = granted
-    ? 'Chrome allows checkto on every site right now.'
+    ? 'Chrome allows sash on every site right now.'
     : wantsEverySite
       ? 'Chrome has not allowed every site yet: saving asks you to confirm, and declining keeps the per-site ask.'
-      : 'Chrome has not allowed every site: checkto asks the first time on each site.';
+      : 'Chrome has not allowed every site: sash asks the first time on each site.';
 }
 function renderModel() {
   const label = document.querySelector('#model-label');
@@ -375,8 +375,8 @@ form.addEventListener('submit', async event => {
     render(settings);
     if (wantsEverySite && !everySite) {
       const nextSave = customOrigin(settings.customBaseUrl) && settings.customKey ? ' save again to allow your custom provider\u2019s site.' : '';
-      show(`saved. Chrome did not allow every site, so checkto asks the first time on each site.${nextSave}`);
-    } else show('saved on this device. open checkto from the toolbar to start.');
+      show(`saved. Chrome did not allow every site, so sash asks the first time on each site.${nextSave}`);
+    } else show('saved on this device. open sash from the toolbar to start.');
   } catch (err) { show(err.message, true); }
 });
 document.querySelectorAll('[data-reveal]').forEach(button => button.addEventListener('click', () => {

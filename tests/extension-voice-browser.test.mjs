@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { chromium } from 'playwright';
 
-const extension = path.resolve('dist/checkto-extension');
+const extension = path.resolve('dist/sash-extension');
 
 // `fakeUi` is Chrome's automatic permission answer: without it the first getUserMedia has to ask, and
 // headless Chromium has nowhere to show that prompt, so it comes back as "Permission dismissed" — the

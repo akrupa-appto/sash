@@ -12,7 +12,7 @@ export const Disposition = {
 };
 
 const GROUP_KEY = 'tabGroup';
-const GROUP_TITLE = 'checkto';
+const GROUP_TITLE = 'sash';
 // chrome.tabGroups' own colour names; the group picks one at random so two profiles do not look alike.
 const GROUP_COLORS = ['blue', 'cyan', 'green', 'grey', 'orange', 'pink', 'purple', 'red', 'yellow'];
 const BADGE_COLOR = { [BadgeState.WORKING]: '#6b7280', [BadgeState.DELIVERABLE]: '#22c55e', [BadgeState.HANDOFF]: '#facc15' };
@@ -47,7 +47,7 @@ async function knownGroupId() {
 }
 
 /**
- * Put a tab the agent opened in the "checkto" group, creating the group on the first such tab.
+ * Put a tab the agent opened in the "sash" group, creating the group on the first such tab.
  * The group id is persisted, so a restarted service worker rejoins it instead of making a second one.
  * A tab the user handed over holds a lease with openedByUs false and is never grouped.
  */

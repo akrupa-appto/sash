@@ -68,13 +68,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add extension/manifest.json
           git commit -m "chore: extension v${{ steps.bump.outputs.version }}"
-          git tag -a "extension-v${{ steps.bump.outputs.version }}" -m "checkto extension v${{ steps.bump.outputs.version }}"
+          git tag -a "extension-v${{ steps.bump.outputs.version }}" -m "sash extension v${{ steps.bump.outputs.version }}"
           # atomic: main and the tag land together, or neither does
           git push --atomic origin HEAD:main "refs/tags/extension-v${{ steps.bump.outputs.version }}"
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "extension-v${{ steps.bump.outputs.version }}" dist/checkto-extension.zip \
-            --title "checkto extension v${{ steps.bump.outputs.version }}" \
+          gh release create "extension-v${{ steps.bump.outputs.version }}" dist/sash-extension.zip \
+            --title "sash extension v${{ steps.bump.outputs.version }}" \
             --notes "Built from ${{ github.sha }}. Unzip and load the folder unpacked at chrome://extensions (Developer mode). See extension/README.md."

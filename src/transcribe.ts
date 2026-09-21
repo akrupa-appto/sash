@@ -1,7 +1,7 @@
 // Audio transcription for voice dictation. Mirrors providers.ts: OpenRouter is the default and
 // takes a plain model id, "openai:"/"gemini:"/"custom:" prefixes pick the official/custom APIs, and
 // the provider is chosen by whichever key the user already configured for chat. BYOK end to end —
-// audio goes straight to that provider, never to a checkto server or to Google's free Web Speech API.
+// audio goes straight to that provider, never to a sash server or to Google's free Web Speech API.
 import { env } from "./env.ts";
 import { PROVIDERS, customBase, configuredProviders, parseModel, providerKey } from "./providers.ts";
 import type { ProviderId } from "./providers.ts";

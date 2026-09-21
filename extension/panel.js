@@ -28,7 +28,7 @@ const $ = selector => document.querySelector(selector);
 const isWebsite = tab => /^https?:\/\//i.test(tab.url || '') && !/^https?:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/i.test(tab.url || '');
 const request = async message => {
   const reply = await chrome.runtime.sendMessage(message);
-  if (!reply) throw new Error('checkto could not connect. reload the extension and reopen this panel.');
+  if (!reply) throw new Error('sash could not connect. reload the extension and reopen this panel.');
   if (reply.error) throw new Error(reply.error);
   return reply;
 };
@@ -218,7 +218,7 @@ function stepElement(s) {
 }
 // The collapsed trace reads as one joined sentence ("opened the upload tab, clicked upload"), not a
 // step count or a stack trace, when read by assistive tech: it is the header's aria-label, kept off
-// the visible face so the visible face can carry checkto's own tick track and duration instead.
+// the visible face so the visible face can carry sash's own tick track and duration instead.
 // Past the tick cap the sentence would run to dozens of clauses, so it becomes a summary instead:
 // the count, which steps failed, and the first and last thing done. Either way the failures are
 // named, since the track's red ticks are aria-hidden and colour alone must not be the only cue.
@@ -230,7 +230,7 @@ function summarySentence(steps) {
   if (steps.length <= TICK_CAP) return steps.map(fragment).join(', ') + failures;
   return `${stepCountLabel(steps.length)}${failures}: ${fragment(steps[0], 0)}, … ${fragment(steps.at(-1), 1)}`;
 }
-// The segmented tick track — checkto's signature move. One filled tick per step that has landed;
+// The segmented tick track — sash's signature move. One filled tick per step that has landed;
 // there is no "pending" tick because the agent loop only ever records a step once it is done, so the
 // track itself, growing turn over turn, is the progress signal (see the .trace-header comment in
 // style.css for why glyphs never show an in-flight state).
@@ -353,7 +353,7 @@ function requestCard(pending) {
     card.append(el('p', 'request-question', pending.question));
   } else if (pending.action) {
     const q = el('p', 'request-question');
-    q.append('allow checkto to ', el('span', 'request-target', pending.action), '?');
+    q.append('allow sash to ', el('span', 'request-target', pending.action), '?');
     card.append(q);
   }
   if (pending.why) card.append(el('p', 'muted', pending.why));
@@ -527,7 +527,7 @@ function render(state) {
     // .asking carries no visible border/stripe (palette 4's own "no decoration, only meaning"
     // rule), so the sr-only label is where its text difference lives now that the old run-status
     // strip's "waiting for your answer" is gone — color independence, per the Accessibility section.
-    label.textContent = m.role === 'user' ? 'you' : (isAsking ? 'checkto, waiting for your answer' : 'checkto');
+    label.textContent = m.role === 'user' ? 'you' : (isAsking ? 'sash, waiting for your answer' : 'sash');
     const body = document.createElement('div'); body.textContent = m.text;
     el.append(label);
     // The actions belong above the reply they produced, so the answer stays the last thing on screen.
@@ -700,8 +700,8 @@ function humanError(message) {
   if (status === 403) return `${provider} refused this request (403): the key or account is not permitted to do that — open settings to change the key or model, or hover this line for the provider's own message.`;
   if (status === 429) return `${provider} is rate-limiting this key, or its quota is used up. wait a moment and try again.`;
   if (status >= 500) return `${provider} failed at its own end (${status}). that one is theirs, not yours — try again in a moment.`;
-  if (NETWORK_ERROR.test(raw)) return 'checkto could not reach the model provider: the connection failed. check this machine is online, then try again.';
-  if (LOST_CHANNEL.test(raw)) return 'checkto lost its connection to the browser before it could finish. try again, and reopen this panel if it keeps happening.';
+  if (NETWORK_ERROR.test(raw)) return 'sash could not reach the model provider: the connection failed. check this machine is online, then try again.';
+  if (LOST_CHANNEL.test(raw)) return 'sash lost its connection to the browser before it could finish. try again, and reopen this panel if it keeps happening.';
   return raw;
 }
 function setErrorLine(message) {

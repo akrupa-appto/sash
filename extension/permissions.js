@@ -8,8 +8,8 @@
 // Chrome, and the worker then reads the answer back off chrome.permissions.contains().
 // https://developer.chrome.com/docs/extensions/reference/api/permissions
 
-// checkto acts on any http(s) tab (see isWebsite() in panel.js), so "all sites" has to actually
-// cover both schemes — granting only https://*/* would still block checkto on an ordinary
+// sash acts on any http(s) tab (see isWebsite() in panel.js), so "all sites" has to actually
+// cover both schemes — granting only https://*/* would still block sash on an ordinary
 // http:// site even after the user accepted the scarier "every site" prompt.
 export const ALL_SITES = ['https://*/*', 'http://*/*'];
 
@@ -31,8 +31,8 @@ export function originPrompt(origin) {
     scope: 'origin',
     origin,
     origins: [originPattern(origin)],
-    title: `allow checkto to access ${origin}?`,
-    detail: `checkto will read and act on pages on ${origin} while a task is running. Chrome grants access to every port on this host. you can take this back in chrome's extension settings.`,
+    title: `allow sash to access ${origin}?`,
+    detail: `sash will read and act on pages on ${origin} while a task is running. Chrome grants access to every port on this host. you can take this back in chrome's extension settings.`,
     allow: 'allow this site',
     deny: 'not now',
   };
@@ -43,8 +43,8 @@ export function allSitesPrompt() {
     scope: 'all-sites',
     origin: 'every site',
     origins: ALL_SITES,
-    title: 'allow checkto to access EVERY site you visit?',
-    detail: 'this is much broader than allowing one site. checkto could read and act on any page in this browser, including your email, your bank, and anything you are signed in to. only do this if you understand the risk. allowing one site at a time is safer.',
+    title: 'allow sash to access EVERY site you visit?',
+    detail: 'this is much broader than allowing one site. sash could read and act on any page in this browser, including your email, your bank, and anything you are signed in to. only do this if you understand the risk. allowing one site at a time is safer.',
     allow: 'i understand the risk, allow all sites',
     deny: 'no, keep it to one site',
   };
@@ -66,15 +66,15 @@ async function ensureAccess(origins, prompt, ask, refused, ungranted) {
 
 export async function ensureOriginAccess(url, ask) {
   const origins = [originPattern(url)];
-  if (!origins[0]) throw new Error('checkto cannot work on this page. open a regular website tab.');
+  if (!origins[0]) throw new Error('sash cannot work on this page. open a regular website tab.');
   const prompt = originPrompt(originOf(url));
   return ensureAccess(origins, prompt, ask,
-    `checkto needs your permission to use ${prompt.origin}. say yes to "${prompt.title}" and try again.`,
+    `sash needs your permission to use ${prompt.origin}. say yes to "${prompt.title}" and try again.`,
     `chrome did not grant access to ${prompt.origin}. try again and accept chrome's prompt.`);
 }
 
 export async function ensureAllSitesAccess(ask) {
   return ensureAccess(ALL_SITES, allSitesPrompt(), ask,
-    'checkto does not have access to every site. allow one site at a time instead.',
-    'checkto does not have access to every site. try again and accept chrome\'s prompt.');
+    'sash does not have access to every site. allow one site at a time instead.',
+    'sash does not have access to every site. try again and accept chrome\'s prompt.');
 }

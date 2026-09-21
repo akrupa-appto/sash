@@ -3,7 +3,7 @@ import { mkdir, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(root, 'dist', 'checkto-extension');
+const output = path.join(root, 'dist', 'sash-extension');
 await mkdir(output, { recursive: true });
 await build({
   entryPoints: ['background', 'panel', 'options', 'offscreen', 'mic-permission'].map(name => path.join(root, 'extension', name + '.js')),
@@ -16,7 +16,7 @@ await build({
 // IIFE. The global name is what the content-script test drives it through.
 await build({
   entryPoints: [path.join(root, 'extension', 'content.js')],
-  bundle: true, format: 'iife', globalName: 'checktoContent', platform: 'browser', target: 'chrome118', outdir: output,
+  bundle: true, format: 'iife', globalName: 'sashContent', platform: 'browser', target: 'chrome118', outdir: output,
 });
 await mkdir(path.join(output, 'fonts'), { recursive: true });
 for (const file of [

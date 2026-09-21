@@ -5,7 +5,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { chromium } from 'playwright';
-const extension = path.resolve('dist/checkto-extension');
+const extension = path.resolve('dist/sash-extension');
 // A checkout without `npx playwright install chromium` skips these instead of failing the suite,
 // the same way panel.test.mjs does.
 const context = await chromium.launchPersistentContext('', {

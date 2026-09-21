@@ -554,7 +554,7 @@ async function execute(run, message) {
   const attachPopup = (tab) => {
     if (!candidates.has(tab.id) || !supportedUrl(tab.url) || pages.some(p => p.tabId === tab.id) || run.attaching.has(tab.id)) return;
     run.attaching.add(tab.id);
-    void groupTab(tab.id); // tabs the run opened live together in the "checkto" group, out of the user's way
+    void groupTab(tab.id); // tabs the run opened live together in the "sash" group, out of the user's way
 
     const page = new ChromePage(tab, controller.signal, pages);
     pages.push(page);
@@ -1065,7 +1065,7 @@ chrome.commands?.onCommand.addListener((command, tab) => {
 });
 
 // Right-click entry: send the selection or link into a chat run on the clicked tab.
-export const ASK_CHECKTO_MENU_ID = 'ask-checkto';
+export const ASK_SASH_MENU_ID = 'ask-sash';
 export function contextMenuGoal(info) {
   if (info.linkUrl) return `look at this link: ${info.linkUrl}`;
   if (info.selectionText) return `help me with this selection: "${info.selectionText}"`;
@@ -1073,10 +1073,10 @@ export function contextMenuGoal(info) {
 }
 if (chrome.contextMenus) {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: ASK_CHECKTO_MENU_ID, title: 'Ask Checkto', contexts: ['page', 'selection', 'link'] }, () => void chrome.runtime.lastError);
+    chrome.contextMenus.create({ id: ASK_SASH_MENU_ID, title: 'Ask Sash', contexts: ['page', 'selection', 'link'] }, () => void chrome.runtime.lastError);
   });
   chrome.contextMenus.onClicked.addListener((info, tab) => {
-    if (info.menuItemId !== ASK_CHECKTO_MENU_ID || !tab || !supportedUrl(tab.url)) return;
+    if (info.menuItemId !== ASK_SASH_MENU_ID || !tab || !supportedUrl(tab.url)) return;
     void openSidePanel(tab.windowId).then(() => handle({ type: 'run', tabId: tab.id, goal: contextMenuGoal(info), mode: 'fast' })).catch(() => {});
   });
 }

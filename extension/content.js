@@ -1,6 +1,6 @@
 // The in-page feedback layer: a badged favicon and an agent cursor.
 //
-// checkto had no content scripts until now, so every signal lived in the side panel and a tab
+// sash had no content scripts until now, so every signal lived in the side panel and a tab
 // the user was not looking at said nothing. This script owns two marks on the page itself:
 //
 //   - the favicon, dimmed to 0.3 with a glyph stamped over it, so the tab strip says which tabs
@@ -14,8 +14,8 @@ import { BadgeState } from './types.js';
 
 // The page's own icon href is stashed on the link element itself, so a second copy of this script
 // finds the original rather than stashing an already-badged data URL over it.
-const ORIGINAL_HREF = 'data-checkto-favicon';
-const CURSOR_HOST = 'data-checkto-cursor';
+const ORIGINAL_HREF = 'data-sash-favicon';
+const CURSOR_HOST = 'data-sash-cursor';
 const SIZE = 32;
 const DOT = { [BadgeState.DELIVERABLE]: '#22c55e', [BadgeState.HANDOFF]: '#facc15' };
 const CURSOR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">'

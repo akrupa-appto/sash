@@ -1,4 +1,4 @@
-/* checkto · settings page. Loaded after style.css and only adds what the shared sheet has no
+/* sash · settings page. Loaded after style.css and only adds what the shared sheet has no
    reason to carry: the in-page nav, the approval/site-access choice cards, and the speech-to-text
    hint line. Every value comes from style.css's own :root tokens — no new colours, sizes, or
    radii are introduced here, and style.css itself is owned by the panel work and stays untouched. */

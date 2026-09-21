@@ -124,7 +124,7 @@ async function openrouterChat(req: ChatRequest, model: string, key: string, retr
     json = await fetchJson("openrouter", "https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       signal: req.signal,
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://checkto.local", "X-Title": "checkto" },
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "HTTP-Referer": "https://sash.local", "X-Title": "sash" },
       body: JSON.stringify(body),
     });
   } catch (err) {

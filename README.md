@@ -1,22 +1,22 @@
-# Checkto
+# Sash
 
-Checkto is a Chrome extension that drives your browser with an LLM agent. Open the side panel, type a task in plain language, and the agent reads the page, clicks, types, and selects through `chrome.debugger` on your own tabs, using your own browser sessions. There is no Checkto backend involved in that flow: your task text and page content go straight from the extension to the model provider you configured.
+Sash is a Chrome extension that drives your browser with an LLM agent. Open the side panel, type a task in plain language, and the agent reads the page, clicks, types, and selects through `chrome.debugger` on your own tabs, using your own browser sessions. There is no Sash backend involved in that flow: your task text and page content go straight from the extension to the model provider you configured.
 
 The repo also has a small Node dev server (`src/server.ts`) used to develop and test the same agent, planner, and provider code outside the browser, and an Anchor Browser adapter for running it against a remote browser session instead of a local one.
 
 ## Install the extension
 
-1. Download `checkto-extension.zip` from the latest release ([extension-v0.4.3](https://github.com/akrupa-appto/checkto/releases/tag/extension-v0.4.3) at time of writing).
+1. Download `sash-extension.zip` from the latest release ([extension-v0.4.3](https://github.com/akrupa-appto/checkto/releases/tag/extension-v0.4.3) at time of writing).
 2. Unzip it.
-3. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and choose the unzipped `checkto-extension` folder (the one containing `manifest.json`).
+3. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and choose the unzipped `sash-extension` folder (the one containing `manifest.json`).
 4. Open the extension's settings tab and add a provider key (see below).
-5. Pin Checkto in Chrome's extensions menu, open a site, click the icon, and type a task. Type `@` in the task box to search and attach other open tabs.
+5. Pin Sash in Chrome's extensions menu, open a site, click the icon, and type a task. Type `@` in the task box to search and attach other open tabs.
 
 Requires Chrome 118 or later. See `extension/README.md` for what the extension stores locally, what it sends to providers, and its exact permissions.
 
 ## Configure a provider
 
-Checkto talks to a chat/completions API to plan and act. In the settings tab:
+Sash talks to a chat/completions API to plan and act. In the settings tab:
 
 - **OpenRouter** (default) — paste an OpenRouter key. This is the simplest path and unlocks the widest model list.
 - **Official APIs** — prefix a model ID with `openai:` or `gemini:` to call OpenAI or Google's Gemini API directly with your own key for that provider, instead of routing through OpenRouter.
@@ -44,8 +44,8 @@ This builds the extension bundle first (`pretest` runs `npm run build:extension`
 Other useful scripts:
 
 ```sh
-npm run build:extension    # esbuild bundle into dist/checkto-extension
-npm run package:extension  # zip it into dist/checkto-extension.zip
+npm run build:extension    # esbuild bundle into dist/sash-extension
+npm run package:extension  # zip it into dist/sash-extension.zip
 npm run test:extension     # load the built extension in a disposable Chromium and drive real Chrome APIs
 ```
 

@@ -106,7 +106,7 @@ export function approvalRequest({ action, origin, why, type = RequestType.APPROV
           ? {
               confirm: {
                 title: 'always allow on every site?',
-                warning: 'this lets checkto act on any site you open, without asking again. only do this if you trust every page you will have open while it runs.',
+                warning: 'this lets sash act on any site you open, without asking again. only do this if you trust every page you will have open while it runs.',
                 accept: 'yes, always allow',
                 cancel: 'go back',
               },
@@ -215,5 +215,5 @@ export function denialsExhausted(request, denials = {}) {
 export function denialCutoffMessage(request, denials = {}) {
   const count = denials?.[denialKey(request)] ?? DENIAL_LIMIT;
   const what = text(request?.action) || text(request?.question) || 'the same thing';
-  return `i stopped this turn after ${count} denials: you turned down ${what} every time i asked, so i will not ask again. add more detail, or change what checkto is allowed to do, and send it again.`;
+  return `i stopped this turn after ${count} denials: you turned down ${what} every time i asked, so i will not ask again. add more detail, or change what sash is allowed to do, and send it again.`;
 }

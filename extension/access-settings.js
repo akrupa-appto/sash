@@ -95,7 +95,7 @@ export function mountAccessSettings() {
         `${origin} · ${grant.scope === 'always' ? 'always' : 'this conversation'}`, async () => {
           const result = await chrome.runtime.sendMessage({ type: 'grants:revoke', key: grant.key });
           if (!result?.ok) throw new Error('approval could not be revoked. refresh to check whether it still exists.');
-          return 'approval revoked. checkto will ask again next time.';
+          return 'approval revoked. sash will ask again next time.';
         });
     }
     const required = requiredPatterns(chrome.runtime.getManifest());
@@ -114,7 +114,7 @@ export function mountAccessSettings() {
           return 'site access revoked and the current task stopped. another listed permission may still allow this site.';
         });
     }
-    // Required coverage is listed, not hidden: the user should see exactly what checkto can
+    // Required coverage is listed, not hidden: the user should see exactly what sash can
     // reach, and that the only place to narrow it is Chrome's own site-access control.
     for (const origin of locked) row(sites, origin, `${describe(origin)} · comes with the extension`);
   }
@@ -139,7 +139,7 @@ export function mountAccessSettings() {
   // chrome:// URLs cannot be linked from an extension page; tabs.create is the sanctioned route.
   manage?.addEventListener('click', () => {
     chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` }, () => {
-      if (chrome.runtime.lastError) announce('could not open Chrome\'s extension page. open chrome://extensions and pick checkto.', true);
+      if (chrome.runtime.lastError) announce('could not open Chrome\'s extension page. open chrome://extensions and pick sash.', true);
     });
   });
   void transact();

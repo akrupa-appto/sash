@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-boot service bring-up for checkto. Idempotent, and returns once services
+# Per-boot service bring-up for sash. Idempotent, and returns once services
 # are ready (nothing here stays in the foreground).
 #
 #   1. qa-chrome  — headless Google Chrome with a CDP endpoint on 127.0.0.1:9223,
@@ -17,7 +17,7 @@ export NVM_DIR="$HOME/.nvm"
 NODE24_BIN="$(ls -d "$NVM_DIR"/versions/node/v24*/bin 2>/dev/null | tail -1 || true)"
 [ -n "$NODE24_BIN" ] && export PATH="$NODE24_BIN:$PATH"
 
-QA_PORT="${CHECKTO_QA_CHROME_PORT:-9223}"
+QA_PORT="${SASH_QA_CHROME_PORT:-9223}"
 
 # --- 1. qa-chrome harness ----------------------------------------------------
 if curl -s -o /dev/null "http://127.0.0.1:$QA_PORT/json/version"; then
@@ -43,23 +43,23 @@ fi
 PORT="${PORT:-8791}"
 if [ -n "${OPENROUTER_API_KEY:-}" ]; then
   if curl -s -o /dev/null "http://127.0.0.1:$PORT/api/health"; then
-    echo "checkto server: already listening on $PORT"
+    echo "sash server: already listening on $PORT"
   else
-    echo "checkto server: starting on $PORT"
-    ( cd "$here/.." && nohup npm start >/tmp/checkto-server.log 2>&1 & )
+    echo "sash server: starting on $PORT"
+    ( cd "$here/.." && nohup npm start >/tmp/sash-server.log 2>&1 & )
     for _ in $(seq 1 30); do
       if curl -s -o /dev/null "http://127.0.0.1:$PORT/api/health"; then break; fi
       sleep 1
     done
     if curl -s -o /dev/null "http://127.0.0.1:$PORT/api/health"; then
-      echo "checkto server: health OK on $PORT"
-      [ -z "${ANCHOR_API_KEY:-}" ] && echo "checkto server: note — set ANCHOR_API_KEY to enable live browser sessions"
+      echo "sash server: health OK on $PORT"
+      [ -z "${ANCHOR_API_KEY:-}" ] && echo "sash server: note — set ANCHOR_API_KEY to enable live browser sessions"
     else
-      echo "checkto server: not healthy yet; see /tmp/checkto-server.log" >&2
+      echo "sash server: not healthy yet; see /tmp/sash-server.log" >&2
     fi
   fi
 else
-  echo "checkto server: skipped (set OPENROUTER_API_KEY, plus ANCHOR_API_KEY for browser sessions, to enable)"
+  echo "sash server: skipped (set OPENROUTER_API_KEY, plus ANCHOR_API_KEY for browser sessions, to enable)"
 fi
 
-echo "checkto start complete"
+echo "sash start complete"

@@ -63,8 +63,8 @@ export async function decide(
       headers: {
         Authorization: `Bearer ${ep.key}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://checkto.local",
-        "X-Title": "checkto",
+        "HTTP-Referer": "https://sash.local",
+        "X-Title": "sash",
       },
       body: JSON.stringify({ model: ep.model, state, questions }),
     });
