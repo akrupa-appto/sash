@@ -1,19 +1,19 @@
-# DESIGN.md - checkto
+# DESIGN.md - sash
 
 ## Context
 
 - Artifact type: AI/conversational interface — a Chrome side panel (`extension/panel.html`, 400px and 320px wide) plus its settings page (`extension/settings.html`), both parts of a browser extension.
-- Positioning: technical, utilitarian. checkto drives a browser on the user's behalf; the panel is a working tool, not a marketing surface.
-- Audience: people who already trust checkto with page access and API keys. Primary action: state a task, watch it run, answer the rare thing it cannot decide alone.
+- Positioning: technical, utilitarian. sash drives a browser on the user's behalf; the panel is a working tool, not a marketing surface.
+- Audience: people who already trust sash with page access and API keys. Primary action: state a task, watch it run, answer the rare thing it cannot decide alone.
 - Adjectives: quiet, precise, checked-off, unhurried.
-- Visual word translations: quiet -> near-black neutral background, no borders except where two surfaces must be told apart; precise -> a segmented tick track that fills in exactly once per completed step, never an estimate; checked-off -> the product's own name paid off literally in its signature interaction; unhurried -> collapsed trace at rest, nothing animates unless a run is genuinely live.
+- Visual word translations: quiet -> near-black neutral background, no borders except where two surfaces must be told apart; precise -> a segmented tick track that fills in exactly once per completed step, never an estimate; checked-off -> finished work recorded as ticks in the window sash, not a brand pun on the old name; unhurried -> collapsed trace at rest, nothing animates unless a run is genuinely live.
 - Aesthetic essence: near-black, checked-off, signal-only.
 - Single-minded proposition: every run is a short, legible ledger you can leave collapsed and trust.
 - References: admire the Codex CLI side-panel structure (top-anchored transcript, collapsed-by-default trace) this was drawn from; avoid the previous plum/cream theme and any indigo-gradient "AI assistant" default.
 - Mode: dark only (the extension has no light mode). Density: balanced — a 400/320px panel cannot afford dense, but pure air wastes the space a real run's trace needs.
 - Constraints: Manifest V3 extension page CSP (`script-src 'self'; object-src 'self'`), so fonts are self-hosted, not loaded from Google Fonts at runtime. Must render correctly at both 400px and 320px with zero horizontal overflow. Must not regress the composer-inert-while-blocked, `lastSeq` staleness guard, scroll-clamp, or even-grid approval-scope behaviors already fixed on this branch.
 
-This is design 4 ("Marked Rows") from `public/panel-prototype.html` on `prototype/panel-directions`, palette 4 ("Signal-Only"). That comp is the source of truth for the aesthetic; this file records how it was implemented against checkto's real, streaming state model, and freezes the decisions so a later session does not quietly drift back toward a different look.
+This is design 4 ("Marked Rows") from `public/panel-prototype.html` on `prototype/panel-directions`, palette 4 ("Signal-Only"). That comp is the source of truth for the aesthetic; this file records how it was implemented against sash's real, streaming state model, and freezes the decisions so a later session does not quietly drift back toward a different look.
 
 ## Aesthetic
 
@@ -40,7 +40,7 @@ This is design 4 ("Marked Rows") from `public/panel-prototype.html` on `prototyp
 
 ## Color
 
-- Strategy: no brand accent anywhere. checkto's old orange/peach accent (`--acc: #FFB48A`) is retired along with the plum background it lived on. Palette 4 is deliberately signal-only: send button, ticks, and every primary button fill are neutral, told apart from secondary controls by lightness and weight, not hue. Color exists only where it means something.
+- Strategy: no brand accent anywhere. sash's old orange/peach accent (`--acc: #FFB48A`) is retired along with the plum background it lived on. Palette 4 is deliberately signal-only: send button, ticks, and every primary button fill are neutral, told apart from secondary controls by lightness and weight, not hue. Color exists only where it means something.
 - Distribution: effectively 100% neutral surface + text, with 3 semantic hues currently in use (a done tick, a danger button, an amber "needs you" phrase) plus one reserved (`--status-info`, see below).
 - Neutral ramp (chroma 0 throughout, six even steps):
 
@@ -98,7 +98,7 @@ This is design 4 ("Marked Rows") from `public/panel-prototype.html` on `prototyp
 - Focus: every button/input/textarea keeps a visible 3px-offset outline; nothing suppresses `outline` without providing a replacement.
 - The trace header's visible text and its `aria-label` intentionally differ (ticks-and-duration vs. prose sentence) so sighted and screen-reader users both get the right form of the same information.
 - Reduced motion: honored per the Motion section above.
-- Color independence: every status also carries a text difference — the request/blocked cards' own copy, the trace header's live ticker or duration text, and (since the run-status strip's generic status word retired) an asking message's `.message-label` reading "checkto, waiting for your answer" instead of plain "checkto" — never color alone.
+- Color independence: every status also carries a text difference — the request/blocked cards' own copy, the trace header's live ticker or duration text, and (since the run-status strip's generic status word retired) an asking message's `.message-label` reading "sash, waiting for your answer" instead of plain "sash" — never color alone.
 
 ## Tokens (source of truth)
 
@@ -106,8 +106,8 @@ Full token block lives at the top of `extension/style.css` under `:root,:host`. 
 
 ## Craft-layer decisions specific to this implementation
 
-- **Ticks without a known total.** The prototype's tick track assumes a fixed, pre-known step count (`STEPS.length`). checkto's real agent loop discovers steps one at a time and never predeclares a plan length. The implementation adapts the signature move honestly: the track has no empty/pending ticks at all — it is exactly as many filled ticks as steps completed so far, growing by one each time a new step lands (covered by `tests/panel.test.mjs`: "the segmented tick track advances as steps land"). This preserves the literal "checking off" reading without inventing a plan the agent doesn't have.
-- **No live elapsed-seconds counter.** The source comp ticks a live "Ns" count once a second. checkto's existing `durationText()` deliberately reports only three phrased states — "Working", "Worked for Ns", "You stopped after Ns" — a hard-won simplification already commented in `panel.js` ("Three states only, phrased as what happened to the run, not as the agent's failure"). That rule is preserved; the trace header shows "Working" (no number) while live and the numeric duration only once a run has actually ended.
+- **Ticks without a known total.** The prototype's tick track assumes a fixed, pre-known step count (`STEPS.length`). sash's real agent loop discovers steps one at a time and never predeclares a plan length. The implementation adapts the signature move honestly: the track has no empty/pending ticks at all — it is exactly as many filled ticks as steps completed so far, growing by one each time a new step lands (covered by `tests/panel.test.mjs`: "the segmented tick track advances as steps land"). This preserves the literal "checking off" reading without inventing a plan the agent doesn't have.
+- **No live elapsed-seconds counter.** The source comp ticks a live "Ns" count once a second. sash's existing `durationText()` deliberately reports only three phrased states — "Working", "Worked for Ns", "You stopped after Ns" — a hard-won simplification already commented in `panel.js` ("Three states only, phrased as what happened to the run, not as the agent's failure"). That rule is preserved; the trace header shows "Working" (no number) while live and the numeric duration only once a run has actually ended.
 - **The duration line replaced the separate `.duration` divider.** The pre-redesign panel rendered the trace summary (a prose sentence) and a separate `.duration` div ("Worked for 2m") as two sibling elements. Design 4 states the duration line **is** the trace handle, so the divider is gone; its text now lives inside `.trace-header .trace-label`, and a run too short to report a duration (<1s) falls back to a plain step count ("N steps") instead of leaving the header blank.
 - **Fonts are self-hosted, not `<link>`-loaded from Google Fonts.** The extension's CSP (`script-src 'self'; object-src 'self'`) plus the existing precedent (Outfit was already vendored as a local `.woff2`) meant vendoring Archivo (one variable `.woff2`) and IBM Plex Mono (two static `.woff2`, 400/500) into `extension/fonts/` rather than adding a runtime dependency on `fonts.googleapis.com`.
 - **Secondary buttons inside a card get their own step down.** A `.secondary` button is `--surface-2` by default — identical to the `.notice` card it usually sits inside, which would make it visually disappear. `.notice button.secondary` steps it back to `--surface-1` so it reads as a control, not as un-styled text (caught during screenshot review of the credential and approval states, not by a test — there is no automated contrast-between-nested-surfaces check yet).
@@ -122,7 +122,7 @@ Full token block lives at the top of `extension/style.css` under `:root,:host`. 
 ## Changelog
 
 - 2026-09-20: Initial DESIGN.md. Rebuilt `extension/style.css`, `panel.html`, `panel.js`, and verified `settings.html` against design 4 / palette 4 from `public/panel-prototype.html` (`prototype/panel-directions`). See PR description for the full list of preserved behaviors and screenshots.
-- 2026-09-20 (panel-match-comp): The first pass retokened checkto's *existing* composition instead of adopting the comp's; this pass replaces the composition itself, verified by rendering the comp (`public/panel-prototype.html?design=4&palette=4`) and the built extension side by side at every state and diffing them, not by re-reading either as prose.
+- 2026-09-20 (panel-match-comp): The first pass retokened sash's *existing* composition instead of adopting the comp's; this pass replaces the composition itself, verified by rendering the comp (`public/panel-prototype.html?design=4&palette=4`) and the built extension side by side at every state and diffing them, not by re-reading either as prose.
   - **Topbar.** Added `.panel-topbar`: a 16px white rounded-square `.brand-mark` beside the wordmark, separated from the body by one hairline, matching the comp exactly. The comp's own outer rounded/shadowed `.panel-frame` is that file's lab-viewport mockup of the browser's own window chrome (the same thing a screenshot of any floating panel demo does); Chrome's real side panel already supplies that outer frame, so it is not re-implemented in `panel.html`. `new` and `settings` — both real, reachable functionality — moved to the topbar's trailing edge, in the slot the comp reserves for a meta readout (`#topbarMeta`).
   - **Composer, fully restructured, not retokened.** Replaced the three bolted-on chrome rows (`.run-status` strip with `#status-text`/`#cost`, `.mode-row` with `#model-link`/`#mode`, `.composer-caption` with `#tab-context`) with the comp's own two-part composer: `.composer-field` (the input alone, placeholder `Do anything` verbatim) above `.composer-actions` (a `.icon-btn` "+", a model/mode control, the circular neutral send button with the comp's own arrow glyph). Nothing was dropped, each moved to where the comp's own composition already has a place for it:
     - run status + cost → folded into the trace header (`#steps-label`), the one place a run already reports on itself; `#steps-wrap` now shows the instant a run starts (not only once a step has landed), carrying the same live-ticker text `#status-text` used to show, plus the running cost (`· $0.0002`) once one exists. A finished turn's own trace header gets the same cost suffix (`background.js` now carries `cost` onto the pushed message).

@@ -267,7 +267,7 @@ export const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`checkto listening on http://0.0.0.0:${PORT} (jev via ${jevVia()})`);
+  console.log(`sash listening on http://0.0.0.0:${PORT} (jev via ${jevVia()})`);
 });
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, async () => {

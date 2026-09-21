@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Standing Google Chrome instance for the checkto browser harness.
+# Standing Google Chrome instance for the sash browser harness.
 #
 # Exposes a CDP endpoint on 127.0.0.1:9223 that the QA harness connects to:
 #   node scripts/verify-extension-browser.mjs   (a.k.a. `npm run test:browser`)
@@ -11,12 +11,12 @@
 # restarted. Chrome stays in the foreground under --headless=new.
 set -euo pipefail
 
-PORT="${CHECKTO_QA_CHROME_PORT:-9223}"
-PROFILE="${CHECKTO_QA_CHROME_PROFILE:-/tmp/checkto-qa-chrome}"
+PORT="${SASH_QA_CHROME_PORT:-9223}"
+PROFILE="${SASH_QA_CHROME_PROFILE:-/tmp/sash-qa-chrome}"
 mkdir -p "$PROFILE"
 
 CHROME_BIN="$(command -v google-chrome-stable || command -v google-chrome || echo /usr/bin/google-chrome-stable)"
-echo "checkto qa-chrome: $($CHROME_BIN --version) on CDP 127.0.0.1:$PORT"
+echo "sash qa-chrome: $($CHROME_BIN --version) on CDP 127.0.0.1:$PORT"
 
 # --headless=new keeps the process in the foreground; --no-sandbox is required
 # in the unprivileged Cloud Agent container.

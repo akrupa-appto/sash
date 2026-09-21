@@ -1,6 +1,8 @@
-# checkto: agent instructions
+# sash: agent instructions
 
 Precedence: the user's message wins, then this file, then any global defaults.
+
+The product is sash. The GitHub repository is still `akrupa-appto/checkto` until it is renamed on GitHub.
 
 ## Start here
 

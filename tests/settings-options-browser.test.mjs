@@ -21,7 +21,7 @@ import { chromium } from 'playwright';
 // The patterns the every-site save must ask Chrome for, from the one module that owns them (and the
 // ones extension/manifest.json declares under optional_host_permissions).
 import { ALL_SITES } from '../extension/permissions.js';
-const extension = path.resolve('dist/checkto-extension');
+const extension = path.resolve('dist/sash-extension');
 // A checkout without `npx playwright install chromium` skips these instead of failing the suite,
 // the same way access-settings-native.test.mjs does.
 const context = await chromium.launchPersistentContext('', {
@@ -351,7 +351,7 @@ test('saving "every site" asks Chrome for the optional host permission and store
 test('the site-access line says what Chrome has actually granted, never what the saved choice says', { skip }, async () => {
   const { page, errors } = await settingsPage();
   // The line under the radios is Chrome's grant, read live, and it says so before any save.
-  await stateSays(page, /has not allowed every site: checkto asks the first time on each site/);
+  await stateSays(page, /has not allowed every site: sash asks the first time on each site/);
   await page.locator('input[name=siteAccessMode][value=all]').check();
   await stateSays(page, /saving asks you to confirm/);
   // The card itself says where that access comes from, instead of pointing at the list below it.

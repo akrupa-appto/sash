@@ -304,7 +304,7 @@ test('an approval answered after the tab navigated is refused: nothing stored, n
   assert.deepEqual(data.grants ?? {}, {}, 'no grant was stored for a page the user did not look at');
   assert.deepEqual(data.runState.grants ?? {}, {}, 'and none on the conversation either');
   assert.deepEqual(data.runState.requests.map(r => r.id), ['moved-1'], 'the question is still the question');
-  assert.equal(data.runState.messages.length, messagesBefore, 'a refusal is not a reply from checkto');
+  assert.equal(data.runState.messages.length, messagesBefore, 'a refusal is not a reply from sash');
 
   // Back on the page the user answered about, the same card answers normally: the refusal is not a dead end.
   tabUrl = 'https://shop.test';

@@ -100,7 +100,7 @@ test('a run ending keeps openedByUs popups as deliverable without a mark event, 
   assert.equal(calls.some(c => c[0] === 'remove' && c[1] === 9), false);
 });
 
-test('the checkto group is created once and a restarted worker rejoins it', async () => {
+test('the sash group is created once and a restarted worker rejoins it', async () => {
   const grouped = calls.filter(c => c[0] === 'group');
   assert.deepEqual(grouped.map(c => c[1].tabIds), [[21], [22], [23]]);
   const creates = grouped.filter(c => c[1].groupId === undefined);
@@ -110,7 +110,7 @@ test('the checkto group is created once and a restarted worker rejoins it', asyn
   const titled = calls.filter(c => c[0] === 'groupUpdate');
   assert.equal(titled.length, 1);
   assert.equal(titled[0][1], groupId);
-  assert.equal(titled[0][2].title, 'checkto');
+  assert.equal(titled[0][2].title, 'sash');
   assert.equal(titled[0][2].collapsed, false);
   assert.equal(storage.tabGroup.id, groupId);
 

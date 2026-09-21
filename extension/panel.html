@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>checkto</title><link rel="stylesheet" href="style.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>sash</title><link rel="stylesheet" href="style.css"></head>
 <body class="panel-page">
-<header class="panel-topbar"><div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">checkto</span></div><nav class="topbar-actions"><button type="button" class="text-button" id="new-chat">new</button><button type="button" class="text-button settings-link">settings</button></nav></header>
+<header class="panel-topbar"><div class="panel-brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand">sash</span></div><nav class="topbar-actions"><button type="button" class="text-button" id="new-chat">new</button><button type="button" class="text-button settings-link">settings</button></nav></header>
 <main class="content" id="content">
-<div id="setup" class="notice" hidden><p class="notice-lead">connect a model to start</p><p class="muted">checkto needs at least one API key before it can plan or act in your browser.</p><button class="settings-link secondary">open settings <span aria-hidden="true">↗</span></button></div>
+<div id="setup" class="notice" hidden><p class="notice-lead">connect a model to start</p><p class="muted">sash needs at least one API key before it can plan or act in your browser.</p><button class="settings-link secondary">open settings <span aria-hidden="true">↗</span></button></div>
 <div id="permission" class="notice permission-card" hidden role="alertdialog" aria-labelledby="permission-title" aria-describedby="permission-detail"><p class="notice-lead" id="permission-title"></p><p class="muted" id="permission-detail"></p><div class="permission-actions"><button type="button" id="permission-allow"></button><button type="button" class="secondary" id="permission-deny"></button></div></div>
 <div class="intro" id="intro">
 <p class="intro-eyebrow">browser agent</p>
@@ -22,7 +22,7 @@
 <div class="compose-box">
 <div class="tab-picker" id="tab-picker" hidden><div class="picker-heading"><span>open tabs</span><span id="tab-count"></span></div><div id="tab-results" role="listbox" aria-label="open tabs"></div><div class="picker-footer">↑ ↓ to browse <span>enter to add · esc to close</span></div></div>
 <div class="selected-tabs" id="selected-tabs" aria-label="referenced tabs"></div>
-<div class="composer-field"><label class="sr-only" for="goal">message checkto</label><textarea id="goal" placeholder="Do anything" required maxlength="10000" rows="1" aria-autocomplete="list" aria-controls="tab-results" aria-expanded="false"></textarea></div>
+<div class="composer-field"><label class="sr-only" for="goal">message sash</label><textarea id="goal" placeholder="Do anything" required maxlength="10000" rows="1" aria-autocomplete="list" aria-controls="tab-results" aria-expanded="false"></textarea></div>
 </div>
 <div class="composer-actions">
 <div class="composer-left"><!-- the tab-attach "+" is hidden for now: it only added an add-symbol to the row, while typing "@" still opens the same tab picker and the tab example still pre-selects a tab --><button class="icon-btn" type="button" id="mention-tabs" title="attach a tab" aria-label="attach a tab" hidden>+</button><button id="mic" class="icon-btn mic-button" type="button" hidden aria-pressed="false" aria-label="hold to talk" title="hold to talk"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="1.6"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button><div class="model-cluster"><button type="button" class="model-pill settings-link" id="model-link" title="change the planner model in settings"></button><label class="sr-only" for="mode">agent mode</label><select id="mode" class="mode-select"><option value="careful">careful</option><option value="fast">fast</option></select></div><span id="tab-context" class="sr-only"></span></div>

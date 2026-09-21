@@ -18,12 +18,12 @@ export const VOICE_MODES = {
   prewarm: {
     id: 'prewarm',
     label: 'prewarm (default)',
-    description: 'the transcript streams into the composer live while you talk. checkto starts as soon as you stop.',
+    description: 'the transcript streams into the composer live while you talk. sash starts as soon as you stop.',
   },
   eager: {
     id: 'eager',
     label: 'eager',
-    description: 'checkto can start acting before you finish the sentence, on the transcript so far. it acts in chunks every couple of seconds, not word by word — true mid-sentence streaming needs an OpenAI Realtime or Gemini Live connection this build does not have.',
+    description: 'sash can start acting before you finish the sentence, on the transcript so far. it acts in chunks every couple of seconds, not word by word — true mid-sentence streaming needs an OpenAI Realtime or Gemini Live connection this build does not have.',
   },
 };
 export const VOICE_MODE_ORDER = ['dictate', 'prewarm', 'eager'];

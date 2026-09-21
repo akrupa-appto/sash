@@ -17,13 +17,13 @@ const reset = () => { requested.length = 0; held = []; };
 // What the panel does with a prompt: ask Chrome from the click, then answer the worker.
 const grant = asked => prompt => { asked.push(prompt); return chrome.permissions.request({ origins: prompt.origins }); };
 
-test('a single site is asked for with "allow checkto to access {origin}?"', async () => {
+test('a single site is asked for with "allow sash to access {origin}?"', async () => {
   reset();
   const asked = [];
   const ok = await ensureOriginAccess('https://example.test/page?x=1', grant(asked));
   assert.equal(ok, true);
   assert.equal(asked.length, 1);
-  assert.equal(asked[0].title, 'allow checkto to access https://example.test?');
+  assert.equal(asked[0].title, 'allow sash to access https://example.test?');
   assert.equal(asked[0].scope, 'origin');
   assert.deepEqual(asked[0].origins, ['https://example.test/*']);
   assert.deepEqual(requested, [['https://example.test/*']]);
@@ -34,7 +34,7 @@ test('a site on a non-default port requests Chrome-valid host access while namin
   const asked = [];
   const ok = await ensureOriginAccess('http://127.0.0.1:8799/settings', grant(asked));
   assert.equal(ok, true);
-  assert.equal(asked[0].title, 'allow checkto to access http://127.0.0.1:8799?');
+  assert.equal(asked[0].title, 'allow sash to access http://127.0.0.1:8799?');
   assert.match(asked[0].detail, /Chrome grants access to every port on this host\./);
   assert.deepEqual(asked[0].origins, ['http://127.0.0.1/*']);
   assert.deepEqual(requested, [['http://127.0.0.1/*']]);
@@ -56,14 +56,14 @@ test('all-sites access is asked for with distinctly scarier wording than one sit
   assert.match(all.detail, /risk/i);
   assert.match(all.allow, /i understand the risk/);
   assert.ok(all.detail.length > one.detail.length, 'the all-sites warning must say more than the single-site one');
-  // checkto acts on both http and https tabs, so "all sites" has to request both schemes.
+  // sash acts on both http and https tabs, so "all sites" has to request both schemes.
   assert.deepEqual(requested, [['https://*/*', 'http://*/*']]);
 });
 
 test('neither request silently succeeds without a prompt', async () => {
   reset();
   await assert.rejects(ensureOriginAccess('https://example.test/'), /needs your permission to use https:\/\/example\.test/);
-  await assert.rejects(ensureOriginAccess('https://example.test/', () => false), /allow checkto to access https:\/\/example\.test\?/);
+  await assert.rejects(ensureOriginAccess('https://example.test/', () => false), /allow sash to access https:\/\/example\.test\?/);
   await assert.rejects(ensureAllSitesAccess(), /does not have access to every site/);
   await assert.rejects(ensureAllSitesAccess(() => false), /does not have access to every site/);
   assert.deepEqual(requested, [], 'chrome.permissions.request must never run without a yes');

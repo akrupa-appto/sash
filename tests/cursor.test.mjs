@@ -11,7 +11,7 @@ import * as b from '../extension/browser.js';
 // (content.js, with a chrome.runtime stub) through the same sink background.js installs. The
 // point is to prove an *action* moves the cursor, at the right pixel, before it clicks — not that
 // the content script can draw a pointer when handed coordinates (content.test.mjs already does).
-const bundle = await readFile(join(import.meta.dirname, '..', 'dist/checkto-extension/content.js'), 'utf8');
+const bundle = await readFile(join(import.meta.dirname, '..', 'dist/sash-extension/content.js'), 'utf8');
 // A tall page: the control the run wants is well below the fold, so reaching it means scrolling,
 // and the cursor's fixed-position coordinates have to agree with the post-scroll click point.
 // Every pointerdown is recorded with what it hit, so a click that lands on the wrong thing is
@@ -111,7 +111,7 @@ async function controlledTab({ observed = true, reducedMotion = false, sinkDelay
   return { tab, page, moves, waits, ac, leadEntered, sinkEntered, close: async () => { await page.detach(); await tab.close(); } };
 }
 const cursorHost = tab => tab.evaluate(() => {
-  const el = document.querySelector('[data-checkto-cursor]');
+  const el = document.querySelector('[data-sash-cursor]');
   if (!el) return null;
   const m = new DOMMatrixReadOnly(getComputedStyle(el).transform);
   return { x: m.e, y: m.f, inline: el.style.transform };

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 await import('./build-extension.mjs');
-const builtExtension = path.resolve('dist/checkto-extension');
+const builtExtension = path.resolve('dist/sash-extension');
 const artifacts = path.resolve('runs/extension-qa');
 await mkdir(artifacts, { recursive: true });
 const html = await readFile(new URL('../tests/fixtures/extension.html', import.meta.url));
@@ -20,7 +20,7 @@ try {
   // This fixture verifies browser control, not Chrome's optional-permission prompt (covered by
   // access-settings.test.mjs). Headless Chromium cannot accept that browser-owned prompt, so grant
   // only the fixture host in a disposable copy and preserve the built artifact byte-for-byte.
-  fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'checkto-extension-'));
+  fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'sash-extension-'));
   const extension = path.join(fixtureRoot, 'extension');
   await cp(builtExtension, extension, { recursive: true });
   const fixtureManifestPath = path.join(extension, 'manifest.json');

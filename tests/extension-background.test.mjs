@@ -599,9 +599,9 @@ test('the cursor is cleared from every tab when the run ends, is stopped, or the
 });
 
 // --- the keyboard shortcut and the right-click entry -------------------------------------------
-test('the context menu registers "Ask Checkto" on page, selection and link', () => {
+test('the context menu registers "Ask Sash" on page, selection and link', () => {
   assert.equal(menuCreated.length, 1);
-  assert.equal(menuCreated[0].id, 'ask-checkto');
+  assert.equal(menuCreated[0].id, 'ask-sash');
   assert.deepEqual(menuCreated[0].contexts, ['page', 'selection', 'link']);
 });
 
@@ -698,7 +698,7 @@ test('an unrelated command is ignored', async () => {
 test('right-clicking a selection sends it into a new chat run', async () => {
   await send({ type: 'clear' });
   const started = taskStarted;
-  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', selectionText: 'hello world' }, { id: 21, windowId: 7, url: 'https://example.test' });
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-sash', selectionText: 'hello world' }, { id: 21, windowId: 7, url: 'https://example.test' });
   await until(() => taskStarted === started + 1);
   await until(() => sidePanelOpens.at(-1)?.windowId === 7);
   assert.equal(data.runState.messages.at(-1).text, 'help me with this selection: "hello world"');
@@ -709,7 +709,7 @@ test('right-clicking a selection sends it into a new chat run', async () => {
 test('right-clicking a link sends the link URL into a new chat run', async () => {
   await send({ type: 'clear' });
   const started = taskStarted;
-  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', linkUrl: 'https://example.test/page' }, { id: 22, windowId: 7, url: 'https://example.test' });
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-sash', linkUrl: 'https://example.test/page' }, { id: 22, windowId: 7, url: 'https://example.test' });
   await until(() => taskStarted === started + 1);
   assert.equal(data.runState.messages.at(-1).text, 'look at this link: https://example.test/page');
   finishTask();
@@ -719,7 +719,7 @@ test('right-clicking a link sends the link URL into a new chat run', async () =>
 test('a different menu item or an unsupported tab is ignored', () => {
   const started = taskStarted;
   chrome.contextMenus.onClicked.fire({ menuItemId: 'something-else', selectionText: 'nope' }, { id: 23, windowId: 7, url: 'https://example.test' });
-  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-checkto', selectionText: 'nope' }, { id: 24, windowId: 7, url: 'chrome://extensions' });
+  chrome.contextMenus.onClicked.fire({ menuItemId: 'ask-sash', selectionText: 'nope' }, { id: 24, windowId: 7, url: 'chrome://extensions' });
   assert.equal(taskStarted, started);
 });
 
@@ -1188,7 +1188,7 @@ test('site access mode "all" without the grant still asks one site at a time', a
     await until(() => data.runState?.running === false);
     assert.equal(accessPrompts.length, 1, 'the stored mode alone must never skip the card');
     assert.equal(accessPrompts.at(-1).scope, 'origin');
-    assert.equal(accessPrompts.at(-1).title, 'allow checkto to access https://example.test?');
+    assert.equal(accessPrompts.at(-1).title, 'allow sash to access https://example.test?');
     assert.equal(taskStarted, before, 'no task may run before access is granted');
     assert.match(data.runState.messages.at(-1).text, /needs your permission to use https:\/\/example\.test/);
   } finally {
@@ -1200,7 +1200,7 @@ test('site access mode "all" without the grant still asks one site at a time', a
 
 // --- host access is asked for before a site is touched -----------------------------------------
 // Last in the file: it empties the granted origins, so anything after it would have to re-grant.
-test('a run on a site checkto has no access to asks for that origin, and a no stops the run', async () => {
+test('a run on a site sash has no access to asks for that origin, and a no stops the run', async () => {
   await send({ type: 'clear' });
   grantedOrigins.length = 0;
   accessPrompts.length = 0;
@@ -1208,7 +1208,7 @@ test('a run on a site checkto has no access to asks for that origin, and a no st
   const before = taskStarted;
   await send({ type: 'run', tabId: 21, goal: 'open the page', mode: 'fast' });
   await until(() => data.runState?.running === false);
-  assert.equal(accessPrompts.at(-1).title, 'allow checkto to access https://example.test?');
+  assert.equal(accessPrompts.at(-1).title, 'allow sash to access https://example.test?');
   assert.equal(accessPrompts.at(-1).scope, 'origin');
   assert.equal(taskStarted, before, 'no task may run before access is granted');
   assert.equal(data.runState.status, 'error');

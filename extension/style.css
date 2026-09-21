@@ -1,4 +1,4 @@
-/* checkto — design 4 "Marked Rows" / palette 4 "Signal-Only". See DESIGN.md at the repo root
+/* sash — design 4 "Marked Rows" / palette 4 "Signal-Only". See DESIGN.md at the repo root
    for the full rationale and token table; this file is the implementation of that record. */
 
 @font-face{font-family:Archivo;src:url(fonts/archivo.woff2) format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
@@ -203,7 +203,7 @@ textarea{resize:vertical}
 .message.agent>div{background:var(--surface-2);border-radius:var(--r-12);padding:var(--sp-3);color:var(--text-1)}
 
 /* ---- trace: the collapsible "Worked for Ns" line, with the segmented tick
-   track — checkto's signature move. One tick lands per completed step; the
+   track — sash's signature move. One tick lands per completed step; the
    real agent loop only ever materializes a step once it has finished, so
    every rendered tick is filled, not "pending" — the progression itself is
    the track growing turn over turn, not a per-row spinner. ---- */
@@ -269,7 +269,7 @@ details.trace[open]>.trace-body,.trace.is-live>.trace-body{grid-template-rows:1f
 .composer-left{display:flex;align-items:center;gap:var(--sp-2);min-width:0}
 .icon-btn{width:26px;height:26px;border-radius:var(--r-8);background:var(--surface-1);color:var(--text-2);display:grid;place-items:center;font-size:var(--text-sm);border:none;flex:none;padding:0}
 .icon-btn:hover{background:var(--surface-2);color:var(--text-1)}
-/* One visual chip carries both facts the comp's single "checkto‑1" pill has no room for: model and
+/* One visual chip carries both facts the comp's single "sash‑1" pill has no room for: model and
    mode. #model-link and #mode sit flush against each other on the same surface-1 fill, so they read
    as one control (model name, opens settings — click through to change it — then a thin rule and the
    mode picker) instead of two separate pills bolted side by side. */

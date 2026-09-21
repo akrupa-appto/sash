@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>checkto · browser tasks</title>
+<title>sash · browser tasks</title>
 <style>
   :root { --bg:#0e0f11; --panel:#16181c; --line:#26292f; --fg:#e6e6e6; --dim:#8b909a; --acc:#7cf5b1; --warn:#f5c97c; --bad:#f57c7c; --user:#1f2a3a; }
   * { box-sizing:border-box }
@@ -68,7 +68,7 @@
 </style>
 </head>
 <body>
-<header><h1>checkto</h1><span>tell the browser what to do</span><a href="/playground" target="_blank">playground</a><a href="/gallery" target="_blank">recordings</a><button id="record" class="secondary" title="One video per chat. End the chat to make it playable.">start recording</button><button id="new" class="secondary">new chat</button></header>
+<header><h1>sash</h1><span>tell the browser what to do</span><a href="/playground" target="_blank">playground</a><a href="/gallery" target="_blank">recordings</a><button id="record" class="secondary" title="One video per chat. End the chat to make it playable.">start recording</button><button id="new" class="secondary">new chat</button></header>
 <div id="record-status" role="status" style="padding:0 18px;color:var(--dim);font-size:12px"></div>
 <main>
   <section>
@@ -106,7 +106,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const chat = $('#chat'), shot = $('#shot'), msg = $('#msg');
-let session = sessionStorage.getItem('checkto-session') || null;
+let session = sessionStorage.getItem('sash-session') || null;
 let ctrl = null, chatCost = 0, recording = false, opening = null;
 function recordingState(state) {
   recording = state === 'recording';
@@ -120,8 +120,8 @@ $('#record').onclick = async () => {
     const r = await fetch('/api/session/' + id + '/recording-' + (recording ? 'stop' : 'start'), {method:'POST'});
     const data = await r.json(); if (!r.ok) throw new Error(data.error);
     recordingState(data.state);
-    const ids = JSON.parse(localStorage.getItem('checkto-recordings') || '[]');
-    if (!ids.includes(id)) localStorage.setItem('checkto-recordings', JSON.stringify([...ids,id]));
+    const ids = JSON.parse(localStorage.getItem('sash-recordings') || '[]');
+    if (!ids.includes(id)) localStorage.setItem('sash-recordings', JSON.stringify([...ids,id]));
     $('#record-status').textContent = recording ? 'recording this browser · end the chat when finished to prepare the video' : 'recording stopped · end the chat to watch it in recordings';
   } catch(e) { $('#record-status').textContent = e.message; }
   finally { $('#record').disabled = false; $('#new').disabled = false; }
@@ -132,8 +132,8 @@ if (incomingPrompt) { msg.value = incomingPrompt; history.replaceState(null,'','
 
 const supervisorOn = () => !!$('#mode button.on')?.dataset.sup.startsWith('1');
 // Planner model and reasoning, remembered in this browser. Provider prefixes (openai:, gemini:) pick the official APIs.
-let choice = { model: localStorage.getItem('checkto-model') || '', reasoning: localStorage.getItem('checkto-reasoning') || 'auto' };
-if (choice.model === 'custom') choice.model = localStorage.getItem('checkto-custom-model') || '';
+let choice = { model: localStorage.getItem('sash-model') || '', reasoning: localStorage.getItem('sash-reasoning') || 'auto' };
+if (choice.model === 'custom') choice.model = localStorage.getItem('sash-custom-model') || '';
 let picker = null;
 const providersReady = fetch('/api/providers').then(r => r.json()).then(async data => {
   if (!choice.model || (data.providers.length && !data.providers.some(p => p.prefix ? choice.model.startsWith(p.prefix) : !/^(openai|gemini|custom):/.test(choice.model)))) choice.model = data.default;
@@ -142,7 +142,7 @@ const providersReady = fetch('/api/providers').then(r => r.json()).then(async da
     providers: data.providers,
     fetchModels: async id => { const r = await fetch('/api/models?provider=' + id); const body = await r.json(); if (!r.ok) throw new Error(body.error || 'could not load models'); return body.models; },
     value: choice,
-    onChange: next => { choice = next; localStorage.setItem('checkto-model', next.model); localStorage.setItem('checkto-reasoning', next.reasoning); updateModelPicker(); },
+    onChange: next => { choice = next; localStorage.setItem('sash-model', next.model); localStorage.setItem('sash-reasoning', next.reasoning); updateModelPicker(); },
   });
   updateModelPicker();
   picker.warm(choice.model).then(updateModelPicker).catch(() => {}); // model names for the label
@@ -190,7 +190,7 @@ async function openSession() {
   if (session) { const r = await fetch('/api/session/' + session); if (r.ok) { const data = await r.json(); showLiveBrowser(data.liveViewUrl); recordingState(data.recording); return session; } session = null; }
   const r = await fetch('/api/session', { method:'POST' });
   if (!r.ok) throw new Error((await r.json()).error || 'could not start a browser');
-  const data = await r.json(); session = data.id; showLiveBrowser(data.liveViewUrl); sessionStorage.setItem('checkto-session', session); chatCost = 0; return session;
+  const data = await r.json(); session = data.id; showLiveBrowser(data.liveViewUrl); sessionStorage.setItem('sash-session', session); chatCost = 0; return session;
 }
 
 $('#new').textContent = 'end chat';
@@ -203,7 +203,7 @@ $('#new').onclick = async () => {
   } catch(e) { $('#record-status').textContent = e.message; return; }
   finally { $('#new').disabled = false; $('#record').disabled = false; }
   recordingState('paused'); $('#record-status').textContent = 'chat ended · saved recordings are in the gallery';
-  session = null; sessionStorage.removeItem('checkto-session'); chatCost = 0;
+  session = null; sessionStorage.removeItem('sash-session'); chatCost = 0;
   chat.querySelectorAll('.msg, .typing').forEach(n => n.remove());
   shot.classList.remove('live'); shot.innerHTML = '<div class="empty">send a task and a website to start.</div>'; $('#urlbar').textContent = 'no page open yet';
   stats({ steps:0, lat:'–', cost:'$0.0000', status:'idle' });
