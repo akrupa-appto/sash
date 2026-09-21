@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "sash — browser tasks",
-  "version": "0.4.17",
+  "version": "0.4.18",
   "description": "Run Sash agents on your own tabs. Bring your API keys, stored only on this device.",
   "minimum_chrome_version": "118",
   "permissions": [
