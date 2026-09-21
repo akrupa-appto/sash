@@ -3,7 +3,7 @@
 ## Product name (2026-09-21)
 
 - The product is **sash**. User-facing copy, the Chrome extension, `package.json`, the dist zip (`sash-extension.zip`), the agent tab group, the context menu, localStorage keys, data-* attributes, and the isolated world name all use sash.
-- The GitHub repository stays `akrupa-appto/checkto` until it is renamed on GitHub. The live systemd unit stays `checkto.service` and the live checkout stays `/home/exedev/checkto` until Adam renames them on the host. Those paths are ops facts, not the brand.
+- The GitHub repository is `akrupa-appto/sash` (renamed from `akrupa-appto/checkto` on 2026-09-21). The live systemd unit stays `checkto.service` and the live checkout stays `/home/exedev/checkto` until Adam renames them on the host. Those paths are ops facts, not the brand.
 
 ## Public README screenshots (2026-09-21)
 

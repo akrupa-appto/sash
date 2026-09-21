@@ -37,7 +37,7 @@ Type `@` in the box to attach another open tab. Right-click a page, selection, o
 
 Requires Chrome 118 or later.
 
-1. Download `sash-extension.zip` from the [latest release](https://github.com/akrupa-appto/checkto/releases/latest).
+1. Download `sash-extension.zip` from the [latest release](https://github.com/akrupa-appto/sash/releases/latest).
 2. Unzip it.
 3. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick the unzipped `sash-extension` folder (the one with `manifest.json` in it).
 4. Open **settings** from the panel, paste a provider key, save.
