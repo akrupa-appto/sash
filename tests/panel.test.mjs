@@ -967,6 +967,40 @@ test('a dictation start that fails does not leave the composer owned by dictatio
   await page.close();
 });
 
+// The string the owner was shown when a quick tap closed the offscreen document while the start's
+// reply was still outstanding. It is Chrome's plumbing for a dropped message channel — our failure,
+// never the provider's — so it becomes one plain sentence, the raw text stays on the title, and the
+// press after it starts a real session instead of repeating the same failure.
+const CHANNEL_CLOSED = 'A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received';
+
+test('a lost message channel reads as one plain sentence, and the mic is pressable again straight after', { skip }, async () => {
+  const page = await panel(readyState, {
+    voice: { enabled: true, mode: 'dictate', capability: { canTranscribe: true } },
+  });
+  await page.evaluate(message => {
+    const send = chrome.runtime.sendMessage;
+    window.__starts = 0;
+    chrome.runtime.sendMessage = async request => {
+      if (request.type !== 'dictation:start') return send(request);
+      window.__starts += 1;
+      throw new Error(message);
+    };
+  }, CHANNEL_CLOSED);
+  await page.locator('#mic').dispatchEvent('pointerdown');
+  await page.locator('#mic').dispatchEvent('pointerup');
+  const line = page.locator('#error');
+  await page.waitForFunction(() => document.querySelector('#error').textContent.length > 0);
+  const text = await line.innerText();
+  assert.doesNotMatch(text, /listener|message channel|asynchronous|chrome/i, `Chrome's plumbing must not reach the user, got: ${text}`);
+  assert.match(text, /lost its connection/);
+  assert.equal(await line.getAttribute('title'), CHANNEL_CLOSED, 'the raw text stays available on the title');
+  // A start that never opened a mic must not latch: the very next press is a real start again.
+  await page.locator('#mic').dispatchEvent('pointerdown');
+  assert.equal(await page.evaluate(() => window.__starts), 2);
+  await page.locator('#mic').dispatchEvent('pointerup');
+  await page.close();
+});
+
 // Ownership belongs to whoever owns the listening session, not to whoever pressed last. A panel mic
 // press whose start fails must not take the composer away from a session the panel did not start (the
 // global shortcut, or its hands-free latch — claimed by the listening transition in render()), or that

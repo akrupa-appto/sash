@@ -18,8 +18,18 @@ class FakeRecorder {
 }
 FakeRecorder.isTypeSupported = () => true;
 globalThis.MediaRecorder = FakeRecorder;
+// getUserMedia is the one slow step in start() (a real mic open, or Chrome's first prompt), so the
+// tests below can park it: `mediaGate` holds it open, `mediaError` makes it fail.
+let mediaGate;
+let mediaError;
 Object.defineProperty(globalThis.navigator, 'mediaDevices', {
-  value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => {} }] }) },
+  value: {
+    getUserMedia: async () => {
+      if (mediaGate) await mediaGate;
+      if (mediaError) throw mediaError;
+      return { getTracks: () => [{ stop: () => {} }] };
+    },
+  },
   configurable: true,
 });
 
@@ -163,4 +173,72 @@ test('a final error is redacted with the captured session settings after teardow
   const reply = await stopPromise;
   assert.equal(reply.error, 'provider echoed [redacted]');
   assert.doesNotMatch(reply.error, /session-secret/);
+});
+
+// The quick-tap race: hold-to-talk has no minimum hold, so stop() can arrive while start() is still
+// awaiting getUserMedia. Answering that stop there and letting background close this document is what
+// threw away the start's own reply — Chrome then rejected the caller's pending sendMessage with "A
+// listener indicated an asynchronous response by returning true, but the message channel closed
+// before a response was received". The stop has to wait for the start it overlaps.
+test('a stop that arrives before start() has a recorder waits for the start instead of dropping its reply', async () => {
+  calls = [];
+  specs = [];
+  resolvers.length = 0;
+  sent.length = 0;
+  globalThis.__lastRecorder = undefined;
+  let release;
+  mediaGate = new Promise(resolve => { release = resolve; });
+  const startPromise = send({ type: 'offscreen:start', chunkMs: 4000 });
+  const stopPromise = send({ type: 'offscreen:stop' });
+  let stopAnswered = false;
+  void stopPromise.then(() => { stopAnswered = true; });
+  try {
+    await flush(); await flush();
+    // Nothing may answer yet: closing the document now is exactly how the start's promised reply got
+    // lost. (Before the fix the stop answered immediately, with { text: '' }.)
+    assert.equal(stopAnswered, false, 'stop must not answer while the start it overlaps still owes its reply');
+    assert.equal(globalThis.__lastRecorder, undefined, 'no recorder exists yet, so there is nothing to stop');
+
+    release();
+    assert.deepEqual(await startPromise, { ok: true }, 'the start still answers, even though a stop followed it');
+    assert.deepEqual(await stopPromise, { text: '' }, 'and then the stop answers, with nothing recorded');
+  } finally {
+    mediaGate = undefined;
+    release();
+    await Promise.allSettled([startPromise, stopPromise]);
+    await send({ type: 'offscreen:stop' }).catch(() => {}); // never leave the next test a recorder this one opened
+  }
+});
+
+// The same overlap, where the mic never opened at all (getUserMedia rejects). Both messages must still
+// get an answer — the start its error, the stop an empty success — so the caller is never left with a
+// rejected channel it cannot explain.
+test('a stop before a start that never produced a recorder still answers, and the start still answers', async () => {
+  calls = [];
+  specs = [];
+  resolvers.length = 0;
+  sent.length = 0;
+  globalThis.__lastRecorder = undefined;
+  let release;
+  mediaGate = new Promise(resolve => { release = resolve; });
+  mediaError = new Error('NotAllowedError: Permission dismissed');
+  const startPromise = send({ type: 'offscreen:start' });
+  const stopPromise = send({ type: 'offscreen:stop' });
+  let stopAnswered = false;
+  void stopPromise.then(() => { stopAnswered = true; });
+  try {
+    await flush(); await flush();
+    assert.equal(stopAnswered, false,
+      'stop waits for the start that is still opening the mic, even if that start will fail');
+    release();
+    assert.deepEqual(await startPromise, { error: 'NotAllowedError: Permission dismissed' });
+    assert.deepEqual(await stopPromise, { text: '' }, 'no recorder ever existed, so stop has nothing to release');
+    assert.equal(globalThis.__lastRecorder, undefined);
+  } finally {
+    mediaGate = undefined;
+    mediaError = undefined;
+    release();
+    await Promise.allSettled([startPromise, stopPromise]);
+    await send({ type: 'offscreen:stop' }).catch(() => {});
+  }
 });

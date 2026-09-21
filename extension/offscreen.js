@@ -10,6 +10,10 @@ import { configure, clearConfig } from './config.js';
 
 let stream;
 let recorder;
+// The in-flight start while getUserMedia is still opening the mic. A start is not "done" until it has
+// a recorder, and stop() must not answer (and so must not let the caller close this document) before
+// then — see stop() below.
+let startPromise;
 let chunks = [];
 let chunkMs;
 let sessionSettings;
@@ -93,10 +97,9 @@ function handleChunk(data, mimeType) {
   });
 }
 
-// Starts capture. `chunkMs` set = periodic-chunking mode (incremental partials via handleChunk);
-// unset = record-until-stopped, whole utterance transcribed once on stop().
-async function start(options = {}) {
-  if (recorder) return { ok: true }; // a session is already running; idempotent
+// Actually opens the mic and starts recording. Split out from start() so that the promise stop() waits
+// on is the opening itself, not the (identical) wrapper call a second start would get back.
+async function openMic(options = {}) {
   stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const mimeType = pickMimeType();
   chunks = [];
@@ -117,9 +120,29 @@ async function start(options = {}) {
   return { ok: true };
 }
 
+// Starts capture. `chunkMs` set = periodic-chunking mode (incremental partials via handleChunk);
+// unset = record-until-stopped, whole utterance transcribed once on stop().
+async function start(options = {}) {
+  if (recorder) return { ok: true }; // a session is already running; idempotent
+  if (startPromise) return startPromise; // a start is already opening the mic; it is this same session
+  startPromise = openMic(options);
+  try {
+    return await startPromise;
+  } finally {
+    startPromise = undefined;
+  }
+}
+
 // Stops capture, transcribes whatever was recorded since the last chunk boundary (or the whole
 // clip, in record-until-stopped mode), tears the stream down, and returns the final transcript.
 async function stop() {
+  // Hold-to-talk has no minimum hold, so a stop can arrive while start() is still awaiting
+  // getUserMedia. Answering it now and letting the caller close this document is what threw the
+  // start's reply away: Chrome then rejected the caller's pending sendMessage with "A listener
+  // indicated an asynchronous response by returning true, but the message channel closed before a
+  // response was received". This reply is the caller's signal that the document is safe to close, so
+  // wait for the mic to finish opening (or fail to) first.
+  if (startPromise) await startPromise.catch(() => {});
   if (!recorder) return { text: '' };
   const mimeType = recorder.mimeType;
   const finished = new Promise(resolve => recorder.addEventListener('stop', resolve, { once: true }));
