@@ -1,66 +1,78 @@
 # Sash
 
-Sash is a Chrome extension that drives your browser with an LLM agent. Open the side panel, type a task in plain language, and the agent reads the page, clicks, types, and selects through `chrome.debugger` on your own tabs, using your own browser sessions. There is no Sash backend involved in that flow: your task text and page content go straight from the extension to the model provider you configured.
+A Chrome side panel that does the clicking for you.
 
-The repo also has a small Node dev server (`src/server.ts`) used to develop and test the same agent, planner, and provider code outside the browser, and an Anchor Browser adapter for running it against a remote browser session instead of a local one.
+Type what you want in plain language. Sash reads the tab you already have open, clicks and types through it, and answers from what it actually saw. Your keys stay in this Chrome profile. There is no Sash backend on that path — page text and instructions go straight to the model provider you configured.
 
-## Install the extension
+![Sash filling a checkout form](docs/images/together-done.png)
 
-1. Download `sash-extension.zip` from the latest release ([extension-v0.4.3](https://github.com/akrupa-appto/checkto/releases/tag/extension-v0.4.3) at time of writing).
+<video src="docs/images/panel-run.mp4" width="400" controls poster="docs/images/panel-done.png"></video>
+
+## How it looks
+
+Open the panel on any site. Say the job like you would to a person.
+
+![Empty Sash panel with example tasks](docs/images/panel-intro.png)
+
+While it works you get a live ticker, a tick per step, and a stop button. You can watch the page change at the same time.
+
+![Sash typing into a live checkout form](docs/images/together-working.png)
+
+When it is done, the answer sits under the steps it took — here, it typed Ada, picked the Team plan, and saved.
+
+![Finished Sash run with expanded steps](docs/images/panel-done.png)
+
+## Things people actually type
+
+These are the same chips on the empty panel. Point it at a real tab first.
+
+- fill in this form with sensible details
+- find the cheapest option on this page
+- draft a reply to this email
+- compare the prices in these tabs
+
+Type `@` in the box to attach another open tab. Right-click a page, selection, or link and choose **Ask Sash**.
+
+## Install
+
+Requires Chrome 118 or later.
+
+1. Download `sash-extension.zip` from the [latest release](https://github.com/akrupa-appto/checkto/releases/latest).
 2. Unzip it.
-3. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and choose the unzipped `sash-extension` folder (the one containing `manifest.json`).
-4. Open the extension's settings tab and add a provider key (see below).
-5. Pin Sash in Chrome's extensions menu, open a site, click the icon, and type a task. Type `@` in the task box to search and attach other open tabs.
+3. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick the unzipped `sash-extension` folder (the one with `manifest.json` in it).
+4. Open **settings** from the panel, paste a provider key, save.
+5. Pin Sash, open a site, click the icon, type a task.
 
-Requires Chrome 118 or later. See `extension/README.md` for what the extension stores locally, what it sends to providers, and its exact permissions.
+Chrome shows its debugger banner while a task is running. **Stop**, closing the tab, or dismissing that banner ends control.
 
-## Configure a provider
+## Your keys, your tabs
 
-Sash talks to a chat/completions API to plan and act. In the settings tab:
+![Sash settings: keys stay on this device](docs/images/settings-connections.png)
 
-- **OpenRouter** (default) — paste an OpenRouter key. This is the simplest path and unlocks the widest model list.
-- **Official APIs** — prefix a model ID with `openai:` or `gemini:` to call OpenAI or Google's Gemini API directly with your own key for that provider, instead of routing through OpenRouter.
-- **Custom OpenAI-compatible server** — point at any OpenAI-compatible chat completions endpoint (base URL plus key). Chrome will ask once to allow that site.
+- Keys live in `chrome.storage.local` on this profile. They are not synced. They are never sent to a Sash server.
+- During a task, instructions, tab titles and URLs, and visible page text go to the provider you picked.
+- **OpenRouter** is the simple default (widest model list). Prefix a model with `openai:` or `gemini:` to call those APIs directly. Or point at any OpenAI-compatible server.
+- **Careful** uses a planner plus Jev. **Fast** is Jev only — you choose; Sash will not silently switch.
 
-The model picker in settings lists whichever models your saved keys unlock, along with the reasoning levels each model accepts.
+Permissions, local storage, and what leaves the machine are spelled out in [`extension/README.md`](extension/README.md).
 
-## Run the dev server
+## Develop
 
 ```sh
 npm ci
-npm start
+npm test                 # builds the extension, then runs tests/
+npm run build:extension  # dist/sash-extension
+npm run package:extension
 ```
 
-`npm start` runs `src/server.ts` directly — Node 24 strips TypeScript types at runtime, so there's no build step for the server. Set `OPENROUTER_API_KEY` (and `ANCHOR_API_KEY` if you want remote browser sessions instead of local Playwright Chromium) via `.env` or the environment.
-
-## Run the tests
-
-```sh
-npm test
-```
-
-This builds the extension bundle first (`pretest` runs `npm run build:extension`), then runs every test under `tests/` (`*.test.mjs` and `*.test.ts`) with `node --experimental-test-module-mocks`. `panel.test.mjs` and `content.test.mjs` render real HTML in a local Chromium via Playwright; install it once with `npx playwright install chromium` if it's missing.
-
-Other useful scripts:
-
-```sh
-npm run build:extension    # esbuild bundle into dist/sash-extension
-npm run package:extension  # zip it into dist/sash-extension.zip
-npm run test:extension     # load the built extension in a disposable Chromium and drive real Chrome APIs
-```
-
-## Repo layout
+Node 24 runs `src/server.ts` with type stripping (`npm start`). That server is for lab work (including remote Anchor sessions). The Chrome extension does not need it.
 
 ```
 src/          agent loop, planner, providers, browser adapter, dev server
-extension/    the Chrome extension (self-contained; bundles src/ code via esbuild)
-public/       static assets served by the dev server, shared with the extension settings page
-tests/        every test (*.test.mjs, *.test.ts) and tests/fixtures/
-scripts/      build, package, and QA scripts for the extension
+extension/    Chrome extension (bundles src/ via esbuild)
+public/       static files for the lab server
+tests/        every test
+docs/images/  README screenshots (regenerate with node scripts/capture-readme.mjs)
 ```
 
-`AGENTS.md` and `DECISIONS.md` at the repo root are for agents and maintainers working in this codebase, not end users.
-
-## Contributing
-
-There's no license file yet — that's a decision for the maintainer, not assumed here. Issues and PRs otherwise welcome.
+No license file yet. Issues and PRs welcome.

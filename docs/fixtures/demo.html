@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Northwind · checkout</title>
+<style>
+  :root { color-scheme: light; --ink:#1a1c19; --muted:#5c6359; --line:#d8ddd4; --bg:#f4f1ea; --card:#fff; --acc:#2c4a3a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 ui-sans-serif, system-ui, sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 18px 32px; border-bottom: 1px solid var(--line); background: var(--card); }
+  header strong { letter-spacing: -.02em; }
+  header span { color: var(--muted); font-size: 13px; }
+  main { max-width: 640px; margin: 40px auto; padding: 0 24px 80px; }
+  h1 { font-size: 28px; letter-spacing: -.03em; margin: 0 0 8px; }
+  .lead { color: var(--muted); margin: 0 0 28px; }
+  form { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 24px; display: grid; gap: 16px; }
+  label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+  input, select { font: inherit; color: var(--ink); padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  button { justify-self: start; font: 600 14px/1 inherit; padding: 10px 16px; border: 0; border-radius: 999px; background: var(--acc); color: #f6f8f4; cursor: pointer; }
+  #result { margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: #e8efe6; color: #24352c; font-size: 14px; }
+  .plans { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin: 0 0 20px; }
+  .plans div { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .plans b { display: block; font-size: 18px; }
+  .plans i { font-style: normal; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header><strong>Northwind</strong><span>checkout · demo page for sash</span></header>
+<main>
+  <h1>Finish your order</h1>
+  <p class="lead">Three plans. Pick one, put a name on the account, save.</p>
+  <div class="plans">
+    <div><b>Basic</b><i>$12 / mo</i></div>
+    <div><b>Team</b><i>$29 / mo</i></div>
+    <div><b>Business</b><i>$79 / mo</i></div>
+  </div>
+  <form id="form">
+    <label>name <input aria-label="name" name="name" value="replace me"></label>
+    <label>plan <select aria-label="plan"><option>basic</option><option>team</option><option>business</option></select></label>
+    <button>save</button>
+  </form>
+  <p id="result">not saved</p>
+</main>
+<script>
+document.querySelector('form').onsubmit = e => {
+  e.preventDefault();
+  document.querySelector('#result').textContent =
+    'saved: ' + document.querySelector('[name=name]').value + ' / ' + document.querySelector('select').value;
+};
+</script>
+</body>
+</html>
