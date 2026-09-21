@@ -19,6 +19,7 @@ const accessPrompts = [];
 const grantedOrigins = [];
 let allowAccess = true;
 const sidePanelOpens = [];
+const sidePanelCloses = [];
 const menuCreated = [];
 let pendingRequest; // set to make the fixture run end waiting on the user
 let nextOutcome; // set to make the fake run end straight away with that outcome
@@ -35,14 +36,23 @@ const tabsCreated = [];
 let cursorSink; // background.js installs this into browser.js; tests drive it the way point() does
 
 globalThis.chrome = {
-  storage: { local: {
-    setAccessLevel: async () => {},
-    get: async key => {
-      if (storageFails) throw new Error('storage read failed');
-      return { [key]: structuredClone(data[key]) };
+  storage: {
+    local: {
+      setAccessLevel: async () => {},
+      get: async key => {
+        if (storageFails) throw new Error('storage read failed');
+        return { [key]: structuredClone(data[key]) };
+      },
+      set: async values => Object.assign(data, structuredClone(values)),
     },
-    set: async values => Object.assign(data, structuredClone(values)),
-  } },
+    // What the panel's open/closed events are recorded in: session storage survives a service-worker
+    // restart, which `data` here stands in for (the worker module is imported once, so a restart is
+    // "the in-memory record is gone but storage still has it").
+    session: {
+      get: async key => ({ [key]: structuredClone(data[key]) }),
+      set: async values => Object.assign(data, structuredClone(values)),
+    },
+  },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
     onMessage: events(), onInstalled: events(), openOptionsPage: async () => {},
     // Real Chrome's recommended way to check for an existing offscreen document.
@@ -93,7 +103,12 @@ globalThis.chrome = {
     request: async () => { throw new Error('the service worker must not call permissions.request'); },
   },
   debugger: { onDetach: events() },
-  sidePanel: { setPanelBehavior: async () => {}, open: async opts => { sidePanelOpens.push(opts); } },
+  sidePanel: {
+    setPanelBehavior: async () => {},
+    open: async opts => { sidePanelOpens.push(opts); },
+    close: async opts => { sidePanelCloses.push(opts); },
+    onOpened: events(), onClosed: events(),
+  },
   commands: { onCommand: events() },
   contextMenus: { create: (opts, cb) => { menuCreated.push(opts); cb?.(); }, removeAll: cb => cb(), onClicked: events() },
   offscreen: {
@@ -595,6 +610,82 @@ test('the open-panel keyboard command opens the side panel on the active tab win
   chrome.commands.onCommand.fire('open-panel');
   await until(() => sidePanelOpens.length === before + 1);
   assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
+});
+
+// There is no getter for "is the panel open": chrome.sidePanel.getOptions() answers path/enabled
+// and getLayout() answers which side it is docked to, and neither says open. Chrome's onOpened /
+// onClosed events are the only source, so these tests drive them the way Chrome does — and assert
+// on chrome.storage.session, the record a restarted worker actually reads, never on a
+// worker-internal variable that would only prove the harness leaked state between calls.
+const panelOpened = windowId => {
+  chrome.sidePanel.onOpened.fire({ windowId, path: 'panel.html' });
+  return until(() => data.sidePanelOpenWindows?.includes(windowId));
+};
+const panelClosedByHand = windowId => {
+  chrome.sidePanel.onClosed.fire({ windowId, path: 'panel.html' });
+  return until(() => !data.sidePanelOpenWindows?.includes(windowId));
+};
+
+test('the open-panel command closes the panel when that window already has it open', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(7);
+  // The record is in session storage, not in the worker: that is what a restarted worker reads,
+  // and it is the state the next press has to decide from.
+  assert.deepEqual(data.sidePanelOpenWindows, [7]);
+  const opens = sidePanelOpens.length;
+  const closes = sidePanelCloses.length;
+  chrome.commands.onCommand.fire('open-panel', { id: 12, windowId: 7, active: true });
+  await until(() => sidePanelCloses.length === closes + 1);
+  assert.deepEqual(sidePanelCloses.at(-1), { windowId: 7 });
+  assert.equal(sidePanelOpens.length, opens, 'an open panel is closed, never opened again');
+});
+
+// The panel is per window and so is the record: a window with its panel open must not close (or be
+// opened because of) another window's state. The tab the command listener hands over is the tab
+// whose window is meant, so a stale window id from a fresh tabs.query must not win over it.
+test('the toggle follows the window the command listener hands over, not a fresh tabs.query', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(9);
+  const opens = sidePanelOpens.length;
+  const closes = sidePanelCloses.length;
+  chrome.commands.onCommand.fire('open-panel', { id: 99, windowId: 9, active: true });
+  await until(() => sidePanelCloses.length === closes + 1);
+  assert.deepEqual(sidePanelCloses.at(-1), { windowId: 9 });
+  assert.equal(sidePanelOpens.length, opens, 'window 7 (what tabs.query would answer) is not the window being toggled');
+});
+
+// The X button: Chrome fires the same onClosed for a panel the user closed by hand, and the next
+// press must open rather than fire a close() at a panel that is already gone.
+test('a panel the user closed by hand is not treated as open by the next press', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(7);
+  await panelClosedByHand(7);
+  const opens = sidePanelOpens.length;
+  const closes = sidePanelCloses.length;
+  chrome.commands.onCommand.fire('open-panel');
+  await until(() => sidePanelOpens.length === opens + 1);
+  assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
+  assert.equal(sidePanelCloses.length, closes, 'the X already closed it; this press must not close a closed panel');
+});
+
+// The extension's minimum is Chrome 118, where close() does not exist. The command keeps working
+// as the open-only shortcut it was; it must not throw on the missing method, and the tracked state
+// must not make it call something a newer Chrome would have had.
+test('a browser without sidePanel.close still opens the panel', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(7);
+  const close = chrome.sidePanel.close;
+  delete chrome.sidePanel.close;
+  try {
+    const opens = sidePanelOpens.length;
+    const closes = sidePanelCloses.length;
+    chrome.commands.onCommand.fire('open-panel');
+    await until(() => sidePanelOpens.length === opens + 1);
+    assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
+    assert.equal(sidePanelCloses.length, closes);
+  } finally {
+    chrome.sidePanel.close = close;
+  }
 });
 
 test('an unrelated command is ignored', async () => {

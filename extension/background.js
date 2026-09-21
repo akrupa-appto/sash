@@ -996,7 +996,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.runtime.onInstalled.addListener(({ reason }) => { if (reason === 'install') chrome.runtime.openOptionsPage(); });
 
-// Keyboard shortcut: open the side panel on the active tab's window (mirrors chatgpt's open-codex-side-panel).
+// Opens the side panel on a window — the current one when none is given. This is the open half of
+// the keyboard command below, and what the right-click entry uses; mirrors chatgpt's
+// open-codex-side-panel.
 export async function openSidePanel(windowId) {
   if (windowId == null) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -1004,12 +1006,62 @@ export async function openSidePanel(windowId) {
   }
   if (windowId != null) await chrome.sidePanel.open({ windowId });
 }
+// --- the side panel's open state, per window ---------------------------------------------------
+// Nothing in the side panel API reports whether the panel is currently open: getOptions() answers
+// path/enabled and getLayout() answers which side it is docked to, and neither says "open". The
+// only source is Chrome's own onOpened/onClosed events (Chrome 141/142). They describe a window,
+// and the panel belongs to the window — the global panel shows on every tab of it — so what gets
+// recorded is the set of window ids whose panel is open.
+// That record lives in chrome.storage.session, never in a module variable: the MV3 worker is
+// suspended and restarted between presses, and would come back with an empty memory. Session
+// storage survives exactly those restarts, and is cleared when the browser exits — which is
+// correct, because the panel goes with the browser. Chrome wakes the suspended worker to deliver
+// a registered event, so a panel closed by hand (its own X) is recorded too, and the next press
+// sees the panel closed instead of firing a close() that would do nothing.
+const PANEL_WINDOWS_KEY = 'sidePanelOpenWindows';
+// Both events, not either: onOpened alone (Chrome 141) cannot say the panel closed, and a record
+// that only ever grows would turn the command into a close() no-op after the first manual close.
+const panelStateEvents = chrome.sidePanel?.onOpened && chrome.sidePanel?.onClosed;
+async function panelOpenWindowIds() {
+  try {
+    const stored = await chrome.storage.session.get(PANEL_WINDOWS_KEY);
+    const ids = stored?.[PANEL_WINDOWS_KEY];
+    return new Set(Array.isArray(ids) ? ids.filter(Number.isInteger) : []);
+  } catch { return new Set(); }
+}
+async function rememberPanelOpen(windowId, open) {
+  if (!Number.isInteger(windowId)) return;
+  const ids = await panelOpenWindowIds();
+  if (open) ids.add(windowId); else ids.delete(windowId);
+  try { await chrome.storage.session.set({ [PANEL_WINDOWS_KEY]: [...ids] }); } catch {}
+}
+if (panelStateEvents) {
+  chrome.sidePanel.onOpened.addListener(({ windowId }) => { void rememberPanelOpen(windowId, true); });
+  chrome.sidePanel.onClosed.addListener(({ windowId }) => { void rememberPanelOpen(windowId, false); });
+}
+// The open-panel command toggles: a window whose panel is already open gets it closed, any other
+// window gets today's open. Both halves are per window, because that is the scope of the panel and
+// of the record above. close() is Chrome 141+; without it the command can only open, which is
+// exactly what it did before this existed. Without the events there is no state at all, so it also
+// only opens rather than guessing and closing a panel it cannot see.
+export async function toggleSidePanel(windowId) {
+  if (windowId == null) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    windowId = tab?.windowId;
+  }
+  if (windowId == null) return;
+  if (typeof chrome.sidePanel.close === 'function' && (await panelOpenWindowIds()).has(windowId)) {
+    await chrome.sidePanel.close({ windowId });
+    return;
+  }
+  await chrome.sidePanel.open({ windowId });
+}
 chrome.commands?.onCommand.addListener((command, tab) => {
   if (command !== 'open-panel') return;
   // The command listener gets the window's active tab directly; prefer that over the extra
-  // chrome.tabs.query round trip in openSidePanel, which can resolve to a window that's no
+  // chrome.tabs.query round trip in toggleSidePanel, which can resolve to a window that's no
   // longer focused by the time it settles. Falls back to that query when no tab is given.
-  void openSidePanel(tab?.windowId);
+  void toggleSidePanel(tab?.windowId);
 });
 
 // Right-click entry: send the selection or link into a chat run on the clicked tab.

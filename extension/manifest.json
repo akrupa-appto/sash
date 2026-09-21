@@ -49,7 +49,7 @@
         "default": "Ctrl+Shift+Period",
         "mac": "Command+Shift+Period"
       },
-      "description": "Open the checkto panel"
+      "description": "Open or close the checkto panel"
     },
     "toggle-dictation": {
       "suggested_key": {
