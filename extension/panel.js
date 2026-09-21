@@ -85,6 +85,10 @@ async function startDictation() {
   try {
     const reply = await request({ type: 'dictation:start', chunkMs: chunkMsFor(voice.mode) });
     if (!reply.ok) { startFailed(); showError(new Error(reply.error || 'could not start the mic')); }
+    // The mic is really listening, so whatever the last press failed with — a permission denial the
+    // grant tab was opened for, or a connection that dropped — is stale now and must stop sitting in
+    // the error line while dictation works.
+    else clearError();
   } catch (err) { startFailed(); showError(err); }
   renderMic();
 }
@@ -679,6 +683,14 @@ const PROVIDER_SUFFIX = /\s*(?:transcription|request|chat|completion|generation)
 // error was being reported as a connection failure the provider never mentioned. Anything that is
 // not one of these shapes stays verbatim.
 const NETWORK_ERROR = /^(?:[A-Za-z_$]*Error:\s*)?(?:failed to fetch|fetch failed|load failed|network ?error when attempting to fetch resource\.?|network request failed|the operation was aborted due to timeout|the network connection was lost\.?|a server with the specified hostname could not be found\.?|socket hang up|(?:connect|read|write|getaddrinfo|querya|querysrv) (?:econnrefused|econnreset|econnaborted|etimedout|ehostunreach|enetunreach|enotfound|eai_again)\b[^\n]*|(?:net::)?(?:econnrefused|econnreset|etimedout|enotfound|eai_again|err_name_not_resolved|err_connection_refused|err_connection_timed_out|err_connection_reset|err_internet_disconnected|err_network_changed))\s*$/i;
+// Chrome's own plumbing for a message channel or an offscreen document that went away mid-request —
+// `chrome.runtime.sendMessage` rejecting with an internal string. That is this extension's failure,
+// never a provider's: there is nothing in settings to change and nothing the model provider said, so
+// it gets one plain sentence instead of the string it arrived as. Anchored to the whole message, and
+// to Chrome's exact phrasings, so ordinary text that merely contains these words is still shown
+// verbatim. ("a listener indicated an asynchronous response by returning true, but " is Chrome's own
+// prologue on the message-channel form.)
+const LOST_CHANNEL = /^(?:a listener indicated an asynchronous response by returning true, but )?(?:the message (?:channel|port) closed before (?:a response was received|the receiving end)|could not establish connection(?:\. receiving end does not exist)?|receiving end does not exist|offscreen document closed before fully loading|extension context invalidated)\.?$/i;
 function humanError(message) {
   const raw = String(message ?? '').trim();
   const match = raw.match(PROVIDER_ERROR);
@@ -689,6 +701,7 @@ function humanError(message) {
   if (status === 429) return `${provider} is rate-limiting this key, or its quota is used up. wait a moment and try again.`;
   if (status >= 500) return `${provider} failed at its own end (${status}). that one is theirs, not yours — try again in a moment.`;
   if (NETWORK_ERROR.test(raw)) return 'checkto could not reach the model provider: the connection failed. check this machine is online, then try again.';
+  if (LOST_CHANNEL.test(raw)) return 'checkto lost its connection to the browser before it could finish. try again, and reopen this panel if it keeps happening.';
   return raw;
 }
 function setErrorLine(message) {

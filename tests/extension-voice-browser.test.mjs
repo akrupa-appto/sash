@@ -5,7 +5,11 @@ import { chromium } from 'playwright';
 
 const extension = path.resolve('dist/checkto-extension');
 
-async function withInstalledExtension(run) {
+// `fakeUi` is Chrome's automatic permission answer: without it the first getUserMedia has to ask, and
+// headless Chromium has nowhere to show that prompt, so it comes back as "Permission dismissed" — the
+// state the full-tab grant page exists for. `grantMic: false` skips the pre-granted page so a test can
+// exercise that first-run path.
+async function withInstalledExtension(run, { fakeUi = true, grantMic = true } = {}) {
   const context = await chromium.launchPersistentContext('', {
     channel: 'chromium',
     headless: true,
@@ -13,20 +17,23 @@ async function withInstalledExtension(run) {
       `--disable-extensions-except=${extension}`,
       `--load-extension=${extension}`,
       '--use-fake-device-for-media-stream',
-      '--use-fake-ui-for-media-stream',
+      ...(fakeUi ? ['--use-fake-ui-for-media-stream'] : []),
     ],
   });
   try {
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const extensionId = new URL(worker.url()).host;
-    const permission = await context.newPage();
-    const permissionUrl = `chrome-extension://${extensionId}/mic-permission.html`;
-    // Chrome may open options_ui once on first install and race this page's first navigation.
-    await permission.goto(permissionUrl).catch(() => {});
-    if (permission.url() !== permissionUrl) await permission.goto(permissionUrl);
-    await permission.locator('#grant').click();
-    await permission.waitForFunction(() => document.querySelector('#status').textContent.includes('granted'));
-    await run({ context, worker, permission });
+    let permission;
+    if (grantMic) {
+      permission = await context.newPage();
+      const permissionUrl = `chrome-extension://${extensionId}/mic-permission.html`;
+      // Chrome may open options_ui once on first install and race this page's first navigation.
+      await permission.goto(permissionUrl).catch(() => {});
+      if (permission.url() !== permissionUrl) await permission.goto(permissionUrl);
+      await permission.locator('#grant').click();
+      await permission.waitForFunction(() => document.querySelector('#status').textContent.includes('granted'));
+    }
+    await run({ context, worker, extensionId, permission });
   } finally {
     await context.close();
   }
@@ -100,4 +107,67 @@ test('installed extension reports a missing key for the selected voice provider 
     assert.match(stopped.error, /OpenAI needs an API key to transcribe audio/);
     assert.equal(await offscreenCount(worker), 0, 'the offscreen mic context closes after failed transcription');
   });
+});
+
+// Chrome's own plumbing for a message channel that went away mid-request. It is never the provider's
+// failure and must never be shown to the user as one.
+const CHROME_PLUMBING = /message channel closed|listener indicated an asynchronous response|receiving end does not exist|offscreen document closed|message port closed/i;
+
+test('a quick tap on the mic never surfaces Chrome\'s channel plumbing and leaves no session behind', { timeout: 30_000 }, async () => {
+  await withInstalledExtension(async ({ context, worker, extensionId, permission }) => {
+    await permission.evaluate(value => chrome.storage.local.set({ settings: value }), settings({
+      openaiKey: 'voice-key',
+      voiceProvider: 'openai',
+    }));
+    const panel = await context.newPage();
+    await panel.goto(`chrome-extension://${extensionId}/panel.html`);
+    await panel.waitForSelector('#goal');
+    await panel.waitForTimeout(300);
+    assert.equal(await panel.locator('#mic').isVisible(), true, 'the mic must be usable for this tap to mean anything');
+
+    // A real tap on the real button: press and release with nothing in between, so the stop reaches
+    // the worker while the mic is still opening. Before the fix the stop's teardown closed the
+    // offscreen document with the start's reply outstanding, and the panel printed Chrome's string.
+    await panel.locator('#mic').dispatchEvent('pointerdown');
+    await panel.locator('#mic').dispatchEvent('pointerup');
+    await panel.waitForTimeout(2500);
+
+    const json = JSON.stringify(await panel.evaluate(async () => ({
+      error: document.querySelector('#error').textContent,
+      title: document.querySelector('#error').getAttribute('title'),
+      dictation: (await chrome.runtime.sendMessage({ type: 'getState' })).state?.dictation,
+    })));
+    assert.doesNotMatch(json, CHROME_PLUMBING, `Chrome's plumbing must not reach the panel or its state, got: ${json}`);
+    assert.equal(await offscreenCount(worker), 0, 'the tap leaves no offscreen document (and so no hot mic) behind');
+  });
+});
+
+// With no mic grant yet, the first press cannot open the mic and the worker opens the full-tab grant
+// page. Before the fix every further press opened another copy of it (and Chrome logged "Navigation to
+// .../mic-permission.html is interrupted by another navigation to .../mic-permission.html"); the page
+// that is already open has to be the one the user is sent back to.
+test('a repeated mic permission failure focuses the grant page instead of opening a second one', { timeout: 30_000 }, async () => {
+  await withInstalledExtension(async ({ context, worker, extensionId }) => {
+    await worker.evaluate(value => chrome.storage.local.set({ settings: value }), settings({
+      openaiKey: 'voice-key',
+      voiceProvider: 'openai',
+    }));
+    const permissionUrl = `chrome-extension://${extensionId}/mic-permission.html`;
+    const permissionPages = () => context.pages().filter(page => page.url() === permissionUrl);
+    const panel = await context.newPage();
+    await panel.goto(`chrome-extension://${extensionId}/panel.html`);
+    await panel.waitForSelector('#goal');
+    await panel.waitForTimeout(300);
+
+    const first = await send(panel, { type: 'dictation:start' });
+    assert.equal(first.ok, false, JSON.stringify(first));
+    assert.equal(first.needsPermissionTab, true, JSON.stringify(first));
+    await panel.waitForTimeout(500);
+    assert.equal(permissionPages().length, 1, 'the first failure opens the one-time grant page');
+
+    const second = await send(panel, { type: 'dictation:start' });
+    assert.equal(second.needsPermissionTab, true, JSON.stringify(second));
+    await panel.waitForTimeout(500);
+    assert.equal(permissionPages().length, 1, 'a second failure must focus that page, never open another copy');
+  }, { fakeUi: false, grantMic: false });
 });

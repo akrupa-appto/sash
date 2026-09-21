@@ -123,20 +123,56 @@ async function closeOffscreen() {
   if (!chrome.offscreen) return;
   await chrome.offscreen.closeDocument().catch(() => {});
 }
-// Tears an in-flight (or errored) dictation session down the same way an explicit
-// 'dictation:stop' does: tell the offscreen document to stop capture, then close the document so
-// no getUserMedia stream survives it. Any path that abandons a session — new chat, a stopped task,
-// or the explicit stop button — must call this rather than dropping state.dictation on the floor,
-// or the mic keeps recording with nothing left to reach it.
-async function teardownDictation() {
+// Dictation transitions — start, stop, and the teardown any abandoned session needs — run one at a
+// time, in the order they arrived. Hold-to-talk has no minimum hold, so a quick tap sends
+// dictation:stop while dictation:start is still awaiting getUserMedia to open the mic. Running the two
+// concurrently is what let the stop's teardown close the offscreen document with the start's own reply
+// still outstanding: Chrome rejected that pending message with "A listener indicated an asynchronous
+// response by returning true, but the message channel closed before a response was received", and the
+// worker reported that plumbing string as if it were the provider's error. It also let a stop that had
+// already finished be overwritten by the start's own 'listening' state a moment later, leaving a
+// live-looking session with no microphone behind it.
+let dictationQueue = Promise.resolve();
+function dictationTransition(run) {
+  const next = dictationQueue.catch(() => {}).then(run);
+  dictationQueue = next.catch(() => {});
+  return next;
+}
+async function teardownDictationNow() {
   if (!state.dictation || state.dictation.status === 'idle') return;
   await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(() => {});
   await closeOffscreen();
   state.dictation = undefined;
 }
+// Tears an in-flight (or errored) dictation session down the same way an explicit
+// 'dictation:stop' does: tell the offscreen document to stop capture, then close the document so
+// no getUserMedia stream survives it. Any path that abandons a session — new chat, a stopped task,
+// or the explicit stop button — must call this rather than dropping state.dictation on the floor,
+// or the mic keeps recording with nothing left to reach it. Serialized with start/stop for the same
+// reason they are serialized with each other, and short-circuited while idle so the call a stop
+// transition makes for itself cannot queue behind that same transition.
+async function teardownDictation() {
+  if (!state.dictation || state.dictation.status === 'idle') return;
+  return dictationTransition(teardownDictationNow);
+}
 // A first-run grant commonly needs one full-tab navigation before the offscreen document can reuse
 // the permission (see extension/mic-permission.html); anything that looks like that denial opens it.
 const NEEDS_PERMISSION_TAB = /permission|notallowed|dismissed/i;
+// Chrome's own plumbing for "the other end of this message is gone": the offscreen document or the
+// message channel went away mid-request. That is this extension's failure, never the provider's —
+// there is nothing in settings to change and the provider said nothing — so it must not be reported as
+// a provider error, and must not be latched as one the next press repeats.
+const CHANNEL_GONE = /message channel closed|message port closed|receiving end does not exist|offscreen document closed|extension context invalidated/i;
+// One grant page, not one per failed press. Opening a second copy over the first made Chrome log
+// "Navigation to .../mic-permission.html is interrupted by another navigation to .../mic-permission.html"
+// (the installed-extension voice test caught exactly that), and left the user with stacked tabs.
+async function openMicPermissionTab() {
+  const url = chrome.runtime.getURL('mic-permission.html');
+  const existing = await chrome.tabs.query({ url }).catch(() => []);
+  const open = existing.find(tab => typeof tab.id === 'number');
+  if (open) { await chrome.tabs.update(open.id, { active: true }).catch(() => {}); return; }
+  await chrome.tabs.create({ url }).catch(() => {});
+}
 
 let active;
 let state = { running: false, messages: [], steps: [], status: 'ready', requests: [] };
@@ -242,7 +278,10 @@ const dictationToggle = createDictationToggle({
       if (!settings.voiceEnabled) { dictationToggle.cancelStart(); return; }
       const eagerness = resolveVoiceMode(settings.voiceMode, voiceCapability(settings));
       if (!eagerness) { dictationToggle.cancelStart(); return; }
-      await handle({ type: 'dictation:start', chunkMs: chunkMsFor(eagerness) });
+      const reply = await handle({ type: 'dictation:start', chunkMs: chunkMsFor(eagerness) });
+      // A start that never opened a mic must not leave the toggle latched 'on': the next press would
+      // otherwise be read as the stop for a session that does not exist.
+      if (!reply?.ok) dictationToggle.cancelStart();
     } catch { /* surfaced to the user as state.dictation.status === 'error' already */ }
   })(); },
   onStop: () => { void handle({ type: 'dictation:stop' }).catch(() => {}); },
@@ -837,57 +876,81 @@ async function handle(message) {
   // Voice dictation: start capture (creates the offscreen document if needed), forward the command,
   // and translate a permission failure into opening the one-time full-tab grant page.
   if (message.type === 'dictation:start') {
-    // Read settings before creating anything: opening the offscreen document is a side effect, and a
-    // failed read after it leaves a document with no session behind it.
-    const settings = await readSettings().catch(() => ({}));
-    try {
-      await ensureOffscreen();
-    } catch (err) {
-      return { ok: false, error: safeError(err, settings) };
-    }
-    // Raw audio still never crosses a runtime message; only the transcript text comes back.
-    const reply = await chrome.runtime.sendMessage({ type: 'offscreen:start', chunkMs: message.chunkMs, settings: voiceSettingsFor(settings) }).catch(err => ({ error: safeError(err, settings) }));
-    if (reply?.error) {
-      await closeOffscreen();
-      const error = safeError(reply.error, settings);
-      const needsPermissionTab = NEEDS_PERMISSION_TAB.test(error);
-      if (needsPermissionTab) await chrome.tabs.create({ url: chrome.runtime.getURL('mic-permission.html') }).catch(() => {});
-      state.dictation = { status: 'error', error };
+    return dictationTransition(async () => {
+      // Read settings before creating anything: opening the offscreen document is a side effect, and a
+      // failed read after it leaves a document with no session behind it.
+      const settings = await readSettings().catch(() => ({}));
+      try {
+        await ensureOffscreen();
+      } catch (err) {
+        return { ok: false, error: safeError(err, settings) };
+      }
+      // Raw audio still never crosses a runtime message; only the transcript text comes back.
+      const reply = await chrome.runtime.sendMessage({
+        type: 'offscreen:start', chunkMs: message.chunkMs, settings: voiceSettingsFor(settings),
+      }).catch(err => ({ error: safeError(err, settings) }));
+      if (reply?.error) {
+        await closeOffscreen();
+        const error = safeError(reply.error, settings);
+        // A vanished document is not a provider failure and not a permission problem: there is no
+        // session, nothing for the user to change, and nothing to leave latched. The panel turns this
+        // raw string into one plain sentence; the next press starts clean.
+        if (CHANNEL_GONE.test(error)) {
+          state.dictation = undefined;
+          await persist();
+          return { ok: false, error, needsPermissionTab: false };
+        }
+        const needsPermissionTab = NEEDS_PERMISSION_TAB.test(error);
+        if (needsPermissionTab) await openMicPermissionTab();
+        state.dictation = { status: 'error', error };
+        await persist();
+        return { ok: false, error, needsPermissionTab };
+      }
+      dictationTriggered = false; // a fresh session: eager/prewarm may auto-run again for it
+      // `sessionId` is the one thing that tells a session apart from the one before it. A nonfatal chunk
+      // failure leaves the mic on and the state shape otherwise identical (status flickers to 'error' and
+      // back), so without it a listener that owns the composer cannot tell a new session from a flicker.
+      state.dictation = { status: 'listening', partialText: '', sessionId: crypto.randomUUID() };
       await persist();
-      return { ok: false, error, needsPermissionTab };
-    }
-    dictationTriggered = false; // a fresh session: eager/prewarm may auto-run again for it
-    // `sessionId` is the one thing that tells a session apart from the one before it. A nonfatal chunk
-    // failure leaves the mic on and the state shape otherwise identical (status flickers to 'error' and
-    // back), so without it a listener that owns the composer cannot tell a new session from a flicker.
-    state.dictation = { status: 'listening', partialText: '', sessionId: crypto.randomUUID() };
-    await persist();
-    return { ok: true };
+      return { ok: true };
+    });
   }
   // Stop capture, transcribe whatever is left, then always tear the offscreen document down —
   // whether or not the offscreen side reported an error — so nothing keeps a hot mic.
   if (message.type === 'dictation:stop') {
-    // Settings are only needed to redact an error here, so a storage read that fails must not be
-    // able to skip the teardown below: the mic is released no matter what.
-    const settings = await readSettings().catch(() => ({}));
-    let reply;
-    try {
-      reply = await chrome.runtime.sendMessage({ type: 'offscreen:stop' }).catch(err => ({ error: safeError(err, settings) }));
-    } finally {
+    return dictationTransition(async () => {
+      // Settings are only needed to redact an error here, so a storage read that fails must not be
+      // able to skip the teardown below: the mic is released no matter what.
+      const settings = await readSettings().catch(() => ({}));
+      // Nothing live means no mic to release and no transcript to collect: a start that failed, or a
+      // session that has already stopped. Sending to a document that is not there would only produce
+      // Chrome's "Receiving end does not exist" for the user to read.
+      let reply = { text: '' };
+      let channelGone = false;
+      if (state.dictation && state.dictation.status !== 'idle') {
+        try {
+          reply = await chrome.runtime.sendMessage({ type: 'offscreen:stop' });
+        } catch (err) {
+          // The document was already gone. There is nothing left to stop; its plumbing string is our
+          // failure, not the provider's, and this is a clean end to the session.
+          channelGone = true;
+          reply = { error: safeError(err, settings) };
+        }
+      }
       await closeOffscreen();
-    }
-    if (reply?.error) {
-      const error = safeError(reply.error, settings);
-      state.dictation = { status: 'error', error };
+      if (reply?.error && !channelGone) {
+        const error = safeError(reply.error, settings);
+        state.dictation = { status: 'error', error };
+        await persist();
+        return { ok: false, error };
+      }
+      state.dictation = { status: 'idle', text: reply?.text || '' };
       await persist();
-      return { ok: false, error };
-    }
-    state.dictation = { status: 'idle', text: reply?.text || '' };
-    await persist();
-    // "dictate" leaves this for the user to send; "prewarm" (and "eager" as a fallback, if it never
-    // crossed its mid-utterance word threshold) run with it now that speech has ended.
-    await maybeAutoRunFromDictation({ text: reply?.text || '', isFinal: true });
-    return { ok: true, text: reply?.text || '' };
+      // "dictate" leaves this for the user to send; "prewarm" (and "eager" as a fallback, if it never
+      // crossed its mid-utterance word threshold) run with it now that speech has ended.
+      await maybeAutoRunFromDictation({ text: reply?.text || '', isFinal: true });
+      return { ok: true, text: reply?.text || '' };
+    });
   }
   // Fire-and-forget events from the offscreen document while a session is live.
   if (message.type === 'dictation:partial') {
@@ -905,8 +968,14 @@ async function handle(message) {
     if (message.fatal) await closeOffscreen();
     return { ok: true };
   }
-  // Acknowledgement from the one-time full-tab permission page; nothing to do but confirm receipt.
-  if (message.type === 'dictation:permission-granted') return { ok: true };
+  // Acknowledgement from the one-time full-tab permission page. Nothing records on the user's behalf:
+  // this is hold-to-talk, so the next thing that opens the mic is the next held press (the grant page
+  // says so in its own copy). What this must do is clear the failure that asked for the grant, so the
+  // panel stops showing it and the next press is a clean start rather than the same error again.
+  if (message.type === 'dictation:permission-granted') {
+    if (state.dictation?.status === 'error') { state.dictation = undefined; await persist(); }
+    return { ok: true };
+  }
   throw new Error('unknown request');
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
@@ -927,7 +996,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.runtime.onInstalled.addListener(({ reason }) => { if (reason === 'install') chrome.runtime.openOptionsPage(); });
 
-// Keyboard shortcut: open the side panel on the active tab's window (mirrors chatgpt's open-codex-side-panel).
+// Opens the side panel on a window — the current one when none is given. This is the open half of
+// the keyboard command below, and what the right-click entry uses; mirrors chatgpt's
+// open-codex-side-panel.
 export async function openSidePanel(windowId) {
   if (windowId == null) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -935,12 +1006,62 @@ export async function openSidePanel(windowId) {
   }
   if (windowId != null) await chrome.sidePanel.open({ windowId });
 }
+// --- the side panel's open state, per window ---------------------------------------------------
+// Nothing in the side panel API reports whether the panel is currently open: getOptions() answers
+// path/enabled and getLayout() answers which side it is docked to, and neither says "open". The
+// only source is Chrome's own onOpened/onClosed events (Chrome 141/142). They describe a window,
+// and the panel belongs to the window — the global panel shows on every tab of it — so what gets
+// recorded is the set of window ids whose panel is open.
+// That record lives in chrome.storage.session, never in a module variable: the MV3 worker is
+// suspended and restarted between presses, and would come back with an empty memory. Session
+// storage survives exactly those restarts, and is cleared when the browser exits — which is
+// correct, because the panel goes with the browser. Chrome wakes the suspended worker to deliver
+// a registered event, so a panel closed by hand (its own X) is recorded too, and the next press
+// sees the panel closed instead of firing a close() that would do nothing.
+const PANEL_WINDOWS_KEY = 'sidePanelOpenWindows';
+// Both events, not either: onOpened alone (Chrome 141) cannot say the panel closed, and a record
+// that only ever grows would turn the command into a close() no-op after the first manual close.
+const panelStateEvents = chrome.sidePanel?.onOpened && chrome.sidePanel?.onClosed;
+async function panelOpenWindowIds() {
+  try {
+    const stored = await chrome.storage.session.get(PANEL_WINDOWS_KEY);
+    const ids = stored?.[PANEL_WINDOWS_KEY];
+    return new Set(Array.isArray(ids) ? ids.filter(Number.isInteger) : []);
+  } catch { return new Set(); }
+}
+async function rememberPanelOpen(windowId, open) {
+  if (!Number.isInteger(windowId)) return;
+  const ids = await panelOpenWindowIds();
+  if (open) ids.add(windowId); else ids.delete(windowId);
+  try { await chrome.storage.session.set({ [PANEL_WINDOWS_KEY]: [...ids] }); } catch {}
+}
+if (panelStateEvents) {
+  chrome.sidePanel.onOpened.addListener(({ windowId }) => { void rememberPanelOpen(windowId, true); });
+  chrome.sidePanel.onClosed.addListener(({ windowId }) => { void rememberPanelOpen(windowId, false); });
+}
+// The open-panel command toggles: a window whose panel is already open gets it closed, any other
+// window gets today's open. Both halves are per window, because that is the scope of the panel and
+// of the record above. close() is Chrome 141+; without it the command can only open, which is
+// exactly what it did before this existed. Without the events there is no state at all, so it also
+// only opens rather than guessing and closing a panel it cannot see.
+export async function toggleSidePanel(windowId) {
+  if (windowId == null) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    windowId = tab?.windowId;
+  }
+  if (windowId == null) return;
+  if (typeof chrome.sidePanel.close === 'function' && (await panelOpenWindowIds()).has(windowId)) {
+    await chrome.sidePanel.close({ windowId });
+    return;
+  }
+  await chrome.sidePanel.open({ windowId });
+}
 chrome.commands?.onCommand.addListener((command, tab) => {
   if (command !== 'open-panel') return;
   // The command listener gets the window's active tab directly; prefer that over the extra
-  // chrome.tabs.query round trip in openSidePanel, which can resolve to a window that's no
+  // chrome.tabs.query round trip in toggleSidePanel, which can resolve to a window that's no
   // longer focused by the time it settles. Falls back to that query when no tab is given.
-  void openSidePanel(tab?.windowId);
+  void toggleSidePanel(tab?.windowId);
 });
 
 // Right-click entry: send the selection or link into a chat run on the clicked tab.

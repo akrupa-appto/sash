@@ -19,6 +19,7 @@ const accessPrompts = [];
 const grantedOrigins = [];
 let allowAccess = true;
 const sidePanelOpens = [];
+const sidePanelCloses = [];
 const menuCreated = [];
 let pendingRequest; // set to make the fixture run end waiting on the user
 let nextOutcome; // set to make the fake run end straight away with that outcome
@@ -28,19 +29,30 @@ let lastInput;
 let offscreenDocs = 0;
 let offscreenStartResult = { ok: true };
 let offscreenStopResult = { text: 'hello from the mic' };
+let offscreenStartGate; // parks an 'offscreen:start' reply: a mic that is still opening
+let offscreenGone = false; // makes the offscreen document unreachable, as a killed/reloaded one is
 let storageFails = false; // proves a failed settings read can never strand a hot mic
 const tabsCreated = [];
 let cursorSink; // background.js installs this into browser.js; tests drive it the way point() does
 
 globalThis.chrome = {
-  storage: { local: {
-    setAccessLevel: async () => {},
-    get: async key => {
-      if (storageFails) throw new Error('storage read failed');
-      return { [key]: structuredClone(data[key]) };
+  storage: {
+    local: {
+      setAccessLevel: async () => {},
+      get: async key => {
+        if (storageFails) throw new Error('storage read failed');
+        return { [key]: structuredClone(data[key]) };
+      },
+      set: async values => Object.assign(data, structuredClone(values)),
     },
-    set: async values => Object.assign(data, structuredClone(values)),
-  } },
+    // What the panel's open/closed events are recorded in: session storage survives a service-worker
+    // restart, which `data` here stands in for (the worker module is imported once, so a restart is
+    // "the in-memory record is gone but storage still has it").
+    session: {
+      get: async key => ({ [key]: structuredClone(data[key]) }),
+      set: async values => Object.assign(data, structuredClone(values)),
+    },
+  },
   runtime: { id: 'test-extension', getURL: path => 'chrome-extension://test-extension/' + path,
     onMessage: events(), onInstalled: events(), openOptionsPage: async () => {},
     // Real Chrome's recommended way to check for an existing offscreen document.
@@ -54,8 +66,18 @@ globalThis.chrome = {
         return { allow: allowAccess };
       }
       // Standing in for the offscreen document answering background's start/stop commands.
-      if (message.type === 'offscreen:start') return offscreenStartResult;
-      if (message.type === 'offscreen:stop') return offscreenStopResult;
+      // A message to a document that is not there is a rejected sendMessage in real Chrome, and so it
+      // is here: `offscreenGone` models the document dying, a missing document models sending to
+      // nobody. Both are Chrome's plumbing, never a provider's failure.
+      if (message.type === 'offscreen:start') {
+        if (offscreenGone) throw new Error('A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received');
+        if (offscreenStartGate) await offscreenStartGate;
+        return offscreenStartResult;
+      }
+      if (message.type === 'offscreen:stop') {
+        if (!offscreenDocs) throw new Error('Could not establish connection. Receiving end does not exist.');
+        return offscreenStopResult;
+      }
     },
   },
   tabs: {
@@ -64,9 +86,13 @@ globalThis.chrome = {
     create: async opts => { tabsCreated.push(opts); return { id: 999, ...opts }; },
     // Window 7's active tab is 12. The keyboard shortcut asks for the current window instead of
     // naming one, and gets the same tab back, so it has a windowId to open the panel on.
-    query: async ({ windowId, currentWindow } = {}) => (currentWindow
-      ? [{ id: 12, windowId: 7, url: 'https://example.test', active: true }]
-      : [{ id: windowId === 7 ? 12 : 99, windowId, active: true }]),
+    // A `url` filter is Chrome's own way to find an already-open tab (the mic-permission page): it
+    // sees the pages this fixture has actually created, and nothing else.
+    query: async ({ windowId, currentWindow, url } = {}) => (url
+      ? tabsCreated.filter(tab => tab.url === url).map((tab, index) => ({ id: 900 + index, url: tab.url }))
+      : currentWindow
+        ? [{ id: 12, windowId: 7, url: 'https://example.test', active: true }]
+        : [{ id: windowId === 7 ? 12 : 99, windowId, active: true }]),
     sendMessage: async (tabId, message) => { sentToTabs.push({ tabId, message }); return message.type === 'CONTENT_PING' ? { ok: liveContentScript } : { ok: true }; },
     onCreated: events(), onUpdated: events(), onActivated: events(), onRemoved: events(),
   },
@@ -77,7 +103,12 @@ globalThis.chrome = {
     request: async () => { throw new Error('the service worker must not call permissions.request'); },
   },
   debugger: { onDetach: events() },
-  sidePanel: { setPanelBehavior: async () => {}, open: async opts => { sidePanelOpens.push(opts); } },
+  sidePanel: {
+    setPanelBehavior: async () => {},
+    open: async opts => { sidePanelOpens.push(opts); },
+    close: async opts => { sidePanelCloses.push(opts); },
+    onOpened: events(), onClosed: events(),
+  },
   commands: { onCommand: events() },
   contextMenus: { create: (opts, cb) => { menuCreated.push(opts); cb?.(); }, removeAll: cb => cb(), onClicked: events() },
   offscreen: {
@@ -581,6 +612,82 @@ test('the open-panel keyboard command opens the side panel on the active tab win
   assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
 });
 
+// There is no getter for "is the panel open": chrome.sidePanel.getOptions() answers path/enabled
+// and getLayout() answers which side it is docked to, and neither says open. Chrome's onOpened /
+// onClosed events are the only source, so these tests drive them the way Chrome does — and assert
+// on chrome.storage.session, the record a restarted worker actually reads, never on a
+// worker-internal variable that would only prove the harness leaked state between calls.
+const panelOpened = windowId => {
+  chrome.sidePanel.onOpened.fire({ windowId, path: 'panel.html' });
+  return until(() => data.sidePanelOpenWindows?.includes(windowId));
+};
+const panelClosedByHand = windowId => {
+  chrome.sidePanel.onClosed.fire({ windowId, path: 'panel.html' });
+  return until(() => !data.sidePanelOpenWindows?.includes(windowId));
+};
+
+test('the open-panel command closes the panel when that window already has it open', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(7);
+  // The record is in session storage, not in the worker: that is what a restarted worker reads,
+  // and it is the state the next press has to decide from.
+  assert.deepEqual(data.sidePanelOpenWindows, [7]);
+  const opens = sidePanelOpens.length;
+  const closes = sidePanelCloses.length;
+  chrome.commands.onCommand.fire('open-panel', { id: 12, windowId: 7, active: true });
+  await until(() => sidePanelCloses.length === closes + 1);
+  assert.deepEqual(sidePanelCloses.at(-1), { windowId: 7 });
+  assert.equal(sidePanelOpens.length, opens, 'an open panel is closed, never opened again');
+});
+
+// The panel is per window and so is the record: a window with its panel open must not close (or be
+// opened because of) another window's state. The tab the command listener hands over is the tab
+// whose window is meant, so a stale window id from a fresh tabs.query must not win over it.
+test('the toggle follows the window the command listener hands over, not a fresh tabs.query', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(9);
+  const opens = sidePanelOpens.length;
+  const closes = sidePanelCloses.length;
+  chrome.commands.onCommand.fire('open-panel', { id: 99, windowId: 9, active: true });
+  await until(() => sidePanelCloses.length === closes + 1);
+  assert.deepEqual(sidePanelCloses.at(-1), { windowId: 9 });
+  assert.equal(sidePanelOpens.length, opens, 'window 7 (what tabs.query would answer) is not the window being toggled');
+});
+
+// The X button: Chrome fires the same onClosed for a panel the user closed by hand, and the next
+// press must open rather than fire a close() at a panel that is already gone.
+test('a panel the user closed by hand is not treated as open by the next press', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(7);
+  await panelClosedByHand(7);
+  const opens = sidePanelOpens.length;
+  const closes = sidePanelCloses.length;
+  chrome.commands.onCommand.fire('open-panel');
+  await until(() => sidePanelOpens.length === opens + 1);
+  assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
+  assert.equal(sidePanelCloses.length, closes, 'the X already closed it; this press must not close a closed panel');
+});
+
+// The extension's minimum is Chrome 118, where close() does not exist. The command keeps working
+// as the open-only shortcut it was; it must not throw on the missing method, and the tracked state
+// must not make it call something a newer Chrome would have had.
+test('a browser without sidePanel.close still opens the panel', async () => {
+  delete data.sidePanelOpenWindows;
+  await panelOpened(7);
+  const close = chrome.sidePanel.close;
+  delete chrome.sidePanel.close;
+  try {
+    const opens = sidePanelOpens.length;
+    const closes = sidePanelCloses.length;
+    chrome.commands.onCommand.fire('open-panel');
+    await until(() => sidePanelOpens.length === opens + 1);
+    assert.deepEqual(sidePanelOpens.at(-1), { windowId: 7 });
+    assert.equal(sidePanelCloses.length, closes);
+  } finally {
+    chrome.sidePanel.close = close;
+  }
+});
+
 test('an unrelated command is ignored', async () => {
   const before = sidePanelOpens.length;
   chrome.commands.onCommand.fire('some-other-command');
@@ -710,6 +817,103 @@ test('an ordinary recording error on start does not open the permission tab', as
   assert.equal(reply.needsPermissionTab, false);
   assert.equal(tabsCreated.length, 0);
   offscreenStartResult = { ok: true };
+});
+
+// Hold-to-talk has no minimum hold, so a real tap sends dictation:start and dictation:stop a few
+// milliseconds apart, while the mic is still opening. The stop's teardown used to close the offscreen
+// document with the start's own reply still outstanding: Chrome rejected that pending message with
+// "A listener indicated an asynchronous response by returning true, but the message channel closed
+// before a response was received", the worker reported that as the provider's error, and the panel
+// printed it. The two transitions are serialized now, so the start's reply always lands first.
+test('a quick tap whose stop arrives while the mic is still opening lands in one consistent state', async () => {
+  offscreenDocs = 0;
+  offscreenStartResult = { ok: true };
+  offscreenStopResult = { text: '' };
+  const stopsBefore = messages.filter(m => m.type === 'offscreen:stop').length;
+  let release;
+  offscreenStartGate = new Promise(resolve => { release = resolve; });
+  try {
+    const started = send({ type: 'dictation:start', chunkMs: 4000 });
+    const stopped = send({ type: 'dictation:stop' });
+    await until(() => offscreenDocs === 1);
+    assert.equal(messages.filter(m => m.type === 'offscreen:stop').length, stopsBefore,
+      'the stop waits behind the start that is still opening the mic, so the document is never torn down with a reply owed');
+    release();
+    const [startReply, stopReply] = await Promise.all([started, stopped]);
+    assert.deepEqual(startReply, { ok: true });
+    assert.equal(stopReply.ok, true, JSON.stringify(stopReply));
+    assert.equal(stopReply.text, '');
+    assert.equal(data.runState.dictation.status, 'idle',
+      'the stop is the last word: nothing outlives it, and the start does not write "listening" over it with no mic behind it');
+    assert.equal(offscreenDocs, 0);
+    assert.doesNotMatch(JSON.stringify(data.runState.dictation), /channel closed|listener indicated|receiving end/i);
+  } finally {
+    offscreenStartGate = undefined;
+    release();
+  }
+});
+
+// The offscreen document can still go away on its own (Chrome killed it, the extension reloaded). The
+// pending message rejects with Chrome's own plumbing string, and that is our failure — it says nothing
+// about the provider, and it must not be latched as an error the next press repeats.
+test('a start whose offscreen document vanished latches nothing, so the next press starts cleanly', async () => {
+  offscreenDocs = 0;
+  offscreenGone = true;
+  try {
+    const reply = await send({ type: 'dictation:start' });
+    assert.equal(reply.ok, false);
+    assert.match(reply.error, /message channel closed/, 'the raw text is handed on for the panel to humanise');
+    assert.equal(reply.needsPermissionTab, false);
+    assert.equal(data.runState.dictation, undefined, 'a vanished document is not a session, and not an error to keep showing');
+    assert.equal(offscreenDocs, 0);
+  } finally {
+    offscreenGone = false;
+  }
+  offscreenStartResult = { ok: true };
+  const again = await send({ type: 'dictation:start' });
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.equal(data.runState.dictation.status, 'listening');
+  await send({ type: 'dictation:stop' });
+});
+
+test('a repeated mic permission failure focuses the grant page it already opened, and a grant clears the latched failure', async () => {
+  offscreenDocs = 0;
+  tabsCreated.length = 0;
+  offscreenStartResult = { error: 'NotAllowedError: Permission dismissed' };
+  const first = await send({ type: 'dictation:start' });
+  assert.equal(first.needsPermissionTab, true);
+  const second = await send({ type: 'dictation:start' });
+  assert.equal(second.needsPermissionTab, true);
+  assert.equal(tabsCreated.length, 1, 'the grant page is focused, never opened a second time');
+  assert.equal(data.runState.dictation.status, 'error');
+  // Granting is the page's own job. The worker must not open a mic on the user's behalf — this is
+  // hold-to-talk — but it must not leave the failure latched either: the next press has to be clean.
+  offscreenStartResult = { ok: true };
+  const granted = await new Promise(resolve => chrome.runtime.onMessage.fire(
+    { type: 'dictation:permission-granted' },
+    { id: chrome.runtime.id, url: chrome.runtime.getURL('mic-permission.html') },
+    resolve,
+  ));
+  assert.equal(granted.ok, true);
+  assert.equal(data.runState.dictation, undefined, 'the grant clears the failure it was asked about');
+  const third = await send({ type: 'dictation:start' });
+  assert.equal(third.ok, true, JSON.stringify(third));
+  await send({ type: 'dictation:stop' });
+});
+
+// A stop that follows a failed start has no session and no offscreen document behind it. Sending to
+// one that is not there is Chrome's "Receiving end does not exist", which is plumbing, not a
+// provider's failure and not something the user can act on.
+test('a stop with no live session answers cleanly instead of reporting Chrome\'s missing receiver', async () => {
+  offscreenDocs = 0;
+  const stopsBefore = messages.filter(m => m.type === 'offscreen:stop').length;
+  const reply = await send({ type: 'dictation:stop' });
+  assert.equal(reply.ok, true, JSON.stringify(reply));
+  assert.equal(reply.error, undefined);
+  assert.equal(messages.filter(m => m.type === 'offscreen:stop').length, stopsBefore,
+    'there is no document to tell, so nothing is sent to one that is not there');
+  assert.equal(data.runState.dictation.status, 'idle');
+  assert.equal(offscreenDocs, 0);
 });
 
 test('partial and error events from the offscreen document update dictation state without tearing it down', async () => {

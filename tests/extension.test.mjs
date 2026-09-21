@@ -109,4 +109,11 @@ test('extension build is self-contained and only permits direct provider connect
   assert.equal(manifest.externally_connectable, undefined);
   const bundle = await readFile('dist/checkto-extension/background.js', 'utf8');
   assert.doesNotMatch(bundle, /from ["'](?:node:|playwright)|import\(["']node:|process\.env|new Function\(/);
+  // The open-panel command toggles, and Chrome only runs the bundle: the side panel's own events
+  // are the only thing that can say it is open (getOptions()/getLayout() answer path/enabled and
+  // which side, never open), and the record has to be in storage that outlives the suspended
+  // worker. The wording follows what the command now does.
+  assert.equal(manifest.commands['open-panel'].description, 'Open or close the checkto panel');
+  assert.match(bundle, /sidePanel\.onClosed/);
+  assert.match(bundle, /storage\.session/);
 });
